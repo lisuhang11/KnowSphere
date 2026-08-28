@@ -1,0 +1,246 @@
+{
+  "id": "intent_demo",
+  "corpus_mode": "shared",
+  "passages": [],
+  "items": [
+    {
+      "qid": 0,
+      "question": "你好",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "greeting",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 1,
+      "question": "谢谢你的帮助",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "greeting",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": []
+      }
+    },
+    {
+      "qid": 2,
+      "question": "员工手册里年假怎么规定？",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": []
+      }
+    },
+    {
+      "qid": 3,
+      "question": "出差报销流程是什么？",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": []
+      }
+    },
+    {
+      "qid": 4,
+      "question": "整理知识库里的体检指标",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": []
+      }
+    },
+    {
+      "qid": 5,
+      "question": "它的维度呢",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "follow_up",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [
+          {"query": "embedding 模型是什么", "answer": "常用 bge-m3，输出向量维度为 1024。"}
+        ]
+      }
+    },
+    {
+      "qid": 6,
+      "question": "上面第二点展开说说",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "follow_up",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [
+          {
+            "query": "KnowSphere 有哪些核心能力？",
+            "answer": "1. RAG 检索 2. ReAct Agent 3. Wiki 知识整理"
+          }
+        ]
+      }
+    },
+    {
+      "qid": 7,
+      "question": "这是什么",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "clarification",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 8,
+      "question": "然后呢",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "clarification",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 9,
+      "question": "总结一下我们刚才聊了什么",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "summarize",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [
+          {"query": "年假有几天？", "answer": "满一年员工年假 5 天。"},
+          {"query": "可以拆分休吗？", "answer": "可以按天拆分申请。"}
+        ]
+      }
+    },
+    {
+      "qid": 10,
+      "question": "你是谁",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "chitchat",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": []
+      }
+    },
+    {
+      "qid": 11,
+      "question": "讲个笑话",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "chitchat",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": []
+      }
+    },
+    {
+      "qid": 12,
+      "question": "这张图是什么意思",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "image_only",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": true,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 13,
+      "question": "总结一下这份 PDF",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "doc_only",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": true
+      }
+    },
+    {
+      "qid": 14,
+      "question": "知识库里有类似的文档吗",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_attachments": true
+      }
+    },
+    {
+      "qid": 15,
+      "question": "年假政策是什么",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "no_kb",
+        "needs_retrieval_gt": false,
+        "kb_selected": false,
+        "history": []
+      }
+    },
+    {
+      "qid": 16,
+      "question": "再见",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "greeting",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": []
+      }
+    },
+    {
+      "qid": 17,
+      "question": "这个话题知识库里还有什么相关内容",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [
+          {"query": "差旅标准", "answer": "市内交通可实报实销，住宿按职级限额。"}
+        ]
+      }
+    }
+  ]
+}

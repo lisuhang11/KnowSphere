@@ -1,0 +1,25 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+langgraph/
+data/uploads/*
+!data/uploads/.gitkeep
+
+# Local reference repo — do not push
+WeKnora/
+
+# Build artifacts & runtime caches
+frontend/dist/
+frontend/node_modules/
+node_modules/
+.langgraph_api/
+celerybeat-schedule
+data/celerybeat-schedule*
+frontend/celerybeat-schedule*
+
+# IDE & trash
+.idea/
+.Trash-0/

@@ -1,0 +1,127 @@
+{
+  "summary": {
+    "sample_count": 5,
+    "error_count": 0,
+    "intent_metrics": {
+      "accuracy": 0.6,
+      "routing_accuracy": 0.6,
+      "macro_f1": 0.37499999999999994,
+      "per_class": {
+        "greeting": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 2
+        },
+        "kb_search": {
+          "precision": 0.6,
+          "recall": 1.0,
+          "f1": 0.7499999999999999,
+          "support": 3
+        }
+      }
+    }
+  },
+  "samples": [
+    {
+      "qid": 0,
+      "question": "你好",
+      "reference": "greeting",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 0.0,
+          "routing_correct": 0.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "greeting",
+          "rewrite_pred": "你好",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 2263,
+      "error": null
+    },
+    {
+      "qid": 1,
+      "question": "谢谢你的帮助",
+      "reference": "greeting",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 0.0,
+          "routing_correct": 0.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "greeting",
+          "rewrite_pred": "谢谢你的帮助",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1314,
+      "error": null
+    },
+    {
+      "qid": 2,
+      "question": "员工手册里年假怎么规定？",
+      "reference": "kb_search",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "kb_search",
+          "rewrite_pred": "员工手册里年假怎么规定？",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1419,
+      "error": null
+    },
+    {
+      "qid": 3,
+      "question": "出差报销流程是什么？",
+      "reference": "kb_search",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "kb_search",
+          "rewrite_pred": "出差报销流程是什么？",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1622,
+      "error": null
+    },
+    {
+      "qid": 4,
+      "question": "整理知识库里的体检指标",
+      "reference": "kb_search",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "kb_search",
+          "rewrite_pred": "整理知识库里的体检指标",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1503,
+      "error": null
+    }
+  ]
+}

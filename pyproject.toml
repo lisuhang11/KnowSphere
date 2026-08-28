@@ -1,0 +1,89 @@
+[project]
+name = "knowsphere"
+version = "0.1.0"
+description = "KnowSphere: BYOD 文档知识问答助手（LangGraph + LangSmith）"
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=1.0",
+    "langgraph-checkpoint-postgres>=2.0",  # 嵌入式运行时：AsyncPostgresSaver 检查点
+    "langchain-core>=0.3",
+    "langchain-openai>=0.3",
+    "langchain-community>=0.3,<0.4",  # ragas 0.2 依赖 vertexai 模块，community 0.4 起被移除
+    "langchain-text-splitters>=0.3",
+    "langsmith>=0.3",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "psycopg[binary]>=3.2",
+    "pgvector>=0.3",
+    "cryptography>=42",  # 模型凭证 AES-256-GCM 加密
+    "pydantic-settings>=2.4",
+    "pypdf>=5",
+    "httpx>=0.27",  # SiliconFlow /v1/rerank 直调（无 langchain 封装）
+    # 异步文档处理（Celery + Redis 队列）：worker 独立进程消费
+    "celery>=5.4",
+    # kombu 5.6.x 官方要求 redis<6；redis-py 8.x 内部 API 变更会破坏 kombu 连接，钉在 <6
+    "redis>=5,<6",
+    # 文档解析引擎（内嵌库形态）：MarkItDown 优先 + 自研兜底
+    "markitdown[docx,pptx]>=0.1",  # docx/pptx 首选引擎（MarkItDown 优先链）
+    "python-docx>=1.1",  # docx 兜底解析
+    "pandas>=2",  # xlsx 工作表解析
+    "openpyxl>=3.1",  # xlsx 读取（pandas engine）
+    "beautifulsoup4>=4.12",  # html → markdown
+    "pypdfium2>=4",  # PDF 逐页路由（文本页直出 / 扫描页渲染给 OCR）
+    "pillow>=10",  # PDF 内嵌图片解码（/SMask 软蒙版合成）
+    "minio>=7.2",  # 内嵌图片对象存储（Q3：MinIO 存图 + storage_key 元数据）
+    # 评测：ragas judge 走 langchain 封装；datasets 钉 <3（hotpot_qa 是 script 数据集，3.0 起不支持 trust_remote_code）
+    "ragas[langchain]>=0.2,<0.3",
+    "datasets>=2.19,<3",
+    "pyarrow>=16",  # Parquet 评测数据集
+]
+
+[project.optional-dependencies]
+dev = [
+    "langgraph-cli[inmem]>=0.1",
+    "pytest>=8",
+    "ruff>=0.6",
+]
+# Q6/Q9：PaddleOCR 经典版 OCR（CPU 可跑）。体积较大（含 paddlepaddle），
+# 单独放 extra；未安装时扫描 PDF/图片降级为占位文本，不阻塞其他格式解析。
+ocr = [
+    "paddleocr>=2.7",
+    "paddlepaddle>=2.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "agents",
+    "api",
+    "chunkers",
+    "config",
+    "evals",
+    "graph",
+    "ingestion",
+    "models",
+    "prompts",
+    "schemas",
+    "scripts",
+    "states",
+    "tools",
+    "utils",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI File(...) 参数默认值惯用法
+"api/main.py" = ["B008"]
+# rerank 失败降级为 RRF 序的兜底路径，刻意捕获宽异常
+"tools/retrieval/doc_retrieval.py" = ["BLE001"]
+# 评测逐题兜底：单题失败跳过不中断整轮
+"evals/run_eval.py" = ["BLE001"]
+# HF_ENDPOINT 需在 import datasets 前设置
+"evals/hotpot.py" = ["E402"]

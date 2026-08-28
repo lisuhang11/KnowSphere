@@ -1,0 +1,144 @@
+/* KnowSphere 主题 —— 绿色品牌（#07c05f）与浅色界面风格 */
+:root {
+  /* TDesign 品牌色系（绿色） */
+  --td-brand-color-1: #e9f9f0;
+  --td-brand-color-2: #d2f3e1;
+  --td-brand-color-3: #a8e8c5;
+  --td-brand-color-4: #7bdca8;
+  --td-brand-color-5: #4ed08b;
+  --td-brand-color-6: #07c05f;
+  --td-brand-color-7: #06a654;
+  --td-brand-color-8: #058c47;
+  --td-brand-color-9: #04723a;
+  --td-brand-color-10: #03582d;
+  --td-brand-color: #07c05f;
+  --td-brand-color-hover: #06a654;
+  --td-brand-color-active: #058c47;
+  --td-brand-color-focus: #a8e8c5;
+  --td-brand-color-disabled: #d2f3e1;
+  --td-brand-color-light: #e9f9f0;
+  --td-brand-color-light-hover: #d2f3e1;
+  --td-brand-color-light-active: #a8e8c5;
+
+  /* 页面背景与文字 */
+  --td-gray-bg-color: #f9f9f9;
+  --td-bg-color-page: #eee;
+  --td-text-color-primary: #4f4f4f;
+  --td-text-color-secondary: #9e9e9e;
+  --td-text-color-placeholder: #c0c0c0;
+  --td-border-level-1-color: #eee;
+
+  /* 布局 */
+  --ks-sidebar-width: 240px;
+  --ks-header-height: 56px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  color: var(--td-text-color-primary);
+  background-color: var(--td-bg-color-page);
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d0d0d0;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- 聊天 markdown 内容 ---------- */
+.markdown-content p {
+  margin: 8px 0;
+}
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+  margin: 16px 0 8px;
+  line-height: 1.4;
+}
+.markdown-content ul,
+.markdown-content ol {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+.markdown-content li {
+  margin: 4px 0;
+}
+.markdown-content a {
+  color: var(--td-brand-color);
+  text-decoration: none;
+}
+.markdown-content a:hover {
+  text-decoration: underline;
+}
+.markdown-content blockquote {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--td-brand-color);
+  background: var(--td-brand-color-light);
+  border-radius: 0 4px 4px 0;
+  color: var(--td-text-color-secondary);
+}
+.markdown-content pre {
+  margin: 8px 0;
+  padding: 12px;
+  background: #f6f8fa;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.markdown-content code {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+.markdown-content :not(pre) > code {
+  background: var(--td-bg-color-secondarycontainer, #f0f0f0);
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 14px;
+  color: #d63384;
+}
+.markdown-content table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  width: 100%;
+}
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid var(--td-border-level-1-color);
+  padding: 6px 12px;
+  font-size: 14px;
+}
+.markdown-content th {
+  background: var(--td-gray-bg-color, #f9f9f9);
+}
+.markdown-content img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+.markdown-content hr {
+  border: none;
+  border-top: 1px solid var(--td-border-level-1-color);
+  margin: 12px 0;
+}
