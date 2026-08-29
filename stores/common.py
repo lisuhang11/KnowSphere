@@ -11,10 +11,10 @@ from config.settings import settings
 KB_COLS = (
     "id, name, description, chunk_size, chunk_overlap, "
     "embedding_model_id, embedding_dim, chunk_strategy, summary_model_id, "
-    "enable_parent_child, parent_chunk_size, child_chunk_size, "
+    "enable_parent_child, parent_chunk_size, child_chunk_size, graph_enabled, "
     "created_at, updated_at"
 )
-KB_COL_COUNT = 14
+KB_COL_COUNT = 15
 
 # 混合检索只命中可检索子块（parent_text 仅用于上下文回捞）
 RETRIEVABLE_CHUNK_WHERE = "chunk_type = 'text'"
@@ -52,6 +52,7 @@ def kb_row_to_dict(row) -> dict[str, Any]:
         "enable_parent_child": bool(row[9]),
         "parent_chunk_size": row[10],
         "child_chunk_size": row[11],
-        "created_at": row[12].isoformat() if row[12] else None,
-        "updated_at": row[13].isoformat() if row[13] else None,
+        "graph_enabled": bool(row[12]),
+        "created_at": row[13].isoformat() if row[13] else None,
+        "updated_at": row[14].isoformat() if row[14] else None,
     }

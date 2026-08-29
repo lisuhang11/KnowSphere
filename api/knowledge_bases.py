@@ -29,6 +29,7 @@ class KBCreateRequest(BaseModel):
     enable_parent_child: bool = Field(default=False, description="启用父子分块（子块检索、父块上下文）")
     parent_chunk_size: int | None = Field(default=None, ge=64, le=8192)
     child_chunk_size: int | None = Field(default=None, ge=64, le=2048)
+    graph_enabled: bool = Field(default=False, description="启用知识图谱抽取（需 NEO4J_ENABLE=true）")
 
 class KBUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
@@ -44,6 +45,7 @@ class KBUpdateRequest(BaseModel):
     enable_parent_child: bool | None = None
     parent_chunk_size: int | None = Field(default=None, ge=64, le=8192)
     child_chunk_size: int | None = Field(default=None, ge=64, le=2048)
+    graph_enabled: bool | None = None
 
 class DocMoveRequest(BaseModel):
     kb_id: int
@@ -106,6 +108,7 @@ def create_knowledge_base(
             enable_parent_child=body.enable_parent_child,
             parent_chunk_size=body.parent_chunk_size,
             child_chunk_size=body.child_chunk_size,
+            graph_enabled=body.graph_enabled,
         )
     except Exception as exc:
         raise map_service_error(exc, default_status=500, default_prefix="创建知识库失败") from exc
@@ -153,6 +156,7 @@ def update_knowledge_base(
             enable_parent_child=body.enable_parent_child,
             parent_chunk_size=body.parent_chunk_size,
             child_chunk_size=body.child_chunk_size,
+            graph_enabled=body.graph_enabled,
         )
     except Exception as exc:
         raise map_service_error(exc, default_status=500, default_prefix="更新失败") from exc

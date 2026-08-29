@@ -151,4 +151,16 @@ class DocumentTaskService:
 
         self.store.mark_document_completed(document_id, owner)
         logger.info("document %s completed (%s chunks)", document_id, result.get("chunk_count"))
+        try:
+            from services.graph_extract_service import GraphExtractService
+
+            kb_id = result.get("kb_id") or (row.get("knowledge_base_id") if row else None)
+            if kb_id is not None:
+                GraphExtractService(self.store).enqueue_document_extract(
+                    document_id=document_id,
+                    kb_id=int(kb_id),
+                    owner=owner,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("graph extract enqueue failed for %s: %s", document_id, exc)
         return {"document_id": document_id, "status": "completed", **result}

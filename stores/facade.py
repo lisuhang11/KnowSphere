@@ -47,6 +47,9 @@ class ChunkStore():
     def get_chunks_by_ids(self, *args, **kwargs):
         return self._chunks.get_chunks_by_ids(*args, **kwargs)
 
+    def list_text_chunk_ids(self, *args, **kwargs):
+        return self._chunks.list_text_chunk_ids(*args, **kwargs)
+
     def replace_document_chunks(self, *args, **kwargs):
         return self._chunks.replace_document_chunks(*args, **kwargs)
 

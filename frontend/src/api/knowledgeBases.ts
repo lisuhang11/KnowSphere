@@ -17,6 +17,7 @@ export interface KnowledgeBase {
   enable_parent_child: boolean
   parent_chunk_size: number
   child_chunk_size: number
+  graph_enabled?: boolean
   created_at: string | null
   updated_at: string | null
   document_count?: number
@@ -34,6 +35,7 @@ export interface KBCreatePayload {
   enable_parent_child?: boolean
   parent_chunk_size?: number
   child_chunk_size?: number
+  graph_enabled?: boolean
 }
 
 export interface KBUpdatePayload {
@@ -46,6 +48,7 @@ export interface KBUpdatePayload {
   enable_parent_child?: boolean
   parent_chunk_size?: number
   child_chunk_size?: number
+  graph_enabled?: boolean
 }
 
 export async function listKnowledgeBases(): Promise<KnowledgeBase[]> {

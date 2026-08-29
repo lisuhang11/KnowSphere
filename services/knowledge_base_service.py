@@ -36,6 +36,12 @@ class KnowledgeBaseService:
         result = self.store.delete_knowledge_base(kb_id, owner=owner)
         if result is None:
             raise NotFoundError(f"知识库不存在: {kb_id}")
+        try:
+            from services.graph_extract_service import GraphExtractService
+
+            GraphExtractService(self.store).delete_kb_graph(kb_id)
+        except Exception:  # noqa: BLE001
+            pass
         return {
             "id": result["id"],
             "name": result["name"],

@@ -60,6 +60,10 @@ def init_schema(dsn: str) -> None:
             "INT NOT NULL DEFAULT 384"
         )
         conn.execute(
+            "ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS graph_enabled "
+            "BOOLEAN NOT NULL DEFAULT FALSE"
+        )
+        conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS chunks (
                 id          BIGSERIAL PRIMARY KEY,

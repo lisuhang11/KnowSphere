@@ -12,12 +12,12 @@ const props = defineProps<{
   visible: boolean
   anchorEl?: HTMLElement | null
   kbList: KnowledgeBase[]
-  selectedKbId: number | null | undefined
+  selectedKbIds: number[]
 }>()
 
 const emit = defineEmits<{
   close: []
-  select: [id: number | null]
+  'update:selectedKbIds': [ids: number[]]
 }>()
 
 const searchQuery = ref('')
@@ -27,6 +27,8 @@ const dropdownStyle = ref<Record<string, string>>({})
 
 let resizeHandler: (() => void) | null = null
 let scrollHandler: (() => void) | null = null
+
+const selectedSet = computed(() => new Set(props.selectedKbIds))
 
 const filtered = computed(() => {
   const list = props.kbList
@@ -144,8 +146,19 @@ function close() {
   emit('close')
 }
 
-function selectKb(id: number) {
-  emit('select', props.selectedKbId === id ? null : id)
+function isSelected(id: number): boolean {
+  return selectedSet.value.has(id)
+}
+
+function toggleKb(id: number) {
+  const next = isSelected(id)
+    ? props.selectedKbIds.filter((x) => x !== id)
+    : [...props.selectedKbIds, id]
+  emit('update:selectedKbIds', next)
+}
+
+function clearAll() {
+  emit('update:selectedKbIds', [])
   close()
 }
 
@@ -157,7 +170,7 @@ function moveSelection(delta: number) {
 
 function confirmSelection() {
   const kb = filtered.value[highlightedIndex.value]
-  if (kb) selectKb(kb.id)
+  if (kb) toggleKb(kb.id)
 }
 
 watch(
@@ -214,15 +227,15 @@ onUnmounted(unbindPositionListeners)
             :key="kb.id"
             class="kb-item"
             :class="{
-              selected: selectedKbId === kb.id,
+              selected: isSelected(kb.id),
               highlighted: highlightedIndex === index,
             }"
-            @click="selectKb(kb.id)"
+            @click="toggleKb(kb.id)"
             @mouseenter="highlightedIndex = index"
           >
             <div class="kb-item-left">
-              <div class="checkbox" :class="{ checked: selectedKbId === kb.id }">
-                <svg v-if="selectedKbId === kb.id" width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <div class="checkbox" :class="{ checked: isSelected(kb.id) }">
+                <svg v-if="isSelected(kb.id)" width="12" height="12" viewBox="0 0 12 12" fill="none">
                   <path
                     d="M10 3L4.5 8.5L2 6"
                     stroke="#fff"
@@ -243,7 +256,8 @@ onUnmounted(unbindPositionListeners)
           </div>
         </div>
         <div class="kb-actions">
-          <button type="button" class="kb-btn" @click="emit('select', null); close()">清除选择</button>
+          <button type="button" class="kb-btn" @click="clearAll">清除选择</button>
+          <button type="button" class="kb-btn kb-btn--primary" @click="close">完成</button>
         </div>
       </div>
     </div>
@@ -389,6 +403,7 @@ onUnmounted(unbindPositionListeners)
 .kb-actions {
   flex-shrink: 0;
   display: flex;
+  justify-content: space-between;
   gap: 8px;
   padding: 8px 10px;
   border-top: 0.5px solid var(--td-component-stroke);
@@ -408,5 +423,15 @@ onUnmounted(unbindPositionListeners)
 .kb-btn:hover {
   background: var(--td-bg-color-container-hover);
   color: var(--td-text-color-primary);
+}
+
+.kb-btn--primary {
+  color: var(--td-brand-color);
+  font-weight: 500;
+}
+
+.kb-btn--primary:hover {
+  background: var(--td-brand-color-light);
+  color: var(--td-brand-color);
 }
 </style>

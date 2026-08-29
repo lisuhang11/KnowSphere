@@ -109,6 +109,12 @@ class Settings(BaseSettings):
     # LangGraph agent 最大步数（recursion_limit，含 agent/tools 往返）
     agent_max_steps: int = 25
 
+    # 知识图谱（Neo4j；关闭时抽取/检索全部 no-op）
+    neo4j_enable: bool = False
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_username: str = "neo4j"
+    neo4j_password: str = "password"
+
     # 模型管理（models 表）：api_key 加密主密钥（AES-256-GCM）
     # 生产必须设置 MASTER_KEY；未设置（保持默认值）时降级为可逆 base64 仅限开发。
     # 变更 MASTER_KEY 后需运行: MASTER_KEY_NEW=<新密钥> python -m scripts.reencrypt_models

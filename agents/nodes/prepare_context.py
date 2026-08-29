@@ -35,7 +35,10 @@ def _is_ai(msg: BaseMessage) -> bool:
 
 
 def _is_retrieval_tool(msg: BaseMessage) -> bool:
-    return isinstance(msg, ToolMessage) and getattr(msg, "name", None) == "doc_retrieval"
+    return isinstance(msg, ToolMessage) and getattr(msg, "name", None) in (
+        "doc_retrieval",
+        "query_knowledge_graph",
+    )
 
 
 def extract_history_pairs(messages: list[BaseMessage], max_rounds: int) -> tuple[str | None, list[dict[str, str]]]:

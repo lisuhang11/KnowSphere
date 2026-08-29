@@ -13,10 +13,13 @@ logger = logging.getLogger(__name__)
 
 
 def collect_sources(state: KnowSphereState) -> dict[str, list[dict]]:
-    """解析 doc_retrieval 的 ToolMessage，合并为 last_sources（供观测与后续节点扩展）。"""
+    """解析检索类 ToolMessage，合并为 last_sources（供观测与后续节点扩展）。"""
     sources: list[dict] = []
     for msg in state["messages"]:
-        if not isinstance(msg, ToolMessage) or msg.name != "doc_retrieval":
+        if not isinstance(msg, ToolMessage) or msg.name not in (
+            "doc_retrieval",
+            "query_knowledge_graph",
+        ):
             continue
         try:
             payload = json.loads(msg.content)
@@ -24,5 +27,5 @@ def collect_sources(state: KnowSphereState) -> dict[str, list[dict]]:
                 if isinstance(item, dict):
                     sources.append(item)
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            logger.debug("跳过无法解析的 doc_retrieval 消息: %s", exc)
+            logger.debug("跳过无法解析的检索工具消息: %s", exc)
     return {"last_sources": sources}

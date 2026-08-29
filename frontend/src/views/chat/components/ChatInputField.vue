@@ -18,14 +18,14 @@ const props = defineProps<{
   canSend: boolean
   kbList: KnowledgeBase[]
   allModels: ModelInfo[]
-  selectedKbId: number | null | undefined
+  selectedKbIds: number[]
   selectedChatModelId: string
   selectedVlmModelId: string
   pendingAttachments: PendingChatAttachment[]
 }>()
 
 const emit = defineEmits<{
-  'update:selectedKbId': [number | null | undefined]
+  'update:selectedKbIds': [number[]]
   'update:selectedChatModelId': [string]
   'update:selectedVlmModelId': [string]
   send: []
@@ -42,9 +42,9 @@ const fileInputRef = ref<HTMLInputElement>()
 const kbButtonRef = ref<HTMLElement>()
 const showKbSelector = ref(false)
 
-const selectedKbId = computed({
-  get: () => props.selectedKbId,
-  set: (v) => emit('update:selectedKbId', v),
+const selectedKbIds = computed({
+  get: () => props.selectedKbIds,
+  set: (v) => emit('update:selectedKbIds', v),
 })
 
 const selectedChatModelId = computed({
@@ -52,7 +52,10 @@ const selectedChatModelId = computed({
   set: (v) => emit('update:selectedChatModelId', v),
 })
 
-const selectedKb = computed(() => props.kbList.find((k) => k.id === props.selectedKbId) ?? null)
+const selectedKbs = computed(() => {
+  const idSet = new Set(props.selectedKbIds)
+  return props.kbList.filter((k) => idSet.has(k.id))
+})
 
 const imageAttachments = computed(() =>
   props.pendingAttachments.filter((a) => a.previewUrl || a.file.type.startsWith('image/')),
@@ -62,7 +65,7 @@ const fileAttachments = computed(() =>
   props.pendingAttachments.filter((a) => !a.previewUrl && !a.file.type.startsWith('image/')),
 )
 
-const hasSelectedTags = computed(() => Boolean(selectedKb.value))
+const hasSelectedTags = computed(() => selectedKbs.value.length > 0)
 
 function attachmentStatusLabel(item: PendingChatAttachment): string {
   if (item.status === 'uploading') return '上传中…'
@@ -76,8 +79,8 @@ function openKbSelector() {
   showKbSelector.value = true
 }
 
-function removeKbTag() {
-  selectedKbId.value = null
+function removeKbTag(id: number) {
+  selectedKbIds.value = props.selectedKbIds.filter((x) => x !== id)
 }
 
 function triggerImageUpload() {
@@ -169,16 +172,20 @@ defineExpose({
         </div>
       </div>
 
-      <!-- 已选知识库标签 -->
+      <!-- 已选知识库标签（可多选） -->
       <div v-if="hasSelectedTags" class="selected-tags-inline">
-        <span v-if="selectedKb" class="mention-chip mention-chip--kb">
+        <span
+          v-for="kb in selectedKbs"
+          :key="kb.id"
+          class="mention-chip mention-chip--kb"
+        >
           <span class="mention-chip__icon-wrap">
             <span class="mention-chip__icon">
               <t-icon name="folder-open" />
             </span>
           </span>
-          <span class="mention-chip__name" :title="selectedKb.name">{{ selectedKb.name }}</span>
-          <span class="mention-chip__remove" @click.stop="removeKbTag">×</span>
+          <span class="mention-chip__name" :title="kb.name">{{ kb.name }}</span>
+          <span class="mention-chip__remove" @click.stop="removeKbTag(kb.id)">×</span>
         </span>
       </div>
 
@@ -241,11 +248,11 @@ defineExpose({
             </div>
           </t-tooltip>
 
-          <t-tooltip content="选择知识库" placement="top" theme="light">
+          <t-tooltip content="选择知识库（可多选）" placement="top" theme="light">
             <div
               ref="kbButtonRef"
               class="control-btn kb-btn"
-              :class="{ active: selectedKbId != null }"
+              :class="{ active: selectedKbIds.length > 0 }"
               @click.stop="openKbSelector"
             >
               <svg
@@ -265,7 +272,7 @@ defineExpose({
                   stroke-linejoin="round"
                 />
               </svg>
-              <span v-if="selectedKbId != null" class="kb-count">1</span>
+              <span v-if="selectedKbIds.length > 0" class="kb-count">{{ selectedKbIds.length }}</span>
             </div>
           </t-tooltip>
 
@@ -296,9 +303,9 @@ defineExpose({
       :visible="showKbSelector"
       :anchor-el="kbButtonRef"
       :kb-list="kbList"
-      :selected-kb-id="selectedKbId"
+      :selected-kb-ids="selectedKbIds"
       @close="showKbSelector = false"
-      @select="selectedKbId = $event"
+      @update:selected-kb-ids="selectedKbIds = $event"
     />
 
     <p class="input-hint">内容由 AI 生成，请注意甄别准确性</p>

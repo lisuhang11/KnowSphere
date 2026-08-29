@@ -43,6 +43,7 @@ class KnowledgeBaseRepository:
         enable_parent_child: bool | None = None,
         parent_chunk_size: int | None = None,
         child_chunk_size: int | None = None,
+        graph_enabled: bool | None = None,
     ) -> dict[str, Any]:
         """创建知识库。分块/嵌入参数缺省时用全局配置；embedding 创建后不可修改。
 
@@ -61,6 +62,7 @@ class KnowledgeBaseRepository:
         )
         parent_chunk_size = parent_chunk_size or settings.parent_chunk_size
         child_chunk_size = child_chunk_size or settings.child_chunk_size
+        graph_enabled = bool(graph_enabled) if graph_enabled is not None else False
         if embedding_dim > MAX_HNSW_DIM:
             raise ValueError(
                 f"维度 {embedding_dim} 超过 pgvector HNSW 索引上限 {MAX_HNSW_DIM}，"
@@ -72,14 +74,14 @@ class KnowledgeBaseRepository:
                 INSERT INTO knowledge_bases
                     (name, description, owner, chunk_size, chunk_overlap,
                      embedding_model_id, embedding_dim, chunk_strategy, summary_model_id,
-                     enable_parent_child, parent_chunk_size, child_chunk_size)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     enable_parent_child, parent_chunk_size, child_chunk_size, graph_enabled)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING {KB_COLS}
                 """,
                 (
                     name, description, owner, chunk_size, chunk_overlap,
                     embedding_model_id, embedding_dim, chunk_strategy, summary_model_id,
-                    enable_parent_child, parent_chunk_size, child_chunk_size,
+                    enable_parent_child, parent_chunk_size, child_chunk_size, graph_enabled,
                 ),
             ).fetchone()
             conn.commit()
@@ -166,8 +168,9 @@ class KnowledgeBaseRepository:
         enable_parent_child: bool | None = None,
         parent_chunk_size: int | None = None,
         child_chunk_size: int | None = None,
+        graph_enabled: bool | None = None,
     ) -> dict[str, Any] | None:
-        """更新知识库名称/描述/分块参数/摘要模型（None 表示不修改）。不存在返回 None。
+        """更新知识库名称/描述/分块参数/摘要模型/图谱开关（None 表示不修改）。不存在返回 None。
 
         embedding 模型创建后禁止修改（Q8），此处不提供该字段。
         summary_model_id 传空字符串表示清空。
@@ -195,6 +198,7 @@ class KnowledgeBaseRepository:
                         enable_parent_child = COALESCE(%s, enable_parent_child),
                         parent_chunk_size = COALESCE(%s, parent_chunk_size),
                         child_chunk_size = COALESCE(%s, child_chunk_size),
+                        graph_enabled = COALESCE(%s, graph_enabled),
                         {summary_sql}
                         updated_at = now()
                     WHERE id = %s AND owner = %s
@@ -209,6 +213,7 @@ class KnowledgeBaseRepository:
                         enable_parent_child,
                         parent_chunk_size,
                         child_chunk_size,
+                        graph_enabled,
                         summary_arg,
                         kb_id,
                         owner,
@@ -226,6 +231,7 @@ class KnowledgeBaseRepository:
                         enable_parent_child = COALESCE(%s, enable_parent_child),
                         parent_chunk_size = COALESCE(%s, parent_chunk_size),
                         child_chunk_size = COALESCE(%s, child_chunk_size),
+                        graph_enabled = COALESCE(%s, graph_enabled),
                         summary_model_id = NULL,
                         updated_at = now()
                     WHERE id = %s AND owner = %s
@@ -234,7 +240,7 @@ class KnowledgeBaseRepository:
                     (
                         name, description, chunk_size, chunk_overlap, chunk_strategy,
                         enable_parent_child, parent_chunk_size, child_chunk_size,
-                        kb_id, owner,
+                        graph_enabled, kb_id, owner,
                     ),
                 ).fetchone()
             else:
@@ -249,6 +255,7 @@ class KnowledgeBaseRepository:
                         enable_parent_child = COALESCE(%s, enable_parent_child),
                         parent_chunk_size = COALESCE(%s, parent_chunk_size),
                         child_chunk_size = COALESCE(%s, child_chunk_size),
+                        graph_enabled = COALESCE(%s, graph_enabled),
                         updated_at = now()
                     WHERE id = %s AND owner = %s
                     RETURNING {KB_COLS}
@@ -256,7 +263,7 @@ class KnowledgeBaseRepository:
                     (
                         name, description, chunk_size, chunk_overlap, chunk_strategy,
                         enable_parent_child, parent_chunk_size, child_chunk_size,
-                        kb_id, owner,
+                        graph_enabled, kb_id, owner,
                     ),
                 ).fetchone()
             conn.commit()

@@ -34,6 +34,7 @@ const form = ref({
   description: '',
   embedding_model_id: '',
   summary_model_id: '',
+  graph_enabled: false,
   chunking: {
     strategy: 'auto',
     chunkSize: CHUNK_DEFAULTS.chunkSize,
@@ -78,6 +79,7 @@ function openCreate() {
     description: '',
     embedding_model_id: defaultEmbeddingId(),
     summary_model_id: defaultSummaryId(),
+    graph_enabled: false,
     chunking: {
       strategy: 'auto',
       chunkSize: CHUNK_DEFAULTS.chunkSize,
@@ -97,6 +99,7 @@ function openEdit(kb: KnowledgeBase) {
     description: kb.description,
     embedding_model_id: kb.embedding_model_id,
     summary_model_id: kb.summary_model_id || defaultSummaryId(),
+    graph_enabled: Boolean(kb.graph_enabled),
     chunking: {
       strategy: kb.chunk_strategy || 'auto',
       chunkSize: kb.chunk_size,
@@ -134,6 +137,7 @@ async function saveKb() {
         enable_parent_child: c.enableParentChild,
         parent_chunk_size: c.parentChunkSize,
         child_chunk_size: c.childChunkSize,
+        graph_enabled: form.value.graph_enabled,
       })
       MessagePlugin.success('知识库已更新')
     } else {
@@ -153,6 +157,7 @@ async function saveKb() {
         enable_parent_child: c.enableParentChild,
         parent_chunk_size: c.parentChunkSize,
         child_chunk_size: c.childChunkSize,
+        graph_enabled: form.value.graph_enabled,
       })
       MessagePlugin.success('知识库已创建')
     }
@@ -314,6 +319,12 @@ onMounted(() => {
             :all-models="allModels"
             placeholder="选择问答模型"
           />
+        </t-form-item>
+        <t-form-item
+          label="知识图谱"
+          help="开启后，文档入库会抽取实体关系写入 Neo4j（需 .env 中 NEO4J_ENABLE=true 并启动 neo4j 服务）。已有文档需重新解析才会建图。"
+        >
+          <t-switch v-model="form.graph_enabled" />
         </t-form-item>
         <t-form-item
           label="切块策略"

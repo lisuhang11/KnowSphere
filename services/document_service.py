@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,8 @@ from utils.object_store import (
     materialize_document_path,
     require_object_store,
 )
+
+logger = logging.getLogger(__name__)
 
 class DocumentService:
     def __init__(self, store: ChunkStore() | None = None) -> None:
@@ -142,6 +145,14 @@ class DocumentService:
         deleted = self.store.delete_document(document_id, owner=owner)
         if row is None and deleted == 0:
             raise NotFoundError(f"文档不存在: {document_id}")
+        try:
+            from services.graph_extract_service import GraphExtractService
+
+            kb_id = (row or {}).get("knowledge_base_id") or (meta or {}).get("knowledge_base_id")
+            if kb_id is not None:
+                GraphExtractService(self.store).delete_document_graph(int(kb_id), document_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("delete document graph failed for %s: %s", document_id, exc)
         return {
             "document_id": document_id,
             "deleted_chunks": deleted,

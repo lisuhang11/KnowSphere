@@ -33,6 +33,8 @@ dependencies = [
     "pypdfium2>=4",  # PDF 逐页路由（文本页直出 / 扫描页渲染给 OCR）
     "pillow>=10",  # PDF 内嵌图片解码（/SMask 软蒙版合成）
     "minio>=7.2",  # 内嵌图片对象存储（Q3：MinIO 存图 + storage_key 元数据）
+    # 知识图谱（Neo4j；NEO4J_ENABLE=false 时不连接）
+    "neo4j>=5.27",
     # 评测：ragas judge 走 langchain 封装；datasets 钉 <3（hotpot_qa 是 script 数据集，3.0 起不支持 trust_remote_code）
     "ragas[langchain]>=0.2,<0.3",
     "datasets>=2.19,<3",

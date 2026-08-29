@@ -263,12 +263,28 @@ class ChunkRepository:
                 "document_id": r[1],
                 "chunk_index": r[2],
                 "content": r[3],
-                "metadata": load_jsonb(r[4]),
+                "metadata": meta,
                 "chunk_type": r[5],
                 "parent_chunk_id": r[6],
+                "file_name": meta.get("source") if isinstance(meta, dict) else None,
             }
             for r in rows
+            for meta in [load_jsonb(r[4])]
         ]
+
+    def list_text_chunk_ids(
+        self, document_id: str, owner: str | None = None
+    ) -> list[int]:
+        """返回文档全部可检索文本分块 ID（按 chunk_index 升序），供图谱抽取扇出。"""
+        owner = owner or get_current_owner() or settings.default_owner
+        with psycopg.connect(self.dsn) as conn:
+            rows = conn.execute(
+                "SELECT id FROM chunks "
+                "WHERE document_id = %s AND owner = %s AND chunk_type = 'text' "
+                "ORDER BY chunk_index",
+                (document_id, owner),
+            ).fetchall()
+        return [int(r[0]) for r in rows]
 
     def replace_document_chunks(
         self,

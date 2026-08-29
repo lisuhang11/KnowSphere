@@ -1,0 +1,6 @@
+Resolved 219 packages in 7.84s
+warning: The package `ragas==0.2.15` does not have an extra named `langchain`
+   Building knowsphere @ file:///home/lisuhang/KnowSphere
+      Built knowsphere @ file:///home/lisuhang/KnowSphere
+Prepared 3 packages in 1.93s
+error: failed to remove file `/home/lisuhang/KnowSphere/.venv/lib/python3.12/site-packages/_editable_impl_knowsphere.pth`: Read-only file system (os error 30)

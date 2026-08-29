@@ -81,6 +81,37 @@ def reprocess_document_task(
         tasks.mark_failed(document_id, owner, str(exc))
         return {"document_id": document_id, "status": "failed", "error": str(exc)}
 
+@shared_task(
+    bind=True,
+    name="api.tasks.extract_chunk_graph_task",
+    max_retries=2,
+    default_retry_delay=5,
+    acks_late=True,
+)
+def extract_chunk_graph_task(
+    self,
+    chunk_id: int,
+    kb_id: int,
+    document_id: str,
+    model_id: str | None = None,
+) -> dict:
+    """单 chunk 实体关系抽取并写入 Neo4j。"""
+    from services.graph_extract_service import GraphExtractService
+
+    try:
+        return GraphExtractService().extract_chunk(
+            chunk_id=chunk_id,
+            kb_id=kb_id,
+            document_id=document_id,
+            model_id=model_id,
+        )
+    except Exception as exc:
+        logger.warning("graph extract chunk %s failed: %s", chunk_id, exc)
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc)
+        return {"chunk_id": chunk_id, "status": "failed", "error": str(exc)}
+
+
 @shared_task(name="api.tasks.housekeeping_recover_stale")
 def housekeeping_recover_stale() -> dict:
     count = get_document_task_service().recover_stale_processing(

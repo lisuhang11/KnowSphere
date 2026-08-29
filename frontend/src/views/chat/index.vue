@@ -63,10 +63,10 @@ const canSend = computed(() => {
   return true
 })
 
-const selectedKbId = computed<number | null | undefined>({
-  get: () => chatStore.currentKbIds[0] ?? null,
+const selectedKbIds = computed<number[]>({
+  get: () => chatStore.currentKbIds,
   set: (v) => {
-    void chatStore.setKbId(v)
+    void chatStore.setKbIds(v)
   },
 })
 
@@ -183,7 +183,7 @@ onMounted(() => {
         :can-send="canSend"
         :kb-list="kbList"
         :all-models="allModels"
-        v-model:selected-kb-id="selectedKbId"
+        v-model:selected-kb-ids="selectedKbIds"
         v-model:selected-chat-model-id="selectedChatModelId"
         v-model:selected-vlm-model-id="selectedVlmModelId"
         :pending-attachments="pendingAttachments"

@@ -55,7 +55,9 @@ def _prepare_messages(
     if kb_ids:
         tail = (
             "\n\n【本轮已限定知识库】"
-            "回答人物/经历/项目等问题时，仅依据 doc_retrieval 结果或已注入的检索工具消息；"
+            "回答人物/经历/项目等问题时，仅依据 doc_retrieval / query_knowledge_graph 结果"
+            "或已注入的检索工具消息；"
+            "关系型问题（A 与 B 的关系、某实体关联概念）可优先 query_knowledge_graph；"
             "禁止使用互联网公开常识（同名公众人物等）臆测；检索无相关内容时明确说明未找到。"
         )
         if intent in ("follow_up", "summarize"):
