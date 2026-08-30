@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     # 文档解析（Q1 内嵌引擎）：OCR 开关与解析引擎
     ocr_enabled: bool = True  # 扫描 PDF / 图片直传时是否走 PaddleOCR
     parse_engine: str = "builtin"  # builtin | markitdown
+    # 聊天附件：解析器 OCR 后正文仍很少时，是否用 VLM 再 OCR 扫描件（独立图片不受此开关限制）
+    chat_attachment_vlm_ocr: bool = True
 
     # 异步任务（Celery + Redis 队列）
     redis_url: str = "redis://localhost:6379/0"

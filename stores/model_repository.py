@@ -368,6 +368,19 @@ class ModelStore():
             and rec.get("status") not in ("deleted", "disabled")
         )
 
+    def has_usable_vlm(self) -> bool:
+        """是否存在可用于聊天图片理解的 VLLM（对齐 WeKnora：无 VLM 不允许传图）。"""
+        sid = (settings.chat_vlm_model_id or "").strip()
+        if sid and self.is_vllm_model_id_valid(sid):
+            return True
+        rec = self.get_default_model("VLLM")
+        if rec and rec.get("status") not in ("deleted", "disabled"):
+            return True
+        for m in self.list_models(type_="VLLM"):
+            if m.get("status") not in ("deleted", "disabled"):
+                return True
+        return False
+
     def count_model_references(self, model_id: str) -> dict[str, int]:
         with self._conn() as conn:
             emb = conn.execute(

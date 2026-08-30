@@ -59,6 +59,8 @@ def run_intent_item(item: QAPair) -> SampleResult:
             kb_selected=kb_selected,
             history_pairs=history_pairs,
             needs_retrieval_gt=needs_gt,
+            has_images=has_images,
+            has_attachments=has_attachments,
         )
         return SampleResult(
             qid=item.qid,
@@ -87,6 +89,8 @@ def run_intent_item(item: QAPair) -> SampleResult:
                     kb_selected=kb_selected,
                     history_pairs=history_pairs,
                     needs_retrieval_gt=needs_gt,
+                    has_images=has_images,
+                    has_attachments=has_attachments,
                 )
             ),
             latency_ms=int((time.perf_counter() - t0) * 1000),
@@ -102,6 +106,4 @@ def expected_needs_retrieval(item: QAPair) -> bool:
     return needs_retrieval(
         str(meta.get("intent_gt") or None),
         bool(meta.get("kb_selected", True)),
-        query=item.question,
-        history_pairs=meta.get("history") or [],
     )

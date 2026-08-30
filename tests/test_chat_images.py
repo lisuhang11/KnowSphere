@@ -65,3 +65,55 @@ def test_save_chat_images():
     assert len(saved) == 1
     assert saved[0].public_url.startswith("/api/sessions/sess-1/chat-images/")
     store.put_bytes.assert_called_once()
+
+
+def test_has_usable_vlm_false_when_no_vllm(monkeypatch):
+    from config.settings import settings
+    from stores.model_repository import ModelStore
+
+    monkeypatch.setattr(settings, "chat_vlm_model_id", "")
+    monkeypatch.setattr(ModelStore, "is_vllm_model_id_valid", lambda self, mid: False)
+    monkeypatch.setattr(ModelStore, "get_default_model", lambda self, t: None)
+    monkeypatch.setattr(ModelStore, "list_models", lambda self, type_=None, source=None: [])
+    assert ModelStore().has_usable_vlm() is False
+
+
+def test_has_usable_vlm_true_with_settings_id(monkeypatch):
+    from config.settings import settings
+    from stores.model_repository import ModelStore
+
+    monkeypatch.setattr(settings, "chat_vlm_model_id", "model-vlm")
+    monkeypatch.setattr(ModelStore, "is_vllm_model_id_valid", lambda self, mid: mid == "model-vlm")
+    assert ModelStore().has_usable_vlm() is True
+
+
+def test_has_usable_vlm_true_with_enabled_catalog(monkeypatch):
+    from config.settings import settings
+    from stores.model_repository import ModelStore
+
+    monkeypatch.setattr(settings, "chat_vlm_model_id", "")
+    monkeypatch.setattr(ModelStore, "get_default_model", lambda self, t: None)
+    monkeypatch.setattr(
+        ModelStore,
+        "list_models",
+        lambda self, type_=None, source=None: [{"id": "model-x", "type": "VLLM", "status": "active"}],
+    )
+    assert ModelStore().has_usable_vlm() is True
+
+
+def test_has_usable_vlm_ignores_disabled(monkeypatch):
+    from config.settings import settings
+    from stores.model_repository import ModelStore
+
+    monkeypatch.setattr(settings, "chat_vlm_model_id", "")
+    monkeypatch.setattr(
+        ModelStore,
+        "get_default_model",
+        lambda self, t: {"id": "model-d", "type": "VLLM", "status": "disabled"},
+    )
+    monkeypatch.setattr(
+        ModelStore,
+        "list_models",
+        lambda self, type_=None, source=None: [{"id": "model-d", "type": "VLLM", "status": "disabled"}],
+    )
+    assert ModelStore().has_usable_vlm() is False

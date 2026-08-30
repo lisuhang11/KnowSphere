@@ -241,6 +241,20 @@
           {"query": "差旅标准", "answer": "市内交通可实报实销，住宿按职级限额。"}
         ]
       }
+    },
+    {
+      "qid": 18,
+      "question": "这文档里是啥",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "doc_only",
+        "needs_retrieval_gt": false,
+        "kb_selected": false,
+        "history": [],
+        "has_images": false,
+        "has_attachments": true
+      }
     }
   ]
 }

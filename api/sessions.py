@@ -22,6 +22,7 @@ from api.chat import get_agent, get_checkpointer
 from config.settings import settings
 from utils.chat_images import (
     ChatImageError,
+    NO_VLM_IMAGE_UPLOAD_DETAIL,
     build_human_message_saved_images_only,
     load_chat_image_bytes,
     save_chat_images,
@@ -74,11 +75,16 @@ def _sanitize_kb_ids(raw: Any) -> list[int]:
     if not isinstance(raw, (list, tuple)):
         return []
     ids: list[int] = []
+    seen: set[int] = set()
     for v in raw:
         try:
-            ids.append(int(v))
+            n = int(v)
         except (TypeError, ValueError):
             continue
+        if n in seen:
+            continue
+        seen.add(n)
+        ids.append(n)
     return ids
 
 def _row_to_session(row) -> dict[str, Any]:
@@ -503,9 +509,17 @@ async def stream_session_run(session_id: str, body: SessionStreamRequest) -> Str
     if attachment_ids and not settings.chat_images_enabled:
         raise HTTPException(status_code=400, detail="附件上传未启用")
 
+    if body.images:
+        if not settings.chat_images_enabled:
+            raise HTTPException(status_code=400, detail="图片上传未启用")
+        if not ModelStore().has_usable_vlm():
+            raise HTTPException(status_code=400, detail=NO_VLM_IMAGE_UPLOAD_DETAIL)
+
     kb_ids = await asyncio.to_thread(_db_get_session_kb_ids, sid)
     if body.kb_ids is not None:
+        # 本轮请求为权威来源（含空列表=清除），并回写会话避免与 UI 脱节
         kb_ids = _sanitize_kb_ids(body.kb_ids)
+        await asyncio.to_thread(_db_update_session, sid, None, kb_ids)
     chat_model_id = await asyncio.to_thread(_resolve_chat_model_id, body, kb_ids)
     vlm_model_id: str | None = None
     if body.vlm_model_id and body.vlm_model_id.strip():

@@ -12,6 +12,7 @@ from langchain_core.messages import HumanMessage
 
 from config.settings import settings
 from utils.attachment_chunks import ATTACHMENT_PROMPT_BUDGET_CHARS, select_attachment_content
+from utils.attachment_images import is_visual_document_query
 from utils.temporary_attachments import (
     MAX_ATTACHMENTS_PER_MESSAGE,
     STATUS_FAILED,
@@ -182,13 +183,35 @@ def build_human_message_with_attachments(
         text = f"{text}\n\n[会话附件内容]\n{block}".strip()
 
     image_metas: list[dict[str, str]] = []
-    for row in attachment_rows:
-        if not is_image_attachment(row.get("file_name") or ""):
-            continue
-        aid = row["id"]
-        url = attachment_preview_url(session_id, aid)
-        caption = (row.get("image_description") or row.get("selected_content") or row.get("content") or "").strip()
+    seen_urls: set[str] = set()
+
+    def _add_image_meta(url: str, caption: str = "") -> None:
+        url = (url or "").strip()
+        if not url or url in seen_urls or len(image_metas) >= 4:
+            return
+        seen_urls.add(url)
         image_metas.append({"url": url, **({"caption": caption} if caption else {})})
+
+    visual = is_visual_document_query(query)
+    for row in attachment_rows:
+        name = row.get("file_name") or ""
+        aid = row["id"]
+        if is_image_attachment(name):
+            caption = (
+                row.get("image_description")
+                or row.get("selected_content")
+                or row.get("content")
+                or ""
+            ).strip()
+            _add_image_meta(attachment_preview_url(session_id, aid), caption)
+        if visual or is_image_attachment(name):
+            for ref in row.get("image_refs") or []:
+                if not isinstance(ref, dict):
+                    continue
+                _add_image_meta(
+                    str(ref.get("url") or ""),
+                    str(ref.get("filename") or ""),
+                )
 
     msg = HumanMessage(content=text)
     if image_metas:

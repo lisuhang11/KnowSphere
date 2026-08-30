@@ -31,11 +31,33 @@ function sessionTitle(s: Session): string {
   return typeof title === 'string' && title.trim() ? title : '新对话'
 }
 
-function sessionKbIds(s: Session | null | undefined): number[] {
-  if (s?.kb_ids?.length) return s.kb_ids
-  const raw = s?.metadata?.kb_ids
+function normalizeKbIds(raw: unknown): number[] {
   if (!Array.isArray(raw)) return []
-  return raw.filter((v): v is number => typeof v === 'number')
+  const out: number[] = []
+  const seen = new Set<number>()
+  for (const v of raw) {
+    const n = typeof v === 'number' ? v : typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : NaN
+    if (!Number.isFinite(n) || seen.has(n)) continue
+    seen.add(n)
+    out.push(n)
+  }
+  return out
+}
+
+function sessionKbIds(s: Session | null | undefined): number[] {
+  // kb_ids 即使是 [] 也是权威值，不能因 length=0 回落到旧 metadata
+  if (Array.isArray(s?.kb_ids)) return normalizeKbIds(s.kb_ids)
+  return normalizeKbIds(s?.metadata?.kb_ids)
+}
+
+function applyKbIdsToThread(t: Session | undefined, ids: number[]) {
+  if (!t) return
+  t.kb_ids = ids
+  if (ids.length) t.metadata = { ...t.metadata, kb_ids: ids }
+  else if (t.metadata) {
+    const { kb_ids: _drop, ...rest } = t.metadata
+    t.metadata = rest
+  }
 }
 
 export const useChatStore = defineStore('chat', () => {
@@ -43,6 +65,8 @@ export const useChatStore = defineStore('chat', () => {
   const currentThreadId = ref<string | null>(null)
   const currentKbIds = ref<number[]>([])
   const messagesClearedAt = ref<{ id: string; at: number } | null>(null)
+  /** 防止快速多选时 updateSession 乱序回写覆盖最新选择 */
+  let kbSaveSeq = 0
 
   async function loadThreads() {
     const list = await listSessions()
@@ -56,20 +80,29 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function setKbIds(ids: number[]) {
-    currentKbIds.value = ids
-    if (currentThreadId.value) {
-      try {
-        await updateSession(currentThreadId.value, { kb_ids: ids })
-        const t = threads.value.find((x) => sessionId(x) === currentThreadId.value)
-        if (t) {
-          t.kb_ids = ids
-          if (ids.length) t.metadata = { ...t.metadata, kb_ids: ids }
-          else if (t.metadata) delete t.metadata.kb_ids
-        }
-      } catch (e) {
-        console.warn('保存知识库选择失败', e)
-      }
+    const next = normalizeKbIds(ids)
+    currentKbIds.value = next
+    const tid = currentThreadId.value
+    if (!tid) return
+    const seq = ++kbSaveSeq
+    try {
+      await updateSession(tid, { kb_ids: next })
+      if (seq !== kbSaveSeq || currentThreadId.value !== tid) return
+      applyKbIdsToThread(
+        threads.value.find((x) => sessionId(x) === tid),
+        next,
+      )
+    } catch (e) {
+      if (seq === kbSaveSeq) console.warn('保存知识库选择失败', e)
     }
+  }
+
+  /** 去掉已删除/不可见的知识库 ID，保持选择与列表一致 */
+  function pruneKbIds(validIds: Iterable<number>) {
+    const allow = new Set(validIds)
+    const next = currentKbIds.value.filter((id) => allow.has(id))
+    if (next.length === currentKbIds.value.length) return
+    void setKbIds(next)
   }
 
   async function setKbId(id: number | null | undefined) {
@@ -80,6 +113,9 @@ export const useChatStore = defineStore('chat', () => {
     const t = await createSession(title, currentKbIds.value)
     currentThreadId.value = sessionId(t)
     await loadThreads()
+    // loadThreads 后重新对齐当前会话的 kb（create 已带上 currentKbIds）
+    const created = threads.value.find((x) => sessionId(x) === currentThreadId.value)
+    if (created) currentKbIds.value = sessionKbIds(created)
     return t
   }
 
@@ -126,6 +162,7 @@ export const useChatStore = defineStore('chat', () => {
     selectThread,
     setKbIds,
     setKbId,
+    pruneKbIds,
     createChat,
     removeThread,
     renameThread,

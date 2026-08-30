@@ -7,6 +7,7 @@ from langchain_core.runnables import RunnableConfig
 
 from config.settings import settings
 from states import KnowSphereState
+from schemas.query import fallback_intent
 from utils.message_content import (
     message_has_attachments,
     message_has_images,
@@ -73,6 +74,22 @@ def extract_history_pairs(messages: list[BaseMessage], max_rounds: int) -> tuple
     return current_query, pairs
 
 
+def _empty_turn(*, kb_selected: bool = False) -> dict:
+    """清零单轮临时通道，避免 checkpoint 脏读上一轮 intent / 图片描述等。"""
+    return {
+        "current_query": "",
+        "rewrite_query": "",
+        "intent": "",
+        "history_pairs": [],
+        "kb_selected": kb_selected,
+        "system_prompt_override": "",
+        "has_images": False,
+        "has_attachments": False,
+        "image_description": "",
+        "last_sources": [],
+    }
+
+
 def prepare_context(state: KnowSphereState, config: RunnableConfig) -> dict:
     messages = list(state.get("messages") or [])
     current_query, history_pairs = extract_history_pairs(
@@ -81,7 +98,7 @@ def prepare_context(state: KnowSphereState, config: RunnableConfig) -> dict:
     kb_selected = bool(kb_ids_from_config(config))
 
     if not current_query:
-        return {}
+        return _empty_turn(kb_selected=kb_selected)
 
     has_images = False
     has_attachments = False
@@ -91,11 +108,15 @@ def prepare_context(state: KnowSphereState, config: RunnableConfig) -> dict:
         has_images = message_has_images(last_human)
         has_attachments = message_has_attachments(last_human)
 
-    default_intent = "kb_search" if kb_selected else "no_kb"
+    default_intent = fallback_intent(
+        kb_selected=kb_selected,
+        has_images=has_images,
+        has_attachments=has_attachments,
+    )
     return {
+        **_empty_turn(kb_selected=kb_selected),
         "current_query": current_query,
         "history_pairs": history_pairs,
-        "kb_selected": kb_selected,
         "rewrite_query": current_query,
         "intent": default_intent,
         "has_images": has_images,

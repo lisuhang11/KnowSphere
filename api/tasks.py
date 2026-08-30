@@ -140,16 +140,16 @@ def cleanup_expired_temporary_attachments() -> dict:
     acks_late=True,
 )
 def parse_temporary_attachment_task(self, attachment_id: str, session_id: str) -> dict:
-    """解析会话临时附件（文档 OCR/文本 或 图片 VLM）。"""
+    """解析会话临时附件：解析器/PaddleOCR 先跑，正文仍很少才 VLM OCR。"""
     from pathlib import Path
 
     from ingestion.parser import ParserError, parse_document
     from services.document_task_service import run_with_materialized_path
-    from utils.chat_images import SavedChatImage, analyze_chat_images
+    from utils.attachment_images import persist_attachment_parse
+    from utils.attachment_vlm import maybe_vlm_enrich_attachment
     from utils.temporary_attachments import (
         STATUS_UPLOADED,
         TemporaryAttachmentStore,
-        attachment_preview_url,
         is_image_attachment,
     )
 
@@ -168,31 +168,40 @@ def parse_temporary_attachment_task(self, attachment_id: str, session_id: str) -
         def _parse(path: str) -> None:
             content = ""
             image_description = ""
-            if is_image_attachment(file_name):
-                saved = [
-                    SavedChatImage(
-                        image_id=attachment_id.replace("-", ""),
-                        storage_key=storage_key,
-                        public_url=attachment_preview_url(session_id, attachment_id),
-                    )
-                ]
-                image_description = analyze_chat_images(saved, "")
-                content = image_description
-                try:
-                    parsed = parse_document(path, engine=settings.parse_engine)
-                    if (parsed.markdown or "").strip():
-                        content = parsed.markdown.strip()
-                except ParserError:
-                    pass
-            else:
-                parsed = parse_document(path, engine=settings.parse_engine)
-                content = (parsed.markdown or "").strip()
+            image_refs: list[dict] = []
+            parse_options = {
+                "file_name": Path(file_name).name,
+                "ocr_enabled": settings.ocr_enabled,
+            }
+            parsed = None
+            try:
+                parsed = parse_document(
+                    path, engine=settings.parse_engine, parse_options=parse_options
+                )
+            except ParserError as exc:
+                if not is_image_attachment(file_name):
+                    raise
+                logger.warning("图片附件文档解析失败，回退 VLM: %s", exc)
+
+            if parsed is not None:
+                content, image_refs = persist_attachment_parse(
+                    session_id, attachment_id, parsed, file_name=file_name
+                )
+
+            content, image_description = maybe_vlm_enrich_attachment(
+                content=content,
+                file_name=file_name,
+                original_storage_key=storage_key,
+                image_refs=image_refs,
+            )
+
             if not content:
                 content = image_description or "（未能提取文本内容）"
             store.mark_ready(
                 attachment_id,
                 content=content,
                 image_description=image_description,
+                image_refs=image_refs,
             )
 
         run_with_materialized_path(storage_key, file_name, None, _parse)

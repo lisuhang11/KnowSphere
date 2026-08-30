@@ -13,8 +13,9 @@ from prompts.intent_prompts import intent_system_prompt
 from prompts.query_understand import build_query_understand_prompts
 from schemas.query import (
     QueryUnderstandOutput,
-    is_vague_query,
+    fallback_intent,
     needs_retrieval,
+    normalize_intent,
     parse_query_understand_json,
     sanitize_rewrite_query,
 )
@@ -59,19 +60,12 @@ def _last_human_message(state: KnowSphereState) -> HumanMessage | None:
     return None
 
 
-def _apply_intent_side_effects(
-    result: dict,
-    *,
-    current_query: str,
-    kb_selected: bool,
-    history_pairs: list[dict[str, str]],
-) -> dict:
-    """写入 intent 专用系统提示覆盖（非检索路径）。"""
+def _apply_intent_side_effects(result: dict, *, kb_selected: bool) -> dict:
+    """非检索意图写入专用系统提示覆盖。"""
     intent = result.get("intent")
-    if needs_retrieval(intent, kb_selected, query=current_query, history_pairs=history_pairs):
+    if needs_retrieval(intent, kb_selected):
         return {"system_prompt_override": ""}
-
-    override = intent_system_prompt(intent if kb_selected else "no_kb")
+    override = intent_system_prompt(intent)
     if override:
         return {"system_prompt_override": override}
     return {"system_prompt_override": ""}
@@ -139,32 +133,12 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
 
     result: dict = {
         "rewrite_query": current_query,
-        "intent": "kb_search" if kb_selected else "no_kb",
+        "intent": fallback_intent(
+            kb_selected=kb_selected,
+            has_images=has_images,
+            has_attachments=has_attachments,
+        ),
     }
-
-    if (
-        kb_selected
-        and is_vague_query(current_query, history_pairs)
-        and not has_images
-        and not has_attachments
-    ):
-        result["intent"] = "clarification"
-        _emit_thinking(
-            "【1/5 查询理解】\n"
-            f"原问题：{current_query}\n"
-            "规则判定：问题过于含糊，缺少指代对象\n"
-            "意图：clarification → 跳过检索，请用户补充上下文",
-            None,
-        )
-        result.update(
-            _apply_intent_side_effects(
-                result,
-                current_query=current_query,
-                kb_selected=kb_selected,
-                history_pairs=history_pairs,
-            )
-        )
-        return result
 
     if not settings.enable_rewrite and not has_images and not has_attachments:
         _emit_thinking(
@@ -174,21 +148,12 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
             f"意图：{result['intent']}"
             + (
                 " → 需要检索知识库"
-                if needs_retrieval(
-                    result["intent"], kb_selected, query=current_query, history_pairs=history_pairs
-                )
+                if needs_retrieval(result["intent"], kb_selected)
                 else " → 跳过检索"
             ),
             None,
         )
-        result.update(
-            _apply_intent_side_effects(
-                result,
-                current_query=current_query,
-                kb_selected=kb_selected,
-                history_pairs=history_pairs,
-            )
-        )
+        result.update(_apply_intent_side_effects(result, kb_selected=kb_selected))
         return result
 
     system_prompt, user_prompt = build_query_understand_prompts(
@@ -233,29 +198,18 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
 
         if rewrite:
             result["rewrite_query"] = rewrite
-        if not kb_selected:
-            result["intent"] = "no_kb"
-        elif intent == "clarification" or (
-            is_vague_query(current_query, history_pairs)
-            and not has_images
-            and not has_attachments
-        ):
-            result["intent"] = "clarification"
-        else:
-            result["intent"] = intent
-        if image_description:
-            result["image_description"] = image_description
+        result["intent"] = normalize_intent(
+            intent,
+            kb_selected=kb_selected,
+            has_images=has_images,
+            has_attachments=has_attachments,
+        )
+        # 始终写入（含空串），覆盖 checkpoint 中上一轮残留
+        result["image_description"] = image_description
     except Exception as exc:
         logger.warning("query_understand 失败，降级原 query: %s", exc)
         _emit_thinking("【1/5 查询理解】LLM 失败，降级使用原问题。", None)
-        result.update(
-            _apply_intent_side_effects(
-                result,
-                current_query=current_query,
-                kb_selected=kb_selected,
-                history_pairs=history_pairs,
-            )
-        )
+        result.update(_apply_intent_side_effects(result, kb_selected=kb_selected))
         return result
 
     thinking_extra = ""
@@ -269,31 +223,18 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
         f"意图：{result['intent']}"
         + (
             " → 需要检索知识库"
-            if needs_retrieval(
-                result["intent"], kb_selected, query=current_query, history_pairs=history_pairs
-            )
+            if needs_retrieval(result["intent"], kb_selected)
             else " → 跳过检索"
         )
         + thinking_extra,
         None,
     )
-    result.update(
-        _apply_intent_side_effects(
-            result,
-            current_query=current_query,
-            kb_selected=kb_selected,
-            history_pairs=history_pairs,
-        )
-    )
+    result.update(_apply_intent_side_effects(result, kb_selected=kb_selected))
     return result
 
 
 def route_after_understand(state: KnowSphereState) -> str:
     """条件边：需要检索 → prefetch_retrieval，否则 → agent。"""
-    kb_selected = bool(state.get("kb_selected"))
-    intent = state.get("intent")
-    query = state.get("current_query")
-    history_pairs = state.get("history_pairs")
-    if needs_retrieval(intent, kb_selected, query=query, history_pairs=history_pairs):
+    if needs_retrieval(state.get("intent"), bool(state.get("kb_selected"))):
         return "prefetch_retrieval"
     return "agent"

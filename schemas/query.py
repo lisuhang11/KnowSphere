@@ -35,24 +35,6 @@ NON_RETRIEVAL_INTENTS: frozenset[str] = frozenset(
     }
 )
 
-# 不含有效检索词的含糊问句（无历史指代时可判定）
-_VAGUE_QUERY_PATTERNS: tuple[str, ...] = (
-    "这是什么",
-    "这是啥",
-    "啥意思",
-    "什么意思",
-    "那个呢",
-    "这个呢",
-    "然后呢",
-    "还有呢",
-    "怎么说",
-    "讲一讲",
-    "说说看",
-    "介绍一下",
-    "能详细说说吗",
-    "能再说说吗",
-)
-
 _META_REWRITE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"请在知识库"),
     re.compile(r"请搜索"),
@@ -62,21 +44,6 @@ _META_REWRITE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"请帮我查(?:一下)?知识库"),
     re.compile(r"请查找知识库"),
 )
-
-def is_vague_query(query: str, history_pairs: list | None = None) -> bool:
-    """问题过于含糊、无法形成有效检索词（如孤立的「这是什么」）。"""
-    q = query.strip().lower()
-    if not q:
-        return True
-    # 有对话历史时，「这是什么」可能指代上文，交给 LLM 判断
-    if history_pairs:
-        return False
-    if q in _VAGUE_QUERY_PATTERNS:
-        return True
-    # 极短且无非实体词
-    if len(q) <= 6 and not any(c.isalnum and c not in "这那啥吗呢么" for c in q):
-        return True
-    return False
 
 def is_meta_rewrite(rewrite: str) -> bool:
     """改写结果是否含 meta 检索指令而非实际检索词。"""
@@ -94,17 +61,56 @@ def sanitize_rewrite_query(rewrite: str, original: str) -> str:
         return original.strip()
     return cleaned
 
-def needs_retrieval(
-    intent: str | None,
-    kb_selected: bool,
+
+def fallback_intent(
     *,
-    query: str | None = None,
-    history_pairs: list | None = None,
-) -> bool:
-    """是否应走 prefetch / doc_retrieval。"""
+    kb_selected: bool,
+    has_images: bool = False,
+    has_attachments: bool = False,
+) -> str:
+    """无 LLM 标签时的默认意图。会话附件不依赖知识库。"""
+    if kb_selected:
+        return "kb_search"
+    if has_attachments:
+        return "doc_only"
+    if has_images:
+        return "image_only"
+    return "no_kb"
+
+
+def normalize_intent(
+    intent: str | None,
+    *,
+    kb_selected: bool,
+    has_images: bool = False,
+    has_attachments: bool = False,
+) -> str:
+    """只校正标签与附件标记的硬约束，不根据问句措辞重判意图。
+
+    未选知识库时：不能 kb_search，但必须保留 doc_only / image_only
+    （会话临时附件不在知识库里，WeKnora 同样跳过检索并直接读附件正文）。
+    """
+    label = (intent or "").strip() or fallback_intent(
+        kb_selected=kb_selected,
+        has_images=has_images,
+        has_attachments=has_attachments,
+    )
+    if label == "image_only" and not has_images:
+        label = "kb_search" if kb_selected else "no_kb"
+    if label == "doc_only" and not has_attachments:
+        label = "kb_search" if kb_selected else "no_kb"
+    if not kb_selected and label == "kb_search":
+        return "no_kb"
+    return label
+
+
+def needs_retrieval(intent: str | None, kb_selected: bool) -> bool:
+    """是否应走 prefetch / doc_retrieval。
+
+    对齐 WeKnora：只看意图标签 + 是否选了知识库，不再用原问句正则二次判决。
+    KnowSphere 仅 kb_search 检索（greeting/follow_up/image_only 等一律跳过）。
+    """
     if not kb_selected:
-        return False
-    if query and is_vague_query(query, history_pairs):
         return False
     if not intent:
         return True

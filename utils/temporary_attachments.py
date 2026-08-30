@@ -28,6 +28,14 @@ MAX_ATTACHMENT_BYTES = 20 << 20  # 20MB
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
 
+# create/get/list 必须使用同一组列，否则 _row_to_dict 解包会炸
+_ROW_COLUMN_COUNT = 16
+_ROW_COLUMNS = (
+    "id, session_id, storage_key, file_name, file_type, mime_type, file_size, "
+    "status, content, chunks, image_refs, image_description, error_message, "
+    "expires_at, created_at, updated_at"
+)
+
 def ensure_temporary_attachments_table() -> None:
     with psycopg.connect(settings.postgres_dsn) as conn:
         conn.execute(
@@ -43,6 +51,7 @@ def ensure_temporary_attachments_table() -> None:
                 status       TEXT NOT NULL DEFAULT 'uploaded',
                 content      TEXT,
                 chunks       JSONB,
+                image_refs   JSONB NOT NULL DEFAULT '[]'::jsonb,
                 image_description TEXT,
                 error_message TEXT,
                 expires_at   TIMESTAMPTZ,
@@ -54,6 +63,10 @@ def ensure_temporary_attachments_table() -> None:
         conn.execute(
             "ALTER TABLE ks_temporary_attachments "
             "ADD COLUMN IF NOT EXISTS chunks JSONB"
+        )
+        conn.execute(
+            "ALTER TABLE ks_temporary_attachments "
+            "ADD COLUMN IF NOT EXISTS image_refs JSONB NOT NULL DEFAULT '[]'::jsonb"
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_ks_temp_attach_session "
@@ -75,6 +88,13 @@ def attachment_preview_url(session_id: str, attachment_id: str) -> str:
 
 def is_image_attachment(file_name: str) -> bool:
     return Path(file_name).suffix.lower() in _IMAGE_EXTS
+
+
+def is_image_upload(file_name: str, mime_type: str = "") -> bool:
+    """扩展名或 MIME 判定为图片（传图需 VLM，文档附件不需要）。"""
+    if is_image_attachment(file_name):
+        return True
+    return (mime_type or "").lower().startswith("image/")
 
 def validate_attachment_file(file_name: str, file_size: int) -> None:
     ext = Path(file_name).suffix.lower()
@@ -108,14 +128,12 @@ class TemporaryAttachmentStore():
 
         with psycopg.connect(settings.postgres_dsn) as conn:
             row = conn.execute(
-                """
+                f"""
                 INSERT INTO ks_temporary_attachments (
                     id, session_id, storage_key, file_name, file_type, mime_type,
                     file_size, status, expires_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, session_id, file_name, file_type, mime_type, file_size,
-                          status, content, image_description, error_message, expires_at,
-                          created_at, updated_at
+                RETURNING {_ROW_COLUMNS}
                 """,
                 (
                     attachment_id,
@@ -135,10 +153,8 @@ class TemporaryAttachmentStore():
     def get(self, attachment_id: str, session_id: str) -> dict[str, Any] | None:
         with psycopg.connect(settings.postgres_dsn) as conn:
             row = conn.execute(
-                """
-                SELECT id, session_id, storage_key, file_name, file_type, mime_type, file_size,
-                       status, content, chunks, image_description, error_message, expires_at,
-                       created_at, updated_at
+                f"""
+                SELECT {_ROW_COLUMNS}
                 FROM ks_temporary_attachments
                 WHERE id = %s AND session_id = %s
                 """,
@@ -149,10 +165,8 @@ class TemporaryAttachmentStore():
     def list_by_session(self, session_id: str) -> list[dict[str, Any]]:
         with psycopg.connect(settings.postgres_dsn) as conn:
             rows = conn.execute(
-                """
-                SELECT id, session_id, storage_key, file_name, file_type, mime_type, file_size,
-                       status, content, chunks, image_description, error_message, expires_at,
-                       created_at, updated_at
+                f"""
+                SELECT {_ROW_COLUMNS}
                 FROM ks_temporary_attachments
                 WHERE session_id = %s
                 ORDER BY created_at DESC
@@ -180,18 +194,27 @@ class TemporaryAttachmentStore():
         content: str,
         image_description: str = "",
         chunks: list[dict[str, Any]] | None = None,
+        image_refs: list[dict[str, Any]] | None = None,
     ) -> None:
         chunk_list = chunks if chunks is not None else split_attachment_chunks(content)
         chunks_json = json.dumps(chunk_list, ensure_ascii=False)
+        refs_json = json.dumps(image_refs or [], ensure_ascii=False)
         with psycopg.connect(settings.postgres_dsn) as conn:
             conn.execute(
                 """
                 UPDATE ks_temporary_attachments
                 SET status = %s, content = %s, chunks = %s::jsonb,
-                    image_description = %s, updated_at = now()
+                    image_refs = %s::jsonb, image_description = %s, updated_at = now()
                 WHERE id = %s
                 """,
-                (STATUS_READY, content, chunks_json, image_description or None, attachment_id),
+                (
+                    STATUS_READY,
+                    content,
+                    chunks_json,
+                    refs_json,
+                    image_description or None,
+                    attachment_id,
+                ),
             )
             conn.commit()
 
@@ -210,7 +233,8 @@ class TemporaryAttachmentStore():
     def delete(self, attachment_id: str, session_id: str) -> bool:
         with psycopg.connect(settings.postgres_dsn) as conn:
             row = conn.execute(
-                "SELECT storage_key FROM ks_temporary_attachments WHERE id = %s AND session_id = %s",
+                "SELECT storage_key, image_refs FROM ks_temporary_attachments "
+                "WHERE id = %s AND session_id = %s",
                 (attachment_id, session_id),
             ).fetchone()
             if not row:
@@ -220,11 +244,33 @@ class TemporaryAttachmentStore():
                 (attachment_id, session_id),
             )
             conn.commit()
+        keys = [row[0]] if row[0] else []
+        for ref in _parse_json_list(row[1]):
+            key = (ref.get("storage_key") or "").strip()
+            if key:
+                keys.append(key)
         try:
-            require_object_store().delete_object(row[0])
+            require_object_store().delete_objects(keys)
         except Exception as exc:
-            logger.warning("删除临时附件对象失败 %s: %s", row[0], exc)
+            logger.warning("删除临时附件对象失败 %s: %s", attachment_id, exc)
         return True
+
+    def get_extracted_image(
+        self, attachment_id: str, session_id: str, filename: str
+    ) -> tuple[str, str] | None:
+        """返回抽取图片的 (storage_key, mime_type)。"""
+        safe = Path(filename or "").name
+        if not safe:
+            return None
+        row = self.get(attachment_id, session_id)
+        if not row:
+            return None
+        for ref in row.get("image_refs") or []:
+            if (ref.get("filename") or "") != safe:
+                continue
+            key = (ref.get("storage_key") or "").strip() or row["storage_key"]
+            return key, (ref.get("mime_type") or "")
+        return None
 
     def get_storage_key(self, attachment_id: str, session_id: str) -> tuple[str, str] | None:
         row = self.get(attachment_id, session_id)
@@ -237,10 +283,8 @@ class TemporaryAttachmentStore():
         cutoff = before or datetime.now(timezone.utc)
         with psycopg.connect(settings.postgres_dsn) as conn:
             rows = conn.execute(
-                """
-                SELECT id, session_id, storage_key, file_name, file_type, mime_type, file_size,
-                       status, content, chunks, image_description, error_message, expires_at,
-                       created_at, updated_at
+                f"""
+                SELECT {_ROW_COLUMNS}
                 FROM ks_temporary_attachments
                 WHERE expires_at IS NOT NULL AND expires_at < %s
                 ORDER BY expires_at ASC
@@ -266,6 +310,12 @@ class TemporaryAttachmentStore():
 
     @staticmethod
     def _row_to_dict(row) -> dict[str, Any]:
+        if row is None:
+            raise ValueError("empty attachment row")
+        if len(row) != _ROW_COLUMN_COUNT:
+            raise ValueError(
+                f"attachment row expected {_ROW_COLUMN_COUNT} columns, got {len(row)}"
+            )
         (
             aid,
             session_id,
@@ -277,28 +327,13 @@ class TemporaryAttachmentStore():
             status,
             content,
             chunks_raw,
+            image_refs_raw,
             image_description,
             error_message,
             expires_at,
             created_at,
             updated_at,
         ) = row
-        chunks: list[dict[str, Any]] | None = None
-        if chunks_raw is not None:
-            if isinstance(chunks_raw, list):
-                chunks = chunks_raw
-            elif isinstance(chunks_raw, str):
-                try:
-                    parsed = json.loads(chunks_raw)
-                    if isinstance(parsed, list):
-                        chunks = parsed
-                except json.JSONDecodeError:
-                    chunks = None
-            else:
-                try:
-                    chunks = list(chunks_raw)  # type: ignore[arg-type]
-                except TypeError:
-                    chunks = None
         return {
             "id": str(aid),
             "session_id": str(session_id),
@@ -309,7 +344,8 @@ class TemporaryAttachmentStore():
             "file_size": int(file_size or 0),
             "status": status,
             "content": content,
-            "chunks": chunks,
+            "chunks": _parse_json_list(chunks_raw) or None,
+            "image_refs": _parse_json_list(image_refs_raw),
             "image_description": image_description or "",
             "error_message": error_message or "",
             "expires_at": expires_at.isoformat() if expires_at else None,
@@ -319,8 +355,28 @@ class TemporaryAttachmentStore():
 
     @staticmethod
     def _row_to_public(row) -> dict[str, Any]:
-        d = TemporaryAttachmentStore()._row_to_dict(row)
+        d = TemporaryAttachmentStore._row_to_dict(row)
         d.pop("storage_key", None)
         d.pop("content", None)
         d.pop("chunks", None)
+        d["image_refs"] = [
+            {k: v for k, v in ref.items() if k != "storage_key"}
+            for ref in (d.get("image_refs") or [])
+            if isinstance(ref, dict)
+        ]
         return d
+
+
+def _parse_json_list(raw: Any) -> list[dict[str, Any]]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [x for x in raw if isinstance(x, dict)]
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(parsed, list):
+            return [x for x in parsed if isinstance(x, dict)]
+    return []

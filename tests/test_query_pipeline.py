@@ -10,10 +10,10 @@ from agents.nodes.prepare_context import extract_history_pairs, prepare_context
 from agents.nodes.query_understand import query_understand, route_after_understand
 from schemas.query import (
     needs_retrieval,
-    is_vague_query,
     is_meta_rewrite,
     sanitize_rewrite_query,
     parse_query_understand_json,
+    normalize_intent,
 )
 from tools.retrieval.query_expansion import expand_queries_local
 
@@ -33,15 +33,26 @@ def test_extract_history_pairs_excludes_current_turn():
 def test_needs_retrieval_rules():
     assert needs_retrieval("kb_search", True)
     assert not needs_retrieval("clarification", True)
-    assert not needs_retrieval("clarification", True, query="这是什么")
-    assert not needs_retrieval("kb_search", True, query="这是什么")
-    assert needs_retrieval("kb_search", True, query="SuIM 项目架构是什么")
     assert not needs_retrieval("follow_up", True)
     assert not needs_retrieval("summarize", True)
     assert not needs_retrieval("greeting", True)
     assert not needs_retrieval("image_only", True)
     assert not needs_retrieval("doc_only", True)
     assert not needs_retrieval("kb_search", False)
+    # 只看意图标签：kb_search 即检索，与原问句是否含糊无关
+    assert needs_retrieval("kb_search", True)
+
+
+def test_normalize_intent_attachment_invariants():
+    assert normalize_intent("image_only", kb_selected=True, has_images=True) == "image_only"
+    assert normalize_intent("image_only", kb_selected=True, has_images=False) == "kb_search"
+    assert normalize_intent("doc_only", kb_selected=True, has_attachments=False) == "kb_search"
+    assert normalize_intent("kb_search", kb_selected=False) == "no_kb"
+    # 未选知识库时会话附件仍走 doc_only / image_only，不能打成 no_kb
+    assert normalize_intent("doc_only", kb_selected=False, has_attachments=True) == "doc_only"
+    assert normalize_intent("image_only", kb_selected=False, has_images=True) == "image_only"
+    assert normalize_intent("doc_only", kb_selected=False, has_attachments=False) == "no_kb"
+    assert normalize_intent("greeting", kb_selected=False) == "greeting"
 
 def test_sanitize_rewrite_query():
     assert is_meta_rewrite("请重新在知识库中查找关于张三的信息")
@@ -56,12 +67,6 @@ def test_parse_query_understand_json():
     assert parsed["rewrite_query"] == "RAG 架构"
     assert parsed["intent"] == "kb_search"
 
-def test_is_vague_query():
-    assert is_vague_query("这是什么")
-    assert is_vague_query("  这是啥  ")
-    assert not is_vague_query("这是什么", history_pairs=[{"query": "a", "answer": "b"}])
-    assert not is_vague_query("SuIM 即时通讯系统是什么")
-
 def test_route_after_understand():
     assert route_after_understand({"intent": "follow_up", "kb_selected": True}) == "agent"
     assert route_after_understand({"intent": "kb_search", "kb_selected": True}) == "prefetch_retrieval"
@@ -74,6 +79,12 @@ def test_route_after_understand():
         "intent": "kb_search",
         "kb_selected": True,
         "current_query": "这是什么",
+    }) == "prefetch_retrieval"
+    assert route_after_understand({
+        "intent": "image_only",
+        "kb_selected": True,
+        "current_query": "这是啥",
+        "has_images": True,
     }) == "agent"
 
 def test_expand_queries_local_strips_question_words():
@@ -87,6 +98,28 @@ def test_prepare_context_sets_defaults():
     assert out["current_query"] == "你好"
     assert out["kb_selected"] is True
     assert out["rewrite_query"] == "你好"
+    assert out["image_description"] == ""
+    assert out["system_prompt_override"] == ""
+    assert out["last_sources"] == []
+
+
+def test_prepare_context_resets_stale_turn_keys():
+    """checkpoint 中残留的上一轮 turn 键须被入口清零，避免脏读。"""
+    state = {
+        "messages": [HumanMessage(content="纯文本问题")],
+        "image_description": "上一轮图片描述",
+        "system_prompt_override": "旧 override",
+        "intent": "image_only",
+        "last_sources": [{"file_name": "old.md"}],
+        "has_images": True,
+    }
+    out = prepare_context(state, {"configurable": {"kb_ids": [1]}})
+    assert out["current_query"] == "纯文本问题"
+    assert out["image_description"] == ""
+    assert out["system_prompt_override"] == ""
+    assert out["last_sources"] == []
+    assert out["has_images"] is False
+    assert out["intent"] == "kb_search"
 
 def test_query_understand_skips_llm_when_disabled():
     state = {
@@ -99,15 +132,28 @@ def test_query_understand_skips_llm_when_disabled():
         out = query_understand(state, {})
     assert out["rewrite_query"] == "它的维度"
 
-def test_query_understand_skips_retrieval_for_vague_query():
+def test_query_understand_uses_llm_intent_for_vague_query():
+    """含糊问句交给 LLM 分类，代码不再用正则改写成 clarification。"""
     state = {
         "current_query": "这是什么",
         "history_pairs": [],
         "kb_selected": True,
         "has_images": False,
     }
-    with patch("agents.nodes.query_understand.settings") as mock_settings:
+    mock_out = MagicMock()
+    mock_out.rewrite_query = "这是什么"
+    mock_out.intent = "clarification"
+    mock_out.image_description = ""
+
+    mock_llm = MagicMock()
+    mock_llm.with_structured_output.return_value.invoke.return_value = mock_out
+
+    with (
+        patch("agents.nodes.query_understand.settings") as mock_settings,
+        patch("agents.nodes.query_understand.create_chat_model", return_value=mock_llm),
+    ):
         mock_settings.enable_rewrite = True
+        mock_settings.query_understand_model = ""
         out = query_understand(state, {})
     assert out["intent"] == "clarification"
     assert out.get("system_prompt_override")
@@ -171,6 +217,43 @@ def test_prepare_context_detects_attachments():
     out = prepare_context(state, {"configurable": {"kb_ids": [1]}})
     assert out["has_attachments"] is True
     assert out["has_images"] is False
+    assert out["intent"] == "kb_search"
+
+    out_no_kb = prepare_context(state, {"configurable": {"kb_ids": []}})
+    assert out_no_kb["has_attachments"] is True
+    assert out_no_kb["kb_selected"] is False
+    assert out_no_kb["intent"] == "doc_only"
+
+
+def test_query_understand_keeps_doc_only_without_kb():
+    """未选知识库 + 本轮附件：「这文档里是啥」应走 doc_only，不能打成 no_kb。"""
+    state = {
+        "current_query": "这文档里是啥",
+        "history_pairs": [],
+        "kb_selected": False,
+        "has_attachments": True,
+        "has_images": False,
+    }
+    mock_out = MagicMock()
+    mock_out.rewrite_query = "这份文档的内容是什么"
+    mock_out.intent = "doc_only"
+    mock_out.image_description = ""
+
+    mock_llm = MagicMock()
+    mock_llm.with_structured_output.return_value.invoke.return_value = mock_out
+
+    with (
+        patch("agents.nodes.query_understand.settings") as mock_settings,
+        patch("agents.nodes.query_understand.create_chat_model", return_value=mock_llm),
+    ):
+        mock_settings.enable_rewrite = True
+        mock_settings.query_understand_model = ""
+        out = query_understand(state, {})
+
+    assert out["intent"] == "doc_only"
+    assert "附件" in out.get("system_prompt_override", "")
+    assert "无法查阅" not in out.get("system_prompt_override", "")
+    assert route_after_understand({**state, **out}) == "agent"
 
 def test_parse_query_understand_json_with_image_description():
     raw = '{"rewrite_query":"图意思","intent":"image_only","image_description":"一张流程图"}'
@@ -200,3 +283,97 @@ def test_query_understand_filters_meta_rewrite():
         out = query_understand(state, {})
     assert out["rewrite_query"] == "再查一下张三"
     assert out["intent"] == "kb_search"
+    # 空描述也必须写出，覆盖上一轮残留
+    assert "image_description" in out
+    assert out["image_description"] == ""
+
+
+def test_query_understand_trusts_llm_image_only():
+    """有图 +「这是啥」：分类交给 LLM，代码不二次改写意图。"""
+    state = {
+        "current_query": "这是啥",
+        "history_pairs": [],
+        "kb_selected": True,
+        "has_images": True,
+        "messages": [HumanMessage(content="这是啥")],
+    }
+    mock_out = MagicMock()
+    mock_out.rewrite_query = "这张图是什么意思"
+    mock_out.intent = "image_only"
+    mock_out.image_description = "一台机柜设备"
+
+    mock_llm = MagicMock()
+    mock_llm.with_structured_output.return_value.invoke.return_value = mock_out
+
+    with (
+        patch("agents.nodes.query_understand.settings") as mock_settings,
+        patch("agents.nodes.query_understand.create_chat_model", return_value=mock_llm),
+    ):
+        mock_settings.enable_rewrite = True
+        mock_settings.query_understand_model = ""
+        out = query_understand(state, {})
+
+    assert out["intent"] == "image_only"
+    assert "图片" in out.get("system_prompt_override", "")
+    assert route_after_understand({**state, **out}) == "agent"
+
+
+def test_query_understand_keeps_kb_search_when_llm_says_search():
+    state = {
+        "current_query": "知识库里有类似的吗",
+        "history_pairs": [],
+        "kb_selected": True,
+        "has_images": True,
+        "messages": [HumanMessage(content="知识库里有类似的吗")],
+    }
+    mock_out = MagicMock()
+    mock_out.rewrite_query = "知识库中是否有类似设备"
+    mock_out.intent = "kb_search"
+    mock_out.image_description = "一台机柜设备"
+
+    mock_llm = MagicMock()
+    mock_llm.with_structured_output.return_value.invoke.return_value = mock_out
+
+    with (
+        patch("agents.nodes.query_understand.settings") as mock_settings,
+        patch("agents.nodes.query_understand.create_chat_model", return_value=mock_llm),
+    ):
+        mock_settings.enable_rewrite = True
+        mock_settings.query_understand_model = ""
+        out = query_understand(state, {})
+
+    assert out["intent"] == "kb_search"
+    assert out.get("system_prompt_override") == ""
+    assert route_after_understand({**state, **out}) == "prefetch_retrieval"
+
+
+def test_query_understand_prompt_injects_attachment_tags():
+    from prompts.query_understand import build_query_understand_prompts
+
+    _, user_with_image = build_query_understand_prompts(
+        query="这是啥",
+        history_pairs=[],
+        kb_selected=True,
+        has_images=True,
+    )
+    assert "<images_uploaded />" in user_with_image
+    assert "<no_image_attached />" not in user_with_image
+
+    _, user_no_image = build_query_understand_prompts(
+        query="这是啥",
+        history_pairs=[],
+        kb_selected=True,
+        has_images=False,
+    )
+    assert "<no_image_attached />" in user_no_image
+    assert "<images_uploaded />" not in user_no_image
+
+    _, user_doc_no_kb = build_query_understand_prompts(
+        query="这文档里是啥",
+        history_pairs=[],
+        kb_selected=False,
+        has_attachments=True,
+    )
+    assert "<document_attached />" in user_doc_no_kb
+    assert "不能使用 kb_search" in user_doc_no_kb
+    assert "intent 应为 no_kb" not in user_doc_no_kb

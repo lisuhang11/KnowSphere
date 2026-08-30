@@ -48,7 +48,8 @@ export { streamSessionRun } from '@/api/chatStream'
 export async function createSession(title?: string, kbIds?: number[]): Promise<Session> {
   const body: Record<string, unknown> = {}
   if (title) body.title = title
-  if (kbIds?.length) body.kb_ids = kbIds
+  // 显式传入时始终带上（含 []），与流式对话语义一致
+  if (kbIds !== undefined) body.kb_ids = kbIds
   const resp = await request.post<Session>('/sessions', body)
   return resp.data
 }

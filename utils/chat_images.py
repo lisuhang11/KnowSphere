@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 MAX_IMAGES = 5
 MAX_IMAGE_BYTES = 10 << 20  # 10MB
+NO_VLM_IMAGE_UPLOAD_DETAIL = "未配置视觉理解（VLLM）模型，无法上传图片。请先在模型管理中添加。"
 
 _DATA_URI_RE = re.compile(r"^data:([^;]+);base64,(.+)$", re.DOTALL)
 

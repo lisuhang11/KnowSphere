@@ -69,6 +69,57 @@ def test_agent_skips_tool_bind_without_kb():
 
     mock_model.bind_tools.assert_not_called
     assert result["messages"][-1].content == "直接回答"
+    # output_schema：对外不含 turn 临时键
+    assert "current_query" not in result
+    assert "image_description" not in result
+
+
+def test_prepare_then_agent_clears_stale_image_description():
+    """有图残留 → 下一轮纯文本不应再注入图片描述。"""
+    from langgraph.checkpoint.memory import MemorySaver
+
+    graph = build_agent(checkpointer=MemorySaver())
+    config = {
+        "configurable": {"thread_id": "turn-reset", "kb_ids": []},
+        "recursion_limit": 10,
+    }
+
+    # 模拟上一轮 checkpoint 已写入 image_description
+    graph.update_state(
+        config,
+        {
+            "messages": [HumanMessage(content="看图")],
+            "image_description": "上一轮残留描述",
+            "intent": "image_only",
+        },
+    )
+
+    captured: list[str] = []
+
+    def fake_invoke(messages, _config=None):
+        # SystemMessage + HumanMessage；检查用户消息是否被错误注入
+        human = next(m for m in messages if getattr(m, "type", None) == "human")
+        captured.append(str(human.content))
+        return AIMessage(content="ok")
+
+    mock_model = MagicMock()
+    mock_model.bind_tools = MagicMock(return_value=mock_model)
+    mock_model.invoke = fake_invoke
+
+    with (
+        patch("agents.nodes.agent.create_chat_model", return_value=mock_model),
+        patch("agents.nodes.query_understand.settings") as mock_qu,
+    ):
+        mock_qu.enable_rewrite = False
+        graph.invoke(
+            {"messages": [HumanMessage(content="你好")]},
+            config=config,
+        )
+
+    assert captured
+    assert "[用户上传图片内容]" not in captured[0]
+    snap = graph.get_state(config)
+    assert (snap.values.get("image_description") or "") == ""
 
 def test_prefetch_injects_retrieval_when_kb_selected():
     graph = build_agent()

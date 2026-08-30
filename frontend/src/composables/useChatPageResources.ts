@@ -13,6 +13,9 @@ import {
 import { useChatStore } from '@/stores/chat'
 import {
   CHAT_IMAGE_MAX_COUNT,
+  NO_VLM_IMAGE_UPLOAD_HINT,
+  hasUsableVlm,
+  isChatImageFile,
   type PendingChatAttachment,
   validateChatAttachmentFile,
 } from '@/utils/chatImages'
@@ -29,6 +32,7 @@ import { uid } from '@/utils/text'
 export function useChatPageResources() {
   const chatStore = useChatStore()
   const kbList = ref<KnowledgeBase[]>([])
+  const kbListLoaded = ref(false)
   const allModels = ref<ModelInfo[]>([])
   const selectedChatModelId = ref('')
   const selectedVlmModelId = ref('')
@@ -38,14 +42,26 @@ export function useChatPageResources() {
   watch(selectedVlmModelId, (id) => writeLastVlmModelId(id || null))
 
   watch(
-    () => chatStore.currentKbIds[0],
-    (kbId) => {
-      if (!kbId) return
-      const kb = kbList.value.find((k) => k.id === kbId)
-      const sid = kb?.summary_model_id?.trim()
-      if (sid && allModels.value.some((m) => m.id === sid && m.type === 'KnowledgeQA')) {
-        selectedChatModelId.value = sid
+    () => [...chatStore.currentKbIds],
+    (ids) => {
+      // 多选时：按选择顺序找第一个配置了摘要模型的库
+      for (const kbId of ids) {
+        const kb = kbList.value.find((k) => k.id === kbId)
+        const sid = kb?.summary_model_id?.trim()
+        if (sid && allModels.value.some((m) => m.id === sid && m.type === 'KnowledgeQA')) {
+          selectedChatModelId.value = sid
+          return
+        }
       }
+    },
+  )
+
+  watch(
+    () => ({ loaded: kbListLoaded.value, ids: kbList.value.map((k) => k.id) }),
+    ({ loaded, ids }) => {
+      // 列表未加载成功前不要 prune，否则会把会话已选库清空
+      if (!loaded) return
+      chatStore.pruneKbIds(ids)
     },
   )
 
@@ -100,6 +116,15 @@ export function useChatPageResources() {
       return
     }
 
+    const vlmReady = hasUsableVlm(allModels.value)
+    const files = selected.slice(0, room)
+    const imageFiles = files.filter(isChatImageFile)
+    const otherFiles = files.filter((f) => !isChatImageFile(f))
+    if (imageFiles.length && !vlmReady) {
+      MessagePlugin.warning(NO_VLM_IMAGE_UPLOAD_HINT)
+      if (!otherFiles.length) return
+    }
+
     let threadId = chatStore.currentThreadId
     if (!threadId) {
       try {
@@ -112,7 +137,8 @@ export function useChatPageResources() {
     }
     if (!threadId) return
 
-    for (const file of selected.slice(0, room)) {
+    const accepted = vlmReady ? files : otherFiles
+    for (const file of accepted) {
       const err = validateChatAttachmentFile(file)
       if (err) {
         MessagePlugin.warning(err)
@@ -149,8 +175,11 @@ export function useChatPageResources() {
     await chatStore.loadThreads()
     try {
       kbList.value = await listKnowledgeBases()
+      kbListLoaded.value = true
+      chatStore.pruneKbIds(kbList.value.map((k) => k.id))
     } catch (e) {
       console.warn('加载知识库列表失败', e)
+      kbListLoaded.value = false
     }
     try {
       const models = await listModels()

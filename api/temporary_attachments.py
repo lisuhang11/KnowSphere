@@ -6,18 +6,36 @@ import asyncio
 import logging
 import uuid
 
+from urllib.parse import unquote
+
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from api.sessions import _db_get_session, _to_uuid
 from api.tasks import parse_temporary_attachment_task
 from config.settings import settings
+from utils.chat_images import NO_VLM_IMAGE_UPLOAD_DETAIL
+from utils.model_store import ModelStore
 from utils.object_store import ObjectStoreError, inline_content_disposition, require_object_store
-from utils.temporary_attachments import TemporaryAttachmentStore, validate_attachment_file
+from utils.temporary_attachments import (
+    TemporaryAttachmentStore,
+    is_image_upload,
+    validate_attachment_file,
+)
 
 logger = logging.getLogger(__name__)
 
 attachments_router = APIRouter(prefix="/sessions", tags=["attachments"])
+
+
+def _public_attachment(row: dict) -> dict:
+    public = {k: v for k, v in row.items() if k not in ("storage_key", "content", "chunks")}
+    public["image_refs"] = [
+        {k: v for k, v in ref.items() if k != "storage_key"}
+        for ref in (row.get("image_refs") or [])
+        if isinstance(ref, dict)
+    ]
+    return public
 
 def _ensure_session_exists(session_id: uuid.UUID) -> None:
     if _db_get_session(session_id) is None:
@@ -35,6 +53,9 @@ async def upload_temporary_attachment(
     _ensure_session_exists(sid)
 
     file_name = (file.filename or "upload").strip()
+    if is_image_upload(file_name, file.content_type or "") and not ModelStore().has_usable_vlm():
+        raise HTTPException(status_code=400, detail=NO_VLM_IMAGE_UPLOAD_DETAIL)
+
     data = await file.read()
     try:
         validate_attachment_file(file_name, len(data))
@@ -61,8 +82,7 @@ async def upload_temporary_attachment(
         logger.warning("投递附件解析任务失败 %s: %s", row["id"], exc)
         TemporaryAttachmentStore().mark_failed(row["id"], f"任务投递失败: {exc}")
 
-    public = {k: v for k, v in row.items() if k not in ("storage_key", "content")}
-    return {"success": True, "data": public}
+    return {"success": True, "data": _public_attachment(row)}
 
 @attachments_router.get("/{session_id}/attachments")
 async def list_temporary_attachments(session_id: str) -> dict:
@@ -78,8 +98,7 @@ async def get_temporary_attachment(session_id: str, attachment_id: str) -> dict:
     row = await asyncio.to_thread(TemporaryAttachmentStore().get, attachment_id, str(sid))
     if row is None:
         raise HTTPException(status_code=404, detail="附件不存在")
-    public = {k: v for k, v in row.items() if k not in ("storage_key", "content")}
-    return {"success": True, "data": public}
+    return {"success": True, "data": _public_attachment(row)}
 
 @attachments_router.get("/{session_id}/attachments/{attachment_id}/preview")
 async def preview_temporary_attachment(session_id: str, attachment_id: str) -> Response:
@@ -100,6 +119,40 @@ async def preview_temporary_attachment(session_id: str, attachment_id: str) -> R
         headers={
             "Cache-Control": "private, max-age=3600",
             "Content-Disposition": inline_content_disposition(file_name),
+        },
+    )
+
+
+@attachments_router.get("/{session_id}/attachments/{attachment_id}/images/{filename}")
+async def preview_extracted_attachment_image(
+    session_id: str,
+    attachment_id: str,
+    filename: str,
+) -> Response:
+    """附件解析抽出的内嵌图（对齐知识库 /documents/{id}/images/{name}）。"""
+    sid = _to_uuid(session_id)
+    _ensure_session_exists(sid)
+    safe = unquote(filename or "")
+    meta = await asyncio.to_thread(
+        TemporaryAttachmentStore().get_extracted_image,
+        attachment_id,
+        str(sid),
+        safe,
+    )
+    if meta is None:
+        raise HTTPException(status_code=404, detail="图片不存在")
+    storage_key, mime_type = meta
+    try:
+        store = require_object_store()
+        data, content_type = await asyncio.to_thread(store.get_bytes, storage_key)
+    except ObjectStoreError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(
+        content=data,
+        media_type=mime_type or content_type or "image/jpeg",
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "Content-Disposition": inline_content_disposition(safe),
         },
     )
 

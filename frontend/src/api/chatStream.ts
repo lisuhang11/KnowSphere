@@ -25,7 +25,8 @@ export async function streamSessionRun(
     message: userText,
     stream_mode: ['messages', 'custom'],
   }
-  if (kbIds?.length) body.kb_ids = kbIds
+  // 必须显式下发（含 []）：省略空数组时后端会回落到会话旧 kb_ids，清除选择会失效
+  if (kbIds !== undefined) body.kb_ids = kbIds
   if (chatModelId?.trim()) body.chat_model_id = chatModelId.trim()
   if (vlmModelId?.trim()) body.vlm_model_id = vlmModelId.trim()
   if (attachmentIds?.length) body.attachment_ids = attachmentIds

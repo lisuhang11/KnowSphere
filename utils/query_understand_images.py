@@ -7,6 +7,8 @@ import logging
 import re
 from typing import Any
 
+from urllib.parse import unquote
+
 from langchain_core.messages import BaseMessage, HumanMessage
 
 from utils.chat_images import load_chat_image_bytes
@@ -21,6 +23,9 @@ _CHAT_IMAGE_URL_RE = re.compile(
 )
 _ATTACHMENT_PREVIEW_RE = re.compile(
     r"/api/sessions/(?P<session_id>[0-9a-f-]+)/attachments/(?P<aid>[0-9a-f-]+)/preview"
+)
+_ATTACHMENT_IMAGE_RE = re.compile(
+    r"/api/sessions/(?P<session_id>[0-9a-f-]+)/attachments/(?P<aid>[0-9a-f-]+)/images/(?P<filename>[^/?#]+)"
 )
 
 def _bytes_to_data_uri(data: bytes, storage_key: str = "") -> str:
@@ -47,6 +52,22 @@ def _load_from_url(url: str, default_session_id: str) -> str | None:
             return _bytes_to_data_uri(data)
         except Exception as exc:
             logger.warning("加载 chat image 失败 %s: %s", url, exc)
+            return None
+
+    m = _ATTACHMENT_IMAGE_RE.search(url)
+    if m:
+        sid = m.group("session_id")
+        aid = m.group("aid")
+        filename = unquote(m.group("filename"))
+        store = TemporaryAttachmentStore()
+        meta = store.get_extracted_image(aid, sid, filename)
+        if not meta:
+            return None
+        try:
+            data, _ = require_object_store().get_bytes(meta[0])
+            return _bytes_to_data_uri(data, meta[0] or filename)
+        except Exception as exc:
+            logger.warning("加载附件抽出图失败 %s: %s", url, exc)
             return None
 
     m = _ATTACHMENT_PREVIEW_RE.search(url)

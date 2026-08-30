@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { MessagePlugin } from 'tdesign-vue-next'
 import type { KnowledgeBase } from '@/api/knowledgeBases'
 import type { ModelInfo } from '@/api/models'
 import ChatKnowledgeBaseSelector from '@/components/chat/ChatKnowledgeBaseSelector.vue'
 import ChatInputModelDropdown from '@/components/chat/ChatInputModelDropdown.vue'
 import {
   CHAT_ATTACHMENT_ACCEPT,
+  CHAT_DOCUMENT_ACCEPT,
   CHAT_IMAGE_ACCEPT,
   CHAT_IMAGE_MAX_COUNT,
+  NO_VLM_IMAGE_UPLOAD_HINT,
+  hasUsableVlm,
   type PendingChatAttachment,
 } from '@/utils/chatImages'
 import { formatFileSize, getFileExt } from '@/utils/fileFormat'
@@ -54,7 +58,10 @@ const selectedChatModelId = computed({
 
 const selectedKbs = computed(() => {
   const idSet = new Set(props.selectedKbIds)
-  return props.kbList.filter((k) => idSet.has(k.id))
+  // 按 selectedKbIds 顺序展示，避免列表顺序与勾选顺序不一致；并过滤已删库
+  return props.selectedKbIds
+    .map((id) => props.kbList.find((k) => k.id === id))
+    .filter((k): k is KnowledgeBase => Boolean(k))
 })
 
 const imageAttachments = computed(() =>
@@ -66,6 +73,16 @@ const fileAttachments = computed(() =>
 )
 
 const hasSelectedTags = computed(() => selectedKbs.value.length > 0)
+const selectedKbCount = computed(() => selectedKbs.value.length)
+const vlmReady = computed(() => hasUsableVlm(props.allModels))
+const imageUploadDisabled = computed(
+  () => props.streaming || props.pendingAttachments.length >= CHAT_IMAGE_MAX_COUNT || !vlmReady.value,
+)
+const fileUploadDisabled = computed(
+  () => props.streaming || props.pendingAttachments.length >= CHAT_IMAGE_MAX_COUNT,
+)
+const attachmentAccept = computed(() => (vlmReady.value ? CHAT_ATTACHMENT_ACCEPT : CHAT_DOCUMENT_ACCEPT))
+const imageUploadTooltip = computed(() => (vlmReady.value ? '上传图片' : NO_VLM_IMAGE_UPLOAD_HINT))
 
 function attachmentStatusLabel(item: PendingChatAttachment): string {
   if (item.status === 'uploading') return '上传中…'
@@ -84,12 +101,16 @@ function removeKbTag(id: number) {
 }
 
 function triggerImageUpload() {
-  if (props.streaming || props.pendingAttachments.length >= CHAT_IMAGE_MAX_COUNT) return
+  if (!vlmReady.value) {
+    MessagePlugin.warning(NO_VLM_IMAGE_UPLOAD_HINT)
+    return
+  }
+  if (imageUploadDisabled.value) return
   imageInputRef.value?.click()
 }
 
 function triggerFileUpload() {
-  if (props.streaming || props.pendingAttachments.length >= CHAT_IMAGE_MAX_COUNT) return
+  if (fileUploadDisabled.value) return
   fileInputRef.value?.click()
 }
 
@@ -127,7 +148,7 @@ defineExpose({
     <input
       ref="fileInputRef"
       type="file"
-      :accept="CHAT_ATTACHMENT_ACCEPT"
+      :accept="attachmentAccept"
       multiple
       hidden
       @change="emit('attachmentSelect', $event)"
@@ -200,12 +221,12 @@ defineExpose({
 
       <div class="control-bar">
         <div class="control-left">
-          <t-tooltip content="上传图片" placement="top" theme="light">
+          <t-tooltip :content="imageUploadTooltip" placement="top" theme="light">
             <div
               class="control-btn image-upload-btn"
               :class="{
                 active: imageAttachments.length > 0,
-                disabled: streaming || pendingAttachments.length >= CHAT_IMAGE_MAX_COUNT,
+                disabled: imageUploadDisabled,
               }"
               @click.stop="triggerImageUpload"
             >
@@ -225,7 +246,7 @@ defineExpose({
               class="control-btn attachment-upload-btn"
               :class="{
                 active: fileAttachments.length > 0,
-                disabled: streaming || pendingAttachments.length >= CHAT_IMAGE_MAX_COUNT,
+                disabled: fileUploadDisabled,
               }"
               @click.stop="triggerFileUpload"
             >
@@ -252,7 +273,7 @@ defineExpose({
             <div
               ref="kbButtonRef"
               class="control-btn kb-btn"
-              :class="{ active: selectedKbIds.length > 0 }"
+              :class="{ active: selectedKbCount > 0 }"
               @click.stop="openKbSelector"
             >
               <svg
@@ -272,7 +293,7 @@ defineExpose({
                   stroke-linejoin="round"
                 />
               </svg>
-              <span v-if="selectedKbIds.length > 0" class="kb-count">{{ selectedKbIds.length }}</span>
+              <span v-if="selectedKbCount > 0" class="kb-count">{{ selectedKbCount }}</span>
             </div>
           </t-tooltip>
 

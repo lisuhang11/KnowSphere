@@ -17,16 +17,17 @@ def compute_intent_metrics(
     kb_selected: bool,
     history_pairs: list[dict[str, str]] | None = None,
     needs_retrieval_gt: bool | None = None,
+    has_images: bool = False,
+    has_attachments: bool = False,
 ) -> IntentMetrics:
     """计算单题意图指标。"""
     gt = (intent_gt or "").strip()
     pred = (intent_pred or "").strip()
-    history = history_pairs or []
     if needs_retrieval_gt is None:
-        needs_gt = needs_retrieval(gt or None, kb_selected, query=question, history_pairs=history)
+        needs_gt = needs_retrieval(gt or None, kb_selected)
     else:
         needs_gt = bool(needs_retrieval_gt)
-    needs_pred = needs_retrieval(pred or None, kb_selected, query=question, history_pairs=history)
+    needs_pred = needs_retrieval(pred or None, kb_selected)
     return IntentMetrics(
         correct=1.0 if gt and pred == gt else 0.0,
         routing_correct=1.0 if needs_pred == needs_gt else 0.0,
