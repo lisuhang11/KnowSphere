@@ -25,6 +25,16 @@ export interface LangMessage {
 
 export interface SessionState {
   values?: { messages?: LangMessage[] }
+  active_run?: ActiveRun | null
+}
+
+export interface ActiveRun {
+  run_id: string
+  user_preview?: {
+    content?: string
+    images?: { url: string; caption?: string }[]
+    attachments?: { id: string; file_name?: string; file_type?: string; file_size?: number }[]
+  }
 }
 
 /** 引用元数据（citation_meta 帧） */
@@ -43,7 +53,11 @@ function sessionId(s: Session): string {
   return s.id || s.thread_id || ''
 }
 
-export { streamSessionRun } from '@/api/chatStream'
+export { streamSessionRun, continueSessionRun } from '@/api/chatStream'
+
+export async function stopSessionRun(sessionId: string): Promise<void> {
+  await request.post(`/sessions/${sessionId}/runs/stop`)
+}
 
 export async function createSession(title?: string, kbIds?: number[]): Promise<Session> {
   const body: Record<string, unknown> = {}

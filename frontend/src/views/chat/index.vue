@@ -19,6 +19,7 @@ provideChatAttachmentPreviewDrawer()
 const referencesDrawer = provideChatReferencesDrawer()
 
 const chatStore = useChatStore()
+const scrollRef = ref<HTMLElement>()
 const {
   messages,
   streaming,
@@ -31,7 +32,7 @@ const {
   scrollToBottom,
   onScroll,
   clearMessages,
-} = useSessionChat()
+} = useSessionChat(scrollRef)
 
 const {
   kbList,
@@ -47,7 +48,6 @@ const {
 } = useChatPageResources()
 
 const input = ref('')
-const scrollRef = ref<HTMLElement>()
 const inputFieldRef = ref<InstanceType<typeof ChatInputField>>()
 
 const currentSession = computed(() => chatStore.currentSession())

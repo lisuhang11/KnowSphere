@@ -10,6 +10,61 @@ export interface StreamImagePayload {
   data: string
 }
 
+async function openSessionSse(
+  url: string,
+  onEvent: StreamHandler,
+  init: {
+    method: 'GET' | 'POST'
+    body?: string
+    signal?: AbortSignal
+  },
+): Promise<void> {
+  await fetchEventSource(url, {
+    method: init.method,
+    headers: {
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+      Accept: 'text/event-stream',
+    },
+    body: init.body,
+    signal: init.signal,
+    openWhenHidden: true,
+
+    async onopen(response) {
+      if (!response.ok) {
+        let detail = `HTTP ${response.status}`
+        try {
+          const data = await response.json()
+          detail = String(data.detail || detail)
+        } catch {
+          try {
+            detail = await response.text()
+          } catch {
+            /* ignore */
+          }
+        }
+        const err = new Error(detail) as Error & { status?: number }
+        err.status = response.status
+        throw err
+      }
+    },
+
+    onmessage(ev) {
+      const raw = ev.data?.trim()
+      if (!raw || raw === '[DONE]') return
+      const event = ev.event || 'messages'
+      try {
+        onEvent(event, JSON.parse(raw) as Record<string, unknown>)
+      } catch {
+        /* 非 JSON 帧忽略 */
+      }
+    },
+
+    onerror(err) {
+      throw err instanceof Error ? err : new Error(String(err))
+    },
+  })
+}
+
 export async function streamSessionRun(
   sessionId: string,
   userText: string,
@@ -32,46 +87,20 @@ export async function streamSessionRun(
   if (attachmentIds?.length) body.attachment_ids = attachmentIds
   else if (images?.length) body.images = images
 
-  await fetchEventSource(`/api/sessions/${sessionId}/runs/stream`, {
+  await openSessionSse(`/api/sessions/${sessionId}/runs/stream`, onEvent, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-    },
     body: JSON.stringify(body),
     signal,
-    openWhenHidden: true,
+  })
+}
 
-    async onopen(response) {
-      if (!response.ok) {
-        let detail = `HTTP ${response.status}`
-        try {
-          const data = await response.json()
-          detail = String(data.detail || detail)
-        } catch {
-          try {
-            detail = await response.text()
-          } catch {
-            /* ignore */
-          }
-        }
-        throw new Error(detail)
-      }
-    },
-
-    onmessage(ev) {
-      const raw = ev.data?.trim()
-      if (!raw || raw === '[DONE]') return
-      const event = ev.event || 'messages'
-      try {
-        onEvent(event, JSON.parse(raw) as Record<string, unknown>)
-      } catch {
-        /* 非 JSON 帧忽略 */
-      }
-    },
-
-    onerror(err) {
-      throw err instanceof Error ? err : new Error(String(err))
-    },
+export async function continueSessionRun(
+  sessionId: string,
+  onEvent: StreamHandler,
+  signal?: AbortSignal,
+): Promise<void> {
+  await openSessionSse(`/api/sessions/${sessionId}/runs/continue`, onEvent, {
+    method: 'GET',
+    signal,
   })
 }

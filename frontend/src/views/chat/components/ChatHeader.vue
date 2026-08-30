@@ -186,7 +186,6 @@ async function submitDeleteSession(): Promise<void> {
     MessagePlugin.success('会话已删除')
   } catch {
     /* axios 拦截器已提示 */
-  }
   } finally {
     busyAction.value = ''
   }

@@ -20,19 +20,21 @@ from pydantic import BaseModel, Field
 
 from api.chat import get_agent, get_checkpointer
 from config.settings import settings
-from utils.chat_images import (
-    ChatImageError,
-    NO_VLM_IMAGE_UPLOAD_DETAIL,
-    build_human_message_saved_images_only,
-    load_chat_image_bytes,
-    save_chat_images,
-)
+from services.stream_manager import SessionRun, SessionRunBusy, get_stream_manager
 from utils.attachment_resolve import (
     build_human_message_with_attachments,
     normalize_attachment_ids,
     resolve_attachments,
 )
+from utils.chat_images import (
+    NO_VLM_IMAGE_UPLOAD_DETAIL,
+    ChatImageError,
+    build_human_message_saved_images_only,
+    load_chat_image_bytes,
+    save_chat_images,
+)
 from utils.citation import Citation, CitationStreamExpander, merge_citation_maps
+from utils.message_content import message_attachments, message_images, message_query_text
 from utils.model_credentials import ensure_knowledgeqa_model_ready
 from utils.model_store import ModelStore
 from utils.vector_store import ChunkStore
@@ -328,12 +330,13 @@ async def unpin_session(session_id: str) -> dict[str, Any]:
 async def delete_session(session_id: str) -> dict[str, Any]:
     """DeleteSession"""
     sid = _to_uuid(session_id)
+    get_stream_manager().discard(str(sid))
     await asyncio.to_thread(_db_delete_session, sid)
     checkpointer = get_checkpointer()
     if checkpointer is not None:
         try:
             await checkpointer.adelete_thread(str(sid))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("删除 checkpoint 失败（元数据已删）: %s", e)
     return {"deleted": True, "id": str(sid)}
 
@@ -341,6 +344,7 @@ async def delete_session(session_id: str) -> dict[str, Any]:
 async def clear_session_messages(session_id: str) -> dict[str, Any]:
     """ClearSessionMessages"""
     _to_uuid(session_id)  # 校验格式
+    get_stream_manager().discard(session_id)
     agent = get_agent()
     config = {"configurable": {"thread_id": session_id}}
     await agent.aupdate_state(config, {"messages": []})
@@ -348,14 +352,18 @@ async def clear_session_messages(session_id: str) -> dict[str, Any]:
 
 @sessions_router.get("/{session_id}/state")
 async def get_session_state(session_id: str) -> dict[str, Any]:
-    """GetSessionState（LangGraph checkpoint 消息历史）"""
+    """GetSessionState（LangGraph checkpoint 消息历史 + 进行中的生成）"""
     _to_uuid(session_id)
     agent = get_agent()
     snap = await agent.aget_state({"configurable": {"thread_id": session_id}})
+    run = get_stream_manager().active(session_id)
+    active = None
+    if run is not None:
+        active = {"run_id": run.run_id, "user_preview": run.user_preview}
     if not snap or snap.values is None:
-        return {"values": {}}
+        return {"values": {}, "active_run": active}
     messages = [m.model_dump(mode="json") for m in snap.values.get("messages", [])]
-    return {"values": {"messages": messages}}
+    return {"values": {"messages": messages}, "active_run": active}
 
 # ---------------------------------------------------------------------------
 # 流式对话
@@ -406,34 +414,174 @@ async def _build_input_messages(body: SessionStreamRequest, session_id: uuid.UUI
         return msgs
     return []
 
-def _attachment_tool_call_frame() -> str:
-    return _sse_frame(
-        "messages",
-        {
-            "type": "tool_call",
-            "tool_name": "attachment_parsing",
-            "content": "正在解析附件…",
-        },
-    )
-
-def _attachment_tool_result_frame(*, parsed: int, skipped: int) -> str:
-    output = f"已解析 {parsed} 个附件"
-    if skipped:
-        output += f"，{skipped} 个未完成已跳过"
-    return _sse_frame(
-        "messages",
-        {
-            "type": "tool_result",
-            "tool_name": "attachment_parsing",
-            "success": parsed > 0,
-            "content": output,
-            "parsed_count": parsed,
-            "skipped_count": skipped,
-        },
-    )
-
 def _sse_frame(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+
+_background_runs: set[asyncio.Task[None]] = set()
+
+
+def _spawn_background(coro, name: str) -> asyncio.Task[None]:
+    """独立于请求取消作用域的后台任务，避免客户端断开时被 GC / 连带取消。"""
+    task = asyncio.create_task(coro, name=name)
+    _background_runs.add(task)
+    task.add_done_callback(_background_runs.discard)
+    return task
+
+
+def _preview_from_human(msg: Any | None, fallback_text: str) -> dict[str, Any]:
+    if msg is None:
+        return {"content": fallback_text, "images": [], "attachments": []}
+    return {
+        "content": message_query_text(msg) or fallback_text,
+        "images": message_images(msg),
+        "attachments": message_attachments(msg),
+    }
+
+
+async def _persist_partial_answer(agent: Any, sid_str: str, run: SessionRun) -> None:
+    answer = run.answer_text()
+    if not answer:
+        return
+    config = {"configurable": {"thread_id": sid_str}}
+    try:
+        snap = await agent.aget_state(config)
+        msgs = (snap.values or {}).get("messages") or [] if snap else []
+        last = msgs[-1] if msgs else None
+        if last is not None and getattr(last, "type", None) == "ai":
+            return
+        await agent.aupdate_state(config, {"messages": [AIMessage(content=answer)]})
+    except Exception:
+        logger.warning("停止后回写部分回答失败", exc_info=True)
+
+
+async def _execute_session_run(
+    run: SessionRun,
+    *,
+    agent: Any,
+    sid: uuid.UUID,
+    body: SessionStreamRequest,
+    attachment_ids: list[str],
+    query_text: str,
+    config: dict[str, Any],
+) -> None:
+    mgr = get_stream_manager()
+    sid_str = run.session_id
+    expander: CitationStreamExpander | None = None
+    merged_citations: dict[int, Citation] = {}
+    try:
+        if attachment_ids:
+            mgr.append(
+                sid_str,
+                "messages",
+                {
+                    "type": "tool_call",
+                    "tool_name": "attachment_parsing",
+                    "content": "正在解析附件…",
+                },
+            )
+            resolved = await resolve_attachments(
+                sid_str,
+                attachment_ids,
+                query_text or "请根据附件回答",
+            )
+            output = f"已解析 {resolved.parsed_count} 个附件"
+            if resolved.skipped_count:
+                output += f"，{resolved.skipped_count} 个未完成已跳过"
+            mgr.append(
+                sid_str,
+                "messages",
+                {
+                    "type": "tool_result",
+                    "tool_name": "attachment_parsing",
+                    "success": resolved.parsed_count > 0,
+                    "content": output,
+                    "parsed_count": resolved.parsed_count,
+                    "skipped_count": resolved.skipped_count,
+                },
+            )
+            if not resolved.ready_rows:
+                detail = "附件未就绪或不存在"
+                if resolved.skipped_ids:
+                    detail += f"（跳过: {', '.join(resolved.skipped_ids[:3])}）"
+                mgr.append(sid_str, "error", {"message": detail})
+                return
+            input_messages = [
+                build_human_message_with_attachments(
+                    query_text or "请根据附件回答",
+                    resolved.ready_rows,
+                    sid_str,
+                    skipped_ids=resolved.skipped_ids,
+                )
+            ]
+        else:
+            input_messages = await _build_input_messages(body, sid)
+            if not input_messages:
+                mgr.append(sid_str, "error", {"message": "message、attachment_ids 或 images 不能为空"})
+                return
+
+        human = input_messages[0] if input_messages else None
+        mgr.set_user_preview(sid_str, _preview_from_human(human, query_text))
+
+        async for mode, payload in agent.astream(
+            {"messages": input_messages},
+            config,
+            stream_mode=["messages", "custom"],
+        ):
+            if mode == "custom":
+                if isinstance(payload, dict) and payload.get("type") in (
+                    "thinking",
+                    "tool_call",
+                    "tool_result",
+                ):
+                    mgr.append(sid_str, "messages", payload)
+                elif isinstance(payload, dict) and payload.get("type") == "citation_meta":
+                    if settings.citation_enabled:
+                        batch = _citations_from_payload(payload)
+                        merged_citations = merge_citation_maps(merged_citations, batch)
+                        expander = CitationStreamExpander(merged_citations)
+                    mgr.append(sid_str, "messages", payload)
+                continue
+
+            chunk, meta = payload
+            if not isinstance(meta, dict) or meta.get("langgraph_node") != "agent":
+                continue
+            if getattr(chunk, "tool_call_chunks", None):
+                continue
+            reasoning = _chunk_reasoning(chunk)
+            if reasoning:
+                mgr.append(sid_str, "messages", {"type": "thinking", "content": reasoning})
+            text = _chunk_text(chunk)
+            if not text:
+                continue
+            if expander is not None:
+                text = expander.feed(text)
+            if text:
+                mgr.append(sid_str, "messages", {"type": "answer", "content": text})
+        if expander is not None:
+            rest = expander.flush()
+            if rest:
+                mgr.append(sid_str, "messages", {"type": "answer", "content": rest})
+            if expander.dropped_count:
+                logger.warning(
+                    "本轮剥离 %d 个非法/越界引用句柄，实际引用 %s",
+                    expander.dropped_count,
+                    expander.used_indexes,
+                )
+    except asyncio.CancelledError:
+        mgr.append(sid_str, "messages", {"type": "stop", "content": ""})
+        raise
+    except Exception as e:
+        logger.exception("agent 运行失败")
+        detail = _user_facing_agent_error(e)
+        mgr.append(sid_str, "messages", {"type": "answer", "content": detail})
+        mgr.append(sid_str, "error", {"message": detail})
+
+
+async def _sse_from_run(run: SessionRun, start: int = 0):
+    mgr = get_stream_manager()
+    async for frame in mgr.iter_frames(run, start):
+        yield _sse_frame(frame.event, frame.data)
 
 def _chunk_text(chunk: Any) -> str:
     content = getattr(chunk, "content", "")
@@ -512,9 +660,57 @@ async def get_chat_image(session_id: str, image_id: str) -> Response:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return Response(content=data, media_type=content_type)
 
+_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+
+def _start_session_run(
+    *,
+    agent: Any,
+    sid: uuid.UUID,
+    body: SessionStreamRequest,
+    attachment_ids: list[str],
+    query_text: str,
+    config: dict[str, Any],
+    user_preview: dict[str, Any],
+) -> SessionRun:
+    mgr = get_stream_manager()
+    sid_str = str(sid)
+    try:
+        run = mgr.begin(sid_str, user_preview)
+    except SessionRunBusy:
+        raise HTTPException(status_code=409, detail="该会话已有进行中的生成") from None
+
+    async def _task() -> None:
+        try:
+            await _execute_session_run(
+                run,
+                agent=agent,
+                sid=sid,
+                body=body,
+                attachment_ids=attachment_ids,
+                query_text=query_text,
+                config=config,
+            )
+        finally:
+            still = mgr.get(sid_str) is run
+            if run.stopped and still:
+                await _persist_partial_answer(agent, sid_str, run)
+            if still:
+                mgr.finish(run)
+            else:
+                run.done = True
+            try:
+                await asyncio.to_thread(_db_touch_session, sid)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("刷新会话 updated_at 失败: %s", e)
+
+    run.task = _spawn_background(_task(), name=f"ks-run-{sid_str}")
+    return run
+
+
 @sessions_router.post("/{session_id}/runs/stream")
 async def stream_session_run(session_id: str, body: SessionStreamRequest) -> StreamingResponse:
-    """StreamSessionRun（SSE）"""
+    """StreamSessionRun（SSE）。生成在后台运行，断开连接不取消。"""
     agent = get_agent()
     sid = _to_uuid(session_id)
     sid_str = str(sid)
@@ -555,101 +751,46 @@ async def stream_session_run(session_id: str, body: SessionStreamRequest) -> Str
         "recursion_limit": settings.agent_max_steps,
     }
 
-    async def gen():
-        expander: CitationStreamExpander | None = None
-        merged_citations: dict[int, Citation] = {}
-        try:
-            if attachment_ids:
-                yield _attachment_tool_call_frame()
-                resolved = await resolve_attachments(
-                    sid_str,
-                    attachment_ids,
-                    query_text or "请根据附件回答",
-                )
-                yield _attachment_tool_result_frame(
-                    parsed=resolved.parsed_count,
-                    skipped=resolved.skipped_count,
-                )
-                if not resolved.ready_rows:
-                    detail = "附件未就绪或不存在"
-                    if resolved.skipped_ids:
-                        detail += f"（跳过: {', '.join(resolved.skipped_ids[:3])}）"
-                    yield _sse_frame("error", {"message": detail})
-                    return
-                input_messages = [
-                    build_human_message_with_attachments(
-                        query_text or "请根据附件回答",
-                        resolved.ready_rows,
-                        sid_str,
-                        skipped_ids=resolved.skipped_ids,
-                    )
-                ]
-            else:
-                input_messages = await _build_input_messages(body, sid)
-                if not input_messages:
-                    yield _sse_frame("error", {"message": "message、attachment_ids 或 images 不能为空"})
-                    return
-
-            async for mode, payload in agent.astream(
-                {"messages": input_messages},
-                config,
-                stream_mode=["messages", "custom"],
-            ):
-                if mode == "custom":
-                    if isinstance(payload, dict) and payload.get("type") in (
-                        "thinking",
-                        "tool_call",
-                        "tool_result",
-                    ):
-                        yield _sse_frame("messages", payload)
-                    elif isinstance(payload, dict) and payload.get("type") == "citation_meta":
-                        if settings.citation_enabled:
-                            batch = _citations_from_payload(payload)
-                            merged_citations = merge_citation_maps(merged_citations, batch)
-                            expander = CitationStreamExpander(merged_citations)
-                        yield _sse_frame("messages", payload)
-                    continue
-
-                chunk, meta = payload
-                if not isinstance(meta, dict) or meta.get("langgraph_node") != "agent":
-                    continue
-                if getattr(chunk, "tool_call_chunks", None):
-                    continue
-                reasoning = _chunk_reasoning(chunk)
-                if reasoning:
-                    yield _sse_frame("messages", {"type": "thinking", "content": reasoning})
-                text = _chunk_text(chunk)
-                if not text:
-                    continue
-                if expander is not None:
-                    text = expander.feed(text)
-                if text:
-                    yield _sse_frame("messages", {"type": "answer", "content": text})
-            if expander is not None:
-                rest = expander.flush()
-                if rest:
-                    yield _sse_frame("messages", {"type": "answer", "content": rest})
-                if expander.dropped_count:
-                    logger.warning(
-                        "本轮剥离 %d 个非法/越界引用句柄，实际引用 %s",
-                        expander.dropped_count,
-                        expander.used_indexes,
-                    )
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.exception("agent 运行失败")
-            detail = _user_facing_agent_error(e)
-            yield _sse_frame("messages", {"type": "answer", "content": detail})
-            yield _sse_frame("error", {"message": detail})
-        finally:
-            try:
-                await asyncio.to_thread(_db_touch_session, sid)
-            except Exception as e:
-                logger.warning("刷新会话 updated_at 失败: %s", e)
-
-    return StreamingResponse(
-        gen(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    preview: dict[str, Any] = {
+        "content": query_text,
+        "images": [],
+        "attachments": [{"id": aid, "file_name": ""} for aid in attachment_ids],
+    }
+    run = _start_session_run(
+        agent=agent,
+        sid=sid,
+        body=body,
+        attachment_ids=attachment_ids,
+        query_text=query_text,
+        config=config,
+        user_preview=preview,
     )
+    return StreamingResponse(
+        _sse_from_run(run),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
+
+
+@sessions_router.get("/{session_id}/runs/continue")
+async def continue_session_run(session_id: str) -> StreamingResponse:
+    """重放已产生的事件并续推，直到本轮生成结束。"""
+    sid = _to_uuid(session_id)
+    run = get_stream_manager().get(str(sid))
+    if run is None:
+        raise HTTPException(status_code=404, detail="没有可续接的生成")
+    return StreamingResponse(
+        _sse_from_run(run),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
+
+
+@sessions_router.post("/{session_id}/runs/stop")
+async def stop_session_run(session_id: str) -> dict[str, Any]:
+    """显式停止本轮生成（离开页面不会走这里）。"""
+    sid = _to_uuid(session_id)
+    run = get_stream_manager().request_stop(str(sid))
+    if run is None:
+        return {"stopped": True, "already_done": True}
+    return {"stopped": True, "run_id": run.run_id}

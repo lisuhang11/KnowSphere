@@ -2,10 +2,18 @@
  * 会话聊天逻辑
  */
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch, type Ref } from 'vue'
+import { useStickyBottomOnResize } from '@/composables/useStickyBottomOnResize'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { streamSessionRun } from '@/api/chatStream'
-import { getSessionState, clearSessionMessages, type Citation, type LangMessage } from '@/api/sessions'
+import { continueSessionRun, streamSessionRun } from '@/api/chatStream'
+import {
+  getSessionState,
+  clearSessionMessages,
+  stopSessionRun,
+  type ActiveRun,
+  type Citation,
+  type LangMessage,
+} from '@/api/sessions'
 import { useChatStore } from '@/stores/chat'
 import {
   type ChatImageMeta,
@@ -86,7 +94,7 @@ function extractMessageImages(m: LangMessage | Record<string, unknown>): ChatIma
   return out
 }
 
-export function useSessionChat() {
+export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefined>) {
   const chatStore = useChatStore()
   const messages = ref<ChatMsg[]>([])
   const streaming = ref(false)
@@ -97,42 +105,152 @@ export function useSessionChat() {
   const historyLoading = ref(false)
 
   let abortController: AbortController | null = null
+  let loadGen = 0
   let atBottom = true
   const userHasScrolledUp = ref(false)
 
+  function disconnectStream() {
+    abortController?.abort()
+    abortController = null
+  }
+
+  function parseHistory(raw: LangMessage[]): ChatMsg[] {
+    const list: ChatMsg[] = []
+    for (const m of raw) {
+      const text = extractText(m.content).trim()
+      const images = extractMessageImages(m)
+      const attachments = extractMessageAttachments(m)
+      const displayText =
+        text.split('\n\n[用户上传图片内容]\n')[0]?.split('\n\n[会话附件内容]\n')[0]?.trim() || text
+      if (!displayText && !images.length && !attachments.length) continue
+      if (m.type === 'human') {
+        list.push({
+          id: uid(),
+          role: 'user',
+          content: displayText,
+          images: images.length ? images : undefined,
+          attachments: attachments.length ? attachments : undefined,
+        })
+      } else if (m.type === 'ai') {
+        list.push({ id: uid(), role: 'assistant', content: displayText })
+      }
+    }
+    return list
+  }
+
+  function applyActiveRunTail(list: ChatMsg[], active: ActiveRun): ChatMsg {
+    if (list.length && list[list.length - 1]?.role === 'assistant') {
+      list.pop()
+    }
+    if (!list.length || list[list.length - 1]?.role !== 'user') {
+      const p = active.user_preview || {}
+      const attachments: ChatAttachmentMeta[] = []
+      for (const a of p.attachments || []) {
+        if (!a.id) continue
+        const entry: ChatAttachmentMeta = { id: a.id, file_name: a.file_name || '附件' }
+        if (a.file_type) entry.file_type = a.file_type
+        if (a.file_size && a.file_size > 0) entry.file_size = a.file_size
+        attachments.push(entry)
+      }
+      const images = (p.images || []).filter((i) => i.url)
+      list.push({
+        id: uid(),
+        role: 'user',
+        content:
+          (p.content || '').trim() ||
+          (attachments.length ? '（附件）' : images.length ? '（图片）' : ''),
+        images: images.length ? images : undefined,
+        attachments: attachments.length ? attachments : undefined,
+      })
+    }
+    const ai: ChatMsg = { id: uid(), role: 'assistant', content: '' }
+    list.push(ai)
+    return list[list.length - 1] as ChatMsg
+  }
+
+  async function pipeStream(
+    start: () => Promise<void>,
+    ensureAi: () => ChatMsg,
+    scrollEl?: HTMLElement | null,
+  ): Promise<'ok' | 'aborted' | 'missing'> {
+    streaming.value = true
+    abortController = new AbortController()
+    let outcome: 'ok' | 'aborted' | 'missing' = 'ok'
+    try {
+      await start()
+    } catch (e) {
+      const err = e as Error & { status?: number }
+      if (err.name === 'AbortError') outcome = 'aborted'
+      else if (err.status === 404 || String(err.message || '').includes('没有可续接')) {
+        outcome = 'missing'
+      } else {
+        MessagePlugin.error(err.message)
+      }
+    } finally {
+      streaming.value = false
+      streamingMsgId.value = null
+      abortController = null
+      if (outcome === 'ok') {
+        const ai = ensureAi()
+        if (ai.thinking) ai.thinkingDone = true
+        if (!ai.content) ai.content = '_（未生成回答，请重试）_'
+        void chatStore.loadThreads()
+        await scrollToBottom(scrollEl)
+      }
+    }
+    return outcome
+  }
+
+  async function attachContinueStream(threadId: string, gen: number, scrollEl?: HTMLElement | null) {
+    const last = messages.value[messages.value.length - 1]
+    if (!last || last.role !== 'assistant') return
+    streamingMsgId.value = last.id
+    const outcome = await pipeStream(
+      () =>
+        continueSessionRun(
+          threadId,
+          (event, data) => {
+            if (gen !== loadGen) return
+            handleStreamEvent(last, event, data)
+            void scrollToBottom(scrollEl)
+          },
+          abortController?.signal,
+        ),
+      () => last,
+      scrollEl,
+    )
+    if (outcome === 'missing' && gen === loadGen && chatStore.currentThreadId === threadId) {
+      await loadHistory(threadId)
+    }
+  }
+
   async function loadHistory(threadId: string) {
+    const gen = ++loadGen
+    disconnectStream()
     historyLoading.value = true
     try {
       const state = await getSessionState(threadId)
-      const list: ChatMsg[] = []
-      for (const m of state.values?.messages ?? []) {
-        const text = extractText(m.content).trim()
-        const images = extractMessageImages(m)
-        const attachments = extractMessageAttachments(m)
-        const displayText =
-          text.split('\n\n[用户上传图片内容]\n')[0]?.split('\n\n[会话附件内容]\n')[0]?.trim() || text
-        if (!displayText && !images.length && !attachments.length) continue
-        if (m.type === 'human') {
-          list.push({
-            id: uid(),
-            role: 'user',
-            content: displayText,
-            images: images.length ? images : undefined,
-            attachments: attachments.length ? attachments : undefined,
-          })
-        } else if (m.type === 'ai') {
-          list.push({ id: uid(), role: 'assistant', content: displayText })
-        }
-      }
+      if (gen !== loadGen || chatStore.currentThreadId !== threadId) return
+      const list = parseHistory(state.values?.messages ?? [])
+      const active = state.active_run
+      if (active) applyActiveRunTail(list, active)
       messages.value = list
+      historyLoading.value = false
+      atBottom = true
+      userHasScrolledUp.value = false
+      await scrollToBottom(undefined, true)
+      requestAnimationFrame(() => {
+        if (gen !== loadGen) return
+        void scrollToBottom(undefined, true)
+      })
+      if (active && gen === loadGen && chatStore.currentThreadId === threadId) {
+        await attachContinueStream(threadId, gen)
+      }
     } catch (e) {
+      if (gen !== loadGen) return
       MessagePlugin.error(`加载会话失败: ${(e as Error).message}`)
-    } finally {
       historyLoading.value = false
     }
-    atBottom = true
-    userHasScrolledUp.value = false
-    await scrollToBottom()
   }
 
   watch(
@@ -140,7 +258,7 @@ export function useSessionChat() {
     (id, prev) => {
       if (suppressHistorySync.value) return
       if (id === prev) return
-      abortController?.abort()
+      disconnectStream()
       streaming.value = false
       streamingMsgId.value = null
       activeCitation.value = null
@@ -158,7 +276,7 @@ export function useSessionChat() {
     (payload) => {
       if (!payload) return
       if (payload.id === chatStore.currentThreadId) {
-        abortController?.abort()
+        disconnectStream()
         streaming.value = false
         streamingMsgId.value = null
         activeCitation.value = null
@@ -174,16 +292,21 @@ export function useSessionChat() {
   })
 
   async function scrollToBottom(scrollEl?: HTMLElement | null, force = false) {
+    if (!force && userHasScrolledUp.value) return
     await nextTick()
-    const el = scrollEl
-    if (el && (atBottom || force)) {
-      el.scrollTop = el.scrollHeight
-      if (force) {
-        atBottom = true
-        userHasScrolledUp.value = false
-      }
+    const el = scrollEl ?? scrollContainer?.value ?? null
+    if (!el) return
+    if (!force && userHasScrolledUp.value) return
+    el.scrollTop = el.scrollHeight
+    if (force) {
+      atBottom = true
+      userHasScrolledUp.value = false
     }
   }
+
+  useStickyBottomOnResize(scrollContainer ?? ref(null), userHasScrolledUp, () => {
+    void scrollToBottom()
+  })
 
   function onScroll(scrollEl: HTMLElement) {
     const gap = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight
@@ -194,7 +317,7 @@ export function useSessionChat() {
   async function clearMessages() {
     const id = chatStore.currentThreadId
     if (!id) return
-    abortController?.abort()
+    disconnectStream()
     streaming.value = false
     streamingMsgId.value = null
     activeCitation.value = null
@@ -257,6 +380,8 @@ export function useSessionChat() {
           ai.content += delta
           ai.thinkingDone = true
         }
+      } else if (t === 'stop') {
+        ai.thinkingDone = true
       } else if (t === 'citation_meta') {
         const incoming = (data.citations as unknown as Citation[]) || []
         ai.citations = mergeCitationMeta(ai.citations, incoming)
@@ -287,6 +412,7 @@ export function useSessionChat() {
     if ((!query && !hasAttachments && !fallbackImageFiles.length) || streaming.value) return false
 
     atBottom = true
+    userHasScrolledUp.value = false
 
     let threadId: string
     try {
@@ -319,10 +445,6 @@ export function useSessionChat() {
     })
     await scrollToBottom(scrollEl)
 
-    streaming.value = true
-    streamingMsgId.value = null
-    abortController = new AbortController()
-
     let ai: ChatMsg | null = null
     const ensureAi = (): ChatMsg => {
       if (!ai) {
@@ -337,49 +459,55 @@ export function useSessionChat() {
       return ai
     }
 
-    try {
-      await streamSessionRun(
-        threadId,
-        query || '请分析这张图片',
-        (event, data) => {
-          const target = ensureAi()
-          handleStreamEvent(target, event, data)
-          void scrollToBottom(scrollEl)
-        },
-        abortController.signal,
-        chatStore.currentKbIds,
-        chatModelId,
-        imagePayload,
-        attachmentIds.length ? attachmentIds : undefined,
-        vlmModelId,
-      )
-    } catch (e) {
-      if ((e as Error).name !== 'AbortError') {
-        MessagePlugin.error((e as Error).message)
-      }
-    } finally {
-      streaming.value = false
-      streamingMsgId.value = null
-      abortController = null
-      const finalAi = ai ?? ensureAi()
-      if (finalAi.thinking) finalAi.thinkingDone = true
-      if (!finalAi.content) finalAi.content = '_（未生成回答，请重试）_'
-      void chatStore.loadThreads()
-      await scrollToBottom(scrollEl)
-    }
+    await pipeStream(
+      () =>
+        streamSessionRun(
+          threadId,
+          query || '请分析这张图片',
+          (event, data) => {
+            handleStreamEvent(ensureAi(), event, data)
+            void scrollToBottom(scrollEl)
+          },
+          abortController?.signal,
+          chatStore.currentKbIds,
+          chatModelId,
+          imagePayload,
+          attachmentIds.length ? attachmentIds : undefined,
+          vlmModelId,
+        ),
+      () => ai ?? ensureAi(),
+      scrollEl,
+    )
     return true
   }
 
   function stop() {
-    abortController?.abort()
+    const id = chatStore.currentThreadId
+    disconnectStream()
+    streaming.value = false
+    streamingMsgId.value = null
+    const last = messages.value[messages.value.length - 1]
+    if (last?.role === 'assistant') {
+      last.thinkingDone = true
+      if (!last.content) last.content = '_（已停止生成）_'
+    }
+    if (id) {
+      void stopSessionRun(id).catch((e) => {
+        console.warn('停止生成失败', e)
+      })
+    }
   }
 
   function resetForThreadSwitch() {
-    abortController?.abort()
+    disconnectStream()
     streaming.value = false
     streamingMsgId.value = null
     activeCitation.value = null
   }
+
+  onUnmounted(() => {
+    disconnectStream()
+  })
 
   return {
     messages,
