@@ -6,7 +6,7 @@ defineEmits<{
 
 <template>
   <button type="button" class="scroll-to-bottom-btn" aria-label="滚动到底部" @click="$emit('click')">
-    <t-icon name="arrow-down" size="18px" />
+    <t-icon name="chevron-down" size="20px" />
   </button>
 </template>
 

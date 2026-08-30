@@ -58,6 +58,14 @@ function extractMessageAttachments(m: LangMessage | Record<string, unknown>): Ch
   return out
 }
 
+function appendThinking(ai: ChatMsg, chunk: string) {
+  const text = chunk.trim()
+  if (!text) return
+  const prev = (ai.thinking || '').replace(/\n+$/, '')
+  ai.thinking = prev ? `${prev}\n\n${text}` : text
+  ai.thinkingDone = false
+}
+
 function extractMessageImages(m: LangMessage | Record<string, unknown>): ChatImageMeta[] {
   const kwargs =
     ('additional_kwargs' in m ? m.additional_kwargs : undefined) as Record<string, unknown> | undefined
@@ -216,6 +224,10 @@ export function useSessionChat() {
     if (event === 'error') {
       const msg = String(data.message || '对话失败')
       MessagePlugin.error(msg)
+      if (!ai.content) {
+        ai.content = msg
+        ai.thinkingDone = true
+      }
       return
     }
 
@@ -228,22 +240,16 @@ export function useSessionChat() {
       const t = data.type
       if (t === 'thinking') {
         const delta = extractText(data.content)
-        if (delta) {
-          ai.thinking = (ai.thinking || '') + delta
-          ai.thinkingDone = false
-        }
+        if (delta) appendThinking(ai, delta)
       } else if (t === 'tool_call') {
         const name = String(data.tool_name || '')
         if (name === 'attachment_parsing') {
-          ai.thinking = (ai.thinking || '') + '正在解析附件…\n'
-          ai.thinkingDone = false
+          appendThinking(ai, '正在解析附件…')
         }
       } else if (t === 'tool_result') {
         const name = String(data.tool_name || '')
         if (name === 'attachment_parsing') {
-          const msg = extractText(data.content) || '附件解析完成'
-          ai.thinking = (ai.thinking || '') + `${msg}\n`
-          ai.thinkingDone = false
+          appendThinking(ai, extractText(data.content) || '附件解析完成')
         }
       } else if (t === 'answer') {
         const delta = extractText(data.content)
@@ -285,8 +291,8 @@ export function useSessionChat() {
     let threadId: string
     try {
       threadId = await ensureThreadId((query || '附件').slice(0, 20))
-    } catch (e) {
-      MessagePlugin.error(`创建会话失败: ${(e as Error).message}`)
+    } catch {
+      // axios 拦截器已提示
       return false
     }
 
@@ -320,9 +326,13 @@ export function useSessionChat() {
     let ai: ChatMsg | null = null
     const ensureAi = (): ChatMsg => {
       if (!ai) {
-        ai = { id: uid(), role: 'assistant', content: '' }
-        messages.value.push(ai)
-        streamingMsgId.value = ai.id
+        messages.value.push({ id: uid(), role: 'assistant', content: '' })
+        // 必须拿数组里的响应式代理：对 push 前的原对象赋值 Vue 不会重渲染，
+        // 表现为「1/5 查询理解」出来后回答一直转圈。
+        const created = messages.value[messages.value.length - 1]
+        if (!created) throw new Error('无法创建助手消息')
+        ai = created
+        streamingMsgId.value = created.id
       }
       return ai
     }

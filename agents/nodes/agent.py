@@ -10,6 +10,7 @@ from langchain_core.runnables import RunnableConfig
 from models import create_chat_model
 from states import KnowSphereState
 from tools import get_tools
+from tools.retrieval.doc_retrieval import _emit_thinking
 from utils.run_config import chat_model_kwargs_from_config, kb_ids_from_config
 
 
@@ -131,6 +132,7 @@ def call_agent(
         intent=state.get("intent"),
         system_prompt_override=state.get("system_prompt_override"),
     )
+    _emit_thinking("正在生成回答…", None)
     response = model.invoke(messages, config)
     if not isinstance(response, AIMessage):
         response = AIMessage(content=str(response))
@@ -167,6 +169,7 @@ async def acall_agent(
         intent=state.get("intent"),
         system_prompt_override=state.get("system_prompt_override"),
     )
+    _emit_thinking("正在生成回答…", None)
     response = await model.ainvoke(messages, config)
     if not isinstance(response, AIMessage):
         response = AIMessage(content=str(response))

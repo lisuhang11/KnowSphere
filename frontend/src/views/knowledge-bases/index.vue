@@ -220,69 +220,130 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="kb-page">
-    <div class="kb-header">
-      <div>
-        <h2>知识库</h2>
-        <p class="kb-sub">管理多知识库，对话时可选择检索范围</p>
+  <div class="kb-list-container">
+    <div class="kb-list-content">
+      <div class="header">
+        <div class="header-title">
+          <div class="title-row">
+            <h2>知识库</h2>
+            <t-tooltip content="新建知识库" placement="bottom">
+              <t-button
+                variant="text"
+                theme="default"
+                size="small"
+                class="header-action-btn"
+                @click="openCreate"
+              >
+                <template #icon><t-icon name="folder-add" size="16px" /></template>
+              </t-button>
+            </t-tooltip>
+          </div>
+          <p class="header-subtitle">管理多知识库，对话时可选择检索范围</p>
+        </div>
       </div>
-      <t-button theme="primary" @click="openCreate">
-        <template #icon><t-icon name="add" /></template>
-        新建知识库
-      </t-button>
-    </div>
 
-    <div v-if="loading" class="kb-loading">
-      <t-loading text="加载中..." />
-    </div>
-
-    <div v-else-if="kbs.length === 0" class="kb-empty">
-      <t-icon name="folder-open" size="48px" />
-      <p>还没有知识库，点击右上角「新建知识库」开始</p>
-    </div>
-
-    <div v-else class="kb-grid">
-      <div
-        v-for="kb in kbs"
-        :key="kb.id"
-        class="kb-card"
-        @click="openKb(kb)"
-      >
-        <div class="kb-card-head">
-          <div class="kb-icon"><t-icon name="folder" size="22px" /></div>
-          <div class="kb-card-title" :title="kb.name">{{ kb.name }}</div>
-          <div class="kb-card-actions" @click.stop>
-            <t-button variant="text" shape="square" size="small" title="编辑" @click="openEdit(kb)">
-              <template #icon><t-icon name="edit" size="16px" /></template>
-            </t-button>
-            <t-button variant="text" shape="square" size="small" title="删除" @click="confirmDelete(kb)">
-              <template #icon><t-icon name="delete" size="16px" /></template>
-            </t-button>
+      <div class="kb-list-main">
+        <div v-if="loading && kbs.length === 0" class="kb-card-wrap">
+          <div v-for="n in 6" :key="'skel-' + n" class="kb-card kb-card-skeleton">
+            <div class="card-header">
+              <t-skeleton animation="gradient" :row-col="[{ width: '60%', height: '20px' }]" />
+            </div>
+            <div class="card-content">
+              <t-skeleton
+                animation="gradient"
+                :row-col="[{ width: '100%', height: '14px' }, { width: '80%', height: '14px' }]"
+              />
+            </div>
+            <div class="card-bottom">
+              <t-skeleton
+                animation="gradient"
+                :row-col="[[{ width: '28px', height: '28px', type: 'rect' }, { width: '28px', height: '28px', type: 'rect' }]]"
+              />
+            </div>
           </div>
         </div>
-        <div class="kb-card-desc" :title="kb.description">{{ kb.description || '暂无描述' }}</div>
-        <div class="kb-card-stats">
-          <span><t-icon name="file" size="14px" /> {{ kb.document_count ?? 0 }} 文档</span>
-          <span><t-icon name="layers" size="14px" /> {{ kb.chunk_count ?? 0 }} 分块</span>
-          <span class="kb-card-time">{{ fmtTime(kb.updated_at) }}</span>
+
+        <div v-else-if="kbs.length === 0" class="kb-empty">
+          <t-icon name="folder-open" size="48px" />
+          <p class="empty-txt">还没有知识库</p>
+          <p class="empty-desc">点击右上角按钮创建第一个知识库</p>
         </div>
-        <div
-          class="kb-card-config"
-          :title="kb.enable_parent_child
-            ? `父子分块 parent ${kb.parent_chunk_size} / child ${kb.child_chunk_size} · ${strategyLabel(kb.chunk_strategy || 'auto')}`
-            : `切块 ${kb.chunk_size}/${kb.chunk_overlap} · ${strategyLabel(kb.chunk_strategy || 'auto')} · ${embeddingLabel(kb.embedding_model_id)} (${kb.embedding_dim}维)`"
-        >
-          <t-icon name="setting" size="13px" />
-          <span v-if="kb.enable_parent_child">父子 {{ kb.parent_chunk_size }}/{{ kb.child_chunk_size }}</span>
-          <span v-else>切块 {{ kb.chunk_size }}/{{ kb.chunk_overlap }}</span>
-          <span class="kb-strategy-tag">{{ strategyLabel(kb.chunk_strategy || 'auto') }}</span>
-          <span v-if="kb.enable_parent_child" class="kb-strategy-tag pc-tag">父子</span>
-          <span class="kb-card-ellipsis">{{ embeddingLabel(kb.embedding_model_id) }}</span>
+
+        <div v-else class="kb-card-wrap">
+          <div
+            v-for="kb in kbs"
+            :key="kb.id"
+            class="kb-card kb-type-document"
+            @click="openKb(kb)"
+          >
+            <div class="card-header">
+              <span class="card-title" :title="kb.name">
+                <span class="card-title-text">{{ kb.name }}</span>
+              </span>
+              <t-popup overlay-class-name="card-more-popup" trigger="click" destroy-on-close placement="bottom-right">
+                <div class="more-wrap" @click.stop>
+                  <img class="more-icon" src="@/assets/img/more.png" alt="" />
+                </div>
+                <template #content>
+                  <div class="popup-menu" @click.stop>
+                    <div class="popup-menu-item" @click.stop="openEdit(kb)">
+                      <t-icon class="menu-icon" name="edit-1" />
+                      <span>编辑</span>
+                    </div>
+                    <div class="popup-menu-item delete" @click.stop="confirmDelete(kb)">
+                      <t-icon class="menu-icon" name="delete" />
+                      <span>删除</span>
+                    </div>
+                  </div>
+                </template>
+              </t-popup>
+            </div>
+
+            <div class="card-content">
+              <div class="card-description">{{ kb.description || '暂无描述' }}</div>
+            </div>
+
+            <div class="card-bottom">
+              <div class="bottom-left">
+                <div class="feature-badges">
+                  <t-tooltip content="文档数量" placement="top">
+                    <div class="feature-badge type-document">
+                      <t-icon name="folder" size="14px" />
+                      <span class="badge-count">{{ kb.document_count ?? 0 }}</span>
+                    </div>
+                  </t-tooltip>
+                  <t-tooltip :content="`分块 ${kb.chunk_count ?? 0}`" placement="top">
+                    <div class="feature-badge chunks">
+                      <t-icon name="layers" size="14px" />
+                      <span class="badge-count">{{ kb.chunk_count ?? 0 }}</span>
+                    </div>
+                  </t-tooltip>
+                  <t-tooltip v-if="kb.graph_enabled" content="知识图谱" placement="top">
+                    <div class="feature-badge kg">
+                      <t-icon name="relation" size="14px" />
+                    </div>
+                  </t-tooltip>
+                  <t-tooltip
+                    :content="kb.enable_parent_child
+                      ? `父子分块 parent ${kb.parent_chunk_size} / child ${kb.child_chunk_size} · ${strategyLabel(kb.chunk_strategy || 'auto')}`
+                      : `切块 ${kb.chunk_size}/${kb.chunk_overlap} · ${strategyLabel(kb.chunk_strategy || 'auto')} · ${embeddingLabel(kb.embedding_model_id)}`"
+                    placement="top"
+                  >
+                    <div class="feature-badge strategy">
+                      <span class="badge-count">{{ strategyLabel(kb.chunk_strategy || 'auto') }}</span>
+                    </div>
+                  </t-tooltip>
+                </div>
+              </div>
+              <div class="bottom-right">
+                <span class="card-time">{{ fmtTime(kb.updated_at) }}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- 创建/编辑弹窗 -->
     <t-dialog
       v-model:visible="dialogVisible"
       :header="editingKb ? '编辑知识库' : '新建知识库'"
@@ -338,169 +399,380 @@ onMounted(() => {
   </div>
 </template>
 
-<style scoped>
-.kb-page {
+<style scoped lang="less">
+.kb-list-container {
+  margin: 0;
   height: 100%;
-  overflow-y: auto;
-  padding: 24px;
   box-sizing: border-box;
-  background: var(--td-bg-color-page);
+  flex: 1;
+  display: flex;
+  position: relative;
+  min-height: 0;
 }
 
-.kb-header {
-  max-width: 1080px;
-  margin: 0 auto 20px;
+.kb-list-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 20px 0 0 28px;
+}
+
+.header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-bottom: 16px;
+  padding-right: 28px;
+
+  .header-title {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  h2 {
+    margin: 0;
+    color: var(--td-text-color-primary);
+    font-family: var(--app-font-family);
+    font-size: 24px;
+    font-weight: 600;
+    line-height: 32px;
+  }
 }
 
-.kb-header h2 {
+.header-subtitle {
   margin: 0;
-  font-size: 20px;
-  color: var(--td-text-color-primary);
+  color: var(--td-text-color-placeholder);
+  font-family: var(--app-font-family);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
 }
 
-.kb-sub {
-  margin: 4px 0 0;
-  font-size: 13px;
+.header-action-btn {
+  padding: 0 !important;
+  min-width: 28px !important;
+  width: 28px !important;
+  height: 28px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: var(--td-bg-color-secondarycontainer) !important;
+  border: 1px solid var(--td-component-stroke) !important;
+  border-radius: 6px !important;
   color: var(--td-text-color-secondary);
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--td-bg-color-container) 72%, transparent);
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+
+  &:hover {
+    background: var(--td-bg-color-secondarycontainer) !important;
+    border-color: var(--td-component-stroke) !important;
+    color: var(--td-text-color-primary);
+  }
+
+  :deep(.t-icon) {
+    color: var(--td-brand-color);
+  }
 }
 
-.kb-loading,
+.kb-list-main {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 28px 8px 0;
+}
+
+@keyframes contentFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.kb-card-wrap {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr;
+  animation: contentFadeIn 0.32s ease-out;
+}
+
 .kb-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 8px;
   padding: 80px 0;
   color: var(--td-text-color-placeholder);
-}
 
-.kb-grid {
-  max-width: 1080px;
-  margin: 0 auto;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 16px;
+  .empty-txt {
+    margin: 8px 0 0;
+    color: var(--td-text-color-placeholder);
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 26px;
+  }
+
+  .empty-desc {
+    margin: 0;
+    color: var(--td-text-color-disabled);
+    font-size: 14px;
+    line-height: 22px;
+  }
 }
 
 .kb-card {
-  background: #fff;
-  border: 1px solid var(--td-border-level-1-color);
-  border-radius: 12px;
-  padding: 16px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  overflow: hidden;
+  box-sizing: border-box;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  background: var(--td-bg-color-container);
+  position: relative;
   cursor: pointer;
-  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  transition: all 0.25s ease;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  height: 136px;
+  min-height: 136px;
+
+  &.kb-card-skeleton {
+    cursor: default;
+
+    .card-header {
+      margin-bottom: 12px;
+    }
+
+    .card-content {
+      flex: 1;
+    }
+
+    .card-bottom {
+      margin-top: auto;
+    }
+  }
+
+  &:hover {
+    border-color: var(--td-brand-color);
+    box-shadow: 0 4px 12px rgba(7, 192, 95, 0.12);
+  }
+
+  &.kb-type-document {
+    background: linear-gradient(135deg, var(--td-bg-color-container) 0%, rgba(7, 192, 95, 0.04) 100%);
+
+    &:hover {
+      border-color: var(--td-brand-color);
+      background: linear-gradient(135deg, var(--td-bg-color-container) 0%, rgba(7, 192, 95, 0.08) 100%);
+    }
+
+    &::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 60px;
+      height: 60px;
+      background: linear-gradient(135deg, rgba(7, 192, 95, 0.08) 0%, transparent 100%);
+      border-radius: 0 12px 0 100%;
+      pointer-events: none;
+      z-index: 0;
+    }
+  }
+
+  .card-header,
+  .card-content,
+  .card-bottom {
+    position: relative;
+    z-index: 1;
+  }
 }
 
-.kb-card:hover {
-  border-color: var(--td-brand-color);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
-}
-
-.kb-card-head {
+.card-header {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
+  margin-bottom: 6px;
+
+  .card-title {
+    flex: 1;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .card-title-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
-.kb-icon {
-  flex-shrink: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  background: var(--td-brand-color-light);
-  color: var(--td-brand-color);
+.more-wrap {
   display: flex;
-  align-items: center;
+  width: 24px;
+  height: 24px;
   justify-content: center;
+  align-items: center;
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+  opacity: 0;
+
+  .kb-card:hover & {
+    opacity: 0.6;
+  }
+
+  &:hover {
+    background: var(--td-bg-color-container-hover);
+    opacity: 1 !important;
+  }
+
+  .more-icon {
+    width: 14px;
+    height: 14px;
+  }
 }
 
-.kb-card-title {
+.card-content {
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.card-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+}
+
+.card-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--td-component-stroke);
+}
+
+.bottom-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex: 1;
   min-width: 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--td-text-color-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.kb-card-actions {
-  flex-shrink: 0;
-  display: flex;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-
-.kb-card:hover .kb-card-actions {
-  opacity: 1;
-}
-
-.kb-card-desc {
-  font-size: 13px;
-  color: var(--td-text-color-secondary);
-  line-height: 1.6;
-  height: 42px;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.kb-card-stats {
+.bottom-right {
   display: flex;
   align-items: center;
-  gap: 14px;
-  font-size: 12px;
-  color: var(--td-text-color-secondary);
+  gap: 8px;
+  flex-shrink: 0;
+
+  .card-time {
+    font-size: 12px;
+    color: var(--td-text-color-placeholder);
+  }
 }
 
-.kb-card-stats span {
-  display: inline-flex;
+.feature-badges {
+  display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.kb-card-time {
-  margin-left: auto;
-  color: var(--td-text-color-placeholder);
-}
-
-.kb-card-config {
+.feature-badge {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--td-text-color-secondary);
-  padding-top: 8px;
-  border-top: 1px dashed var(--td-border-level-1-color);
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  cursor: default;
+
+  &.type-document,
+  &.chunks,
+  &.strategy {
+    width: auto;
+    padding: 0 6px;
+    gap: 3px;
+    background: rgba(7, 192, 95, 0.08);
+    color: var(--td-brand-color-active);
+  }
+
+  &.chunks {
+    background: rgba(0, 0, 0, 0.04);
+    color: var(--td-text-color-secondary);
+  }
+
+  &.strategy {
+    background: var(--td-bg-color-secondarycontainer);
+    color: var(--td-text-color-secondary);
+  }
+
+  &.kg {
+    background: rgba(124, 77, 255, 0.08);
+    color: #7c4dff;
+  }
+
+  .badge-count {
+    font-size: 11px;
+    font-weight: 500;
+  }
 }
 
-.kb-card-ellipsis {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+@media (min-width: 900px) {
+  .kb-card-wrap {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
-.kb-strategy-tag {
-  flex-shrink: 0;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: var(--td-brand-color-light);
-  color: var(--td-brand-color);
-  font-weight: 600;
+@media (min-width: 1250px) {
+  .kb-card-wrap {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
 
-.pc-tag {
-  background: var(--td-warning-color-light);
-  color: var(--td-warning-color);
+@media (min-width: 1600px) {
+  .kb-card-wrap {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (min-width: 1900px) {
+  .kb-card-wrap {
+    grid-template-columns: repeat(5, 1fr);
+  }
 }
 </style>

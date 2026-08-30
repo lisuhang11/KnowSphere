@@ -159,3 +159,52 @@ def test_prefetch_injects_retrieval_when_kb_selected():
     tool_msgs = [m for m in result["messages"] if getattr(m, "type", None) == "tool"]
     assert any(getattr(m, "name", None) == "doc_retrieval" for m in tool_msgs)
     assert result["messages"][-1].content == "李稣航是文档中的实习生。"
+
+
+def test_doc_only_agent_reads_attachment_block():
+    """doc_only 跳过检索后，主模型必须看到 [会话附件内容] 才能回答。"""
+    from schemas.query import QueryUnderstandOutput
+
+    msg = HumanMessage(
+        content="这是啥\n\n[会话附件内容]\n### 附件：简历.pdf\n齐浩哲 应聘 C++ 开发工程师"
+    )
+    msg.additional_kwargs["ks_attachments"] = [
+        {"id": "a1", "file_name": "简历.pdf", "file_type": "pdf"}
+    ]
+    captured: list[str] = []
+
+    def fake_invoke(messages, _config=None):
+        captured.append("\n".join(str(getattr(m, "content", "")) for m in messages))
+        return AIMessage(content="这是一份 C++ 简历")
+
+    mock_model = MagicMock()
+    mock_model.bind_tools = MagicMock(return_value=mock_model)
+    mock_model.invoke = fake_invoke
+    parsed = QueryUnderstandOutput(
+        rewrite_query="这是啥", intent="doc_only", image_description=""
+    )
+    graph = build_agent()
+    with (
+        patch("agents.nodes.agent.create_chat_model", return_value=mock_model),
+        patch(
+            "agents.nodes.query_understand._invoke_text_query_understand",
+            return_value=parsed,
+        ),
+    ):
+        result = graph.invoke(
+            {"messages": [msg]},
+            config={"configurable": {"kb_ids": []}, "recursion_limit": 10},
+        )
+
+    assert captured
+    assert "[会话附件内容]" in captured[0]
+    assert "齐浩哲" in captured[0]
+    assert result["messages"][-1].content == "这是一份 C++ 简历"
+
+
+def test_user_facing_timeout_and_reasoning_chunk():
+    from api.sessions import _chunk_reasoning, _user_facing_agent_error
+
+    assert "超时" in _user_facing_agent_error(TimeoutError("Request timed out."))
+    chunk = type("C", (), {"additional_kwargs": {"reasoning_content": "先看附件"}})()
+    assert _chunk_reasoning(chunk) == "先看附件"

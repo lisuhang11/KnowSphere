@@ -288,27 +288,29 @@ onMounted(async () => {
 <style scoped>
 .model-settings {
   width: 100%;
-  padding: 24px;
-  max-width: 1200px;
+  height: 100%;
+  overflow-y: auto;
+  padding: 20px 28px;
   box-sizing: border-box;
 }
 
 .section-header {
-  margin-bottom: 28px;
+  margin-bottom: 16px;
 }
 
 .section-header h2 {
-  margin: 0 0 8px;
-  font-size: 20px;
+  margin: 0;
+  font-size: 24px;
   font-weight: 600;
+  line-height: 32px;
   color: var(--td-text-color-primary);
 }
 
 .section-description {
-  margin: 0;
+  margin: 4px 0 0;
   font-size: 14px;
-  color: var(--td-text-color-secondary);
-  line-height: 1.6;
+  color: var(--td-text-color-placeholder);
+  line-height: 20px;
 }
 
 .section-header__top {

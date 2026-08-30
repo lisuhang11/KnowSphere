@@ -343,11 +343,13 @@ onMounted(async () => {
 
 function handleClose() {
   drawerVisible.value = false
-  // 有历史记录则回退，直达链接（无历史）回列表页
+  // 有历史记录则回退，直达链接（无历史）回所属知识库；没有 /documents 列表路由
   if (window.history.length > 1) {
     router.back()
+  } else if (docInfo.value?.knowledge_base_id) {
+    router.push(`/knowledge-bases/${docInfo.value.knowledge_base_id}`)
   } else {
-    router.push('/documents')
+    router.push('/knowledge-bases')
   }
 }
 </script>

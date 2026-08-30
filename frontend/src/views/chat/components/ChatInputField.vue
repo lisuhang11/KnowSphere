@@ -57,7 +57,6 @@ const selectedChatModelId = computed({
 })
 
 const selectedKbs = computed(() => {
-  const idSet = new Set(props.selectedKbIds)
   // 按 selectedKbIds 顺序展示，避免列表顺序与勾选顺序不一致；并过滤已删库
   return props.selectedKbIds
     .map((id) => props.kbList.find((k) => k.id === id))

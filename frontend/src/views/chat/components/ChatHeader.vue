@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { sessionId, type Session } from '@/api/sessions'
 import type { ChatMsg } from '@/composables/useSessionChat'
@@ -15,6 +14,7 @@ type MenuMode = 'menu' | 'clear' | 'delete'
 const props = defineProps<{
   session: Session | null
   messages?: ChatMsg[]
+  hasReferencesPanel?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -22,7 +22,6 @@ const emit = defineEmits<{
   deleted: []
 }>()
 
-const router = useRouter()
 const chatStore = useChatStore()
 
 const busyAction = ref('')
@@ -87,7 +86,7 @@ async function submitTitleEdit(): Promise<void> {
     await chatStore.renameThread(sessionId(session), title)
     MessagePlugin.success('会话已重命名')
   } catch {
-    MessagePlugin.error('重命名失败')
+    /* axios 拦截器已提示 */
   } finally {
     busyAction.value = ''
   }
@@ -109,7 +108,7 @@ async function togglePin(): Promise<void> {
     await chatStore.togglePin(sessionId(session))
     MessagePlugin.success(wasPinned ? '已取消置顶' : '已置顶')
   } catch {
-    MessagePlugin.error('置顶操作失败')
+    /* axios 拦截器已提示 */
   } finally {
     busyAction.value = ''
   }
@@ -185,10 +184,9 @@ async function submitDeleteSession(): Promise<void> {
     menuMode.value = 'menu'
     emit('deleted')
     MessagePlugin.success('会话已删除')
-    if (chatStore.currentThreadId !== id) return
-    void router.push('/chat')
   } catch {
-    MessagePlugin.error('删除会话失败')
+    /* axios 拦截器已提示 */
+  }
   } finally {
     busyAction.value = ''
   }
@@ -213,7 +211,7 @@ function onMenuAction(action: string): void {
 </script>
 
 <template>
-  <header class="chat-header" :class="{ 'is-editing': titleEditing }">
+  <header class="chat-header" :class="{ 'is-editing': titleEditing, 'is-docked': hasReferencesPanel }">
     <form
       v-if="titleEditing"
       class="chat-header__edit"
@@ -328,22 +326,52 @@ function onMenuAction(action: string): void {
 
 <style scoped lang="less">
 .chat-header {
-  position: relative;
-  z-index: 5;
-  flex-shrink: 0;
-  display: flex;
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  z-index: 6;
+  display: inline-flex;
   align-items: center;
   gap: 2px;
-  width: 100%;
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 10px 16px;
+  max-width: min(280px, calc(100% - 24px));
+  min-width: 0;
+  padding: 2px 2px 2px 8px;
+  border-radius: 8px;
   box-sizing: border-box;
-  border-bottom: 1px solid var(--td-component-stroke);
-  background: var(--td-bg-color-container);
+  background: color-mix(in srgb, var(--td-bg-color-container) 88%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  pointer-events: auto;
 
   &.is-editing {
-    padding: 8px 16px;
+    max-width: min(360px, calc(100% - 24px));
+    padding: 2px;
+  }
+
+  @media (min-width: 960px) {
+    &.is-docked {
+      position: relative;
+      top: auto;
+      left: auto;
+      align-self: stretch;
+      z-index: 5;
+      flex-shrink: 0;
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      padding: 10px 12px;
+      border-radius: 0;
+      border-bottom: 1px solid var(--td-component-stroke);
+      background: var(--td-bg-color-container);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      box-sizing: border-box;
+
+      &.is-editing {
+        max-width: none;
+        padding: 8px 12px;
+      }
+    }
   }
 }
 
@@ -376,7 +404,6 @@ function onMenuAction(action: string): void {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  flex: 1;
   min-width: 0;
   margin: 0;
   padding: 0;

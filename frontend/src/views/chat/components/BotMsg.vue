@@ -70,7 +70,9 @@ async function copyAnswer() {
   </div>
 </template>
 
-<style scoped>
+<style scoped lang="less">
+@import '@/components/css/chat-markdown.less';
+
 .bot_msg {
   border-radius: 4px;
   color: var(--td-text-color-primary);
@@ -91,24 +93,9 @@ async function copyAnswer() {
 }
 
 .markdown-content {
-  font-size: 16px;
-  line-height: 1.7;
+  .chat-markdown-typography();
   word-break: break-word;
   overflow-wrap: anywhere;
-}
-
-.markdown-content :deep(p) {
-  margin: 0 0 0.75em;
-}
-
-.markdown-content :deep(p:last-child) {
-  margin-bottom: 0;
-}
-
-.markdown-content :deep(pre) {
-  margin: 0.75em 0;
-  border-radius: 8px;
-  overflow-x: auto;
 }
 
 .markdown-content :deep(.cite) {

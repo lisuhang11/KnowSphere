@@ -22,16 +22,20 @@ def build_chat(**kwargs) -> ChatOpenAI:
     # 混合推理模型（Qwen3 等）在此默认关闭思考流；对 Qwen2.5 等纯推理
     # 模型该参数会被 SiliconFlow 忽略，无副作用
     extra_body = kwargs.pop("extra_body", {"enable_thinking": False})
+    timeout = kwargs.pop("timeout", settings.chat_llm_timeout_sec)
+    if isinstance(timeout, (int, float)):
+        # 连接尽快失败；读超时覆盖 Qwen 等模型首 token 前的思考缓冲
+        timeout = httpx.Timeout(
+            connect=20.0, read=float(timeout), write=60.0, pool=20.0
+        )
     return ChatOpenAI(
         model=kwargs.pop("model", settings.chat_model),
         api_key=_api_key(kwargs.pop("api_key", None)),
         base_url=kwargs.pop("base_url", settings.siliconflow_base_url),
         temperature=kwargs.pop("temperature", 0.1),
         extra_body=extra_body,
-        # openai SDK 默认 timeout=600s：网络偶发 stall 会让 agent 的 run
-        # 挂住几分钟，收紧到 60s（流式首 token 远快于此）
-        timeout=kwargs.pop("timeout", 60),
-        max_retries=kwargs.pop("max_retries", 2),
+        timeout=timeout,
+        max_retries=kwargs.pop("max_retries", settings.chat_llm_max_retries),
         **kwargs,
     )
 
@@ -88,8 +92,8 @@ class SiliconFlowReranker:
             json=body,
             timeout=self.timeout,
         )
-        resp.raise_for_status
-        results = resp.json.get("results", [])
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
         return [
             {"index": int(r["index"]), "relevance_score": float(r["relevance_score"])}
             for r in results

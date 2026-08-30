@@ -237,7 +237,7 @@ class RetrievalService:
 
     def _rerank_rows(self, query: str, rows: list[dict[str, Any]], top_n: int) -> list[dict[str, Any]]:
         try:
-            reranker = create_reranker
+            reranker = create_reranker()
             hits = reranker.rerank(query, [r["content"] for r in rows], top_n=top_n)
             ranked = []
             for h in hits:

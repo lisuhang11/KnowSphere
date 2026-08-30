@@ -130,8 +130,8 @@ export function useChatPageResources() {
       try {
         await chatStore.createChat('新对话')
         threadId = chatStore.currentThreadId
-      } catch (err) {
-        MessagePlugin.error(`创建会话失败: ${(err as Error).message}`)
+      } catch {
+        // axios 拦截器已提示
         return
       }
     }

@@ -599,12 +599,12 @@ onMounted(load)
 .page {
   height: 100%;
   overflow-y: auto;
-  padding: 24px;
+  padding: 20px 28px 16px;
+  box-sizing: border-box;
 }
 
 .page-header {
-  max-width: 1080px;
-  margin: 0 auto 16px;
+  margin: 0 0 16px;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -623,7 +623,9 @@ onMounted(load)
 
 .header-back h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 32px;
   color: var(--td-text-color-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -632,8 +634,9 @@ onMounted(load)
 
 .header-subtitle {
   margin: 4px 0 0 4px;
-  font-size: 13px;
-  color: var(--td-text-color-secondary);
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--td-text-color-placeholder);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -647,12 +650,11 @@ onMounted(load)
 }
 
 .page-card {
-  max-width: 1080px;
-  margin: 0 auto;
-  background: #fff;
-  border-radius: 12px;
+  margin: 0;
+  background: var(--td-bg-color-container);
+  border-radius: 8px;
   padding: 8px 16px 16px;
-  border: 1px solid var(--td-border-level-1-color);
+  border: 1px solid var(--td-component-stroke);
 }
 
 .file-cell {

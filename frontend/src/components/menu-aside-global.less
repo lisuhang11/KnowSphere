@@ -1,0 +1,95 @@
+// Dark mode: invert dark logo to light
+html[theme-mode="dark"] .aside_box .logo_box .logo {
+    filter: invert(1) hue-rotate(180deg);
+}
+
+// Dark mode: 滚动条在深色背景下需要更亮的颜色才看得见
+html[theme-mode="dark"] .aside_box .menu_top:hover {
+    scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+
+html[theme-mode="dark"] .aside_box .menu_top:hover::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.22);
+}
+
+html[theme-mode="dark"] .aside_box .menu_top::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.38);
+}
+
+// Dark mode: invert the top search icon button image to match text color
+html[theme-mode="dark"] .aside_box .header-icon-img {
+    filter: invert(1);
+    opacity: 0.55;
+}
+
+html[theme-mode="dark"] .aside_box .header-icon-btn:hover .header-icon-img {
+    opacity: 0.9;
+}
+
+// Dark mode: make SVG icons match text color (loaded via <img>, currentColor won't work)
+html[theme-mode="dark"] .aside_box .menu_icon img.icon {
+    filter: invert(1);
+    opacity: 0.55;
+}
+
+// Hover state: brighter icon like text
+html[theme-mode="dark"] .aside_box .menu_item:hover .menu_icon img.icon {
+    opacity: 0.9;
+}
+
+// menu_item_c_active: text is primary, so icon should match
+html[theme-mode="dark"] .aside_box .menu_item_c_active .menu_icon img.icon {
+    opacity: 0.9;
+}
+
+// Active (green) icons should not be inverted
+html[theme-mode="dark"] .aside_box .menu_item_active .menu_icon img.icon {
+    filter: none;
+    opacity: 1;
+}
+
+// 下拉菜单样式已统一至 @/assets/dropdown-menu.less
+
+// 退出登录确认框样式
+:deep(.t-popconfirm) {
+    .t-popconfirm__content {
+        background: var(--td-bg-color-container);
+        border: 1px solid var(--td-component-stroke);
+        border-radius: 6px;
+        box-shadow: var(--td-shadow-3);
+        padding: 12px 16px;
+        font-size: 14px;
+        color: var(--td-text-color-primary);
+        max-width: 200px;
+    }
+
+    .t-popconfirm__arrow {
+        border-bottom-color: var(--td-component-stroke);
+    }
+
+    .t-popconfirm__arrow::after {
+        border-bottom-color: var(--td-bg-color-container);
+    }
+
+    .t-popconfirm__buttons {
+        margin-top: 8px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+    }
+
+    .t-button--variant-outline {
+        border-color: var(--td-component-border);
+        color: var(--td-text-color-secondary);
+    }
+
+    .t-button--theme-danger {
+        background-color: var(--td-error-color);
+        border-color: var(--td-error-color);
+    }
+
+    .t-button--theme-danger:hover {
+        background-color: var(--td-error-color);
+        border-color: var(--td-error-color);
+    }
+}

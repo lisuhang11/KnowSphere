@@ -449,6 +449,24 @@ def _chunk_text(chunk: Any) -> str:
         return "".join(parts)
     return ""
 
+
+def _chunk_reasoning(chunk: Any) -> str:
+    """Qwen 等模型把思考写在 additional_kwargs.reasoning_content，不是 content。"""
+    kwargs = getattr(chunk, "additional_kwargs", None) or {}
+    for key in ("reasoning_content", "reasoning"):
+        val = kwargs.get(key)
+        if isinstance(val, str) and val:
+            return val
+    return ""
+
+
+def _user_facing_agent_error(exc: BaseException) -> str:
+    raw = str(exc) or type(exc).__name__
+    lower = raw.lower()
+    if "timeout" in lower or "timed out" in lower:
+        return "模型响应超时。附件若已解析成功，请稍后重试，或把问题问得更具体一些。"
+    return f"生成回答失败：{raw[:240]}"
+
 def _citations_from_payload(payload: dict[str, Any]) -> dict[int, Citation]:
     citations: dict[int, Citation] = {}
     for c in payload.get("citations") or []:
@@ -597,6 +615,9 @@ async def stream_session_run(session_id: str, body: SessionStreamRequest) -> Str
                     continue
                 if getattr(chunk, "tool_call_chunks", None):
                     continue
+                reasoning = _chunk_reasoning(chunk)
+                if reasoning:
+                    yield _sse_frame("messages", {"type": "thinking", "content": reasoning})
                 text = _chunk_text(chunk)
                 if not text:
                     continue
@@ -618,7 +639,9 @@ async def stream_session_run(session_id: str, body: SessionStreamRequest) -> Str
             raise
         except Exception as e:
             logger.exception("agent 运行失败")
-            yield _sse_frame("error", {"message": str(e)})
+            detail = _user_facing_agent_error(e)
+            yield _sse_frame("messages", {"type": "answer", "content": detail})
+            yield _sse_frame("error", {"message": detail})
         finally:
             try:
                 await asyncio.to_thread(_db_touch_session, sid)

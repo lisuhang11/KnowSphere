@@ -442,7 +442,7 @@ onUnmounted(stopPolling)
 .page {
   height: 100%;
   overflow: auto;
-  padding: 24px 28px;
+  padding: 20px 28px;
   box-sizing: border-box;
 }
 
@@ -455,14 +455,17 @@ onUnmounted(stopPolling)
 
 .title {
   margin: 0;
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 600;
+  line-height: 32px;
+  color: var(--td-text-color-primary);
 }
 
 .subtitle {
-  margin: 6px 0 0;
-  color: var(--td-text-color-secondary);
-  font-size: 13px;
+  margin: 4px 0 0;
+  color: var(--td-text-color-placeholder);
+  font-size: 14px;
+  line-height: 20px;
 }
 
 .header-actions {

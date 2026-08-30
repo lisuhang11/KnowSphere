@@ -108,6 +108,10 @@ class Settings(BaseSettings):
     # 后端展开为可点击角标；关闭则自由输出、不展开、不发 citation_meta
     citation_enabled: bool = True
 
+    # 主对话 LLM：读超时（秒）。附件问答首 token 常慢于闲聊，60s 会整轮失败。
+    chat_llm_timeout_sec: float = 180
+    chat_llm_max_retries: int = 1
+
     # LangGraph agent 最大步数（recursion_limit，含 agent/tools 往返）
     agent_max_steps: int = 25
 

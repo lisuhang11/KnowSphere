@@ -1,0 +1,725 @@
+.aside_box {
+    // 侧栏水平栅格：图标列与文案列统一对齐（Logo / 菜单 / 会话分组 / 会话行）
+    --sidebar-inset-x: 14px;
+    --sidebar-icon-size: 18px;
+    --sidebar-channel-icon: 14px;
+    --sidebar-icon-gap: 8px;
+    --sidebar-text-inset: calc(var(--sidebar-inset-x) + var(--sidebar-icon-size) + var(--sidebar-icon-gap)); // 40px
+
+    min-width: 260px;
+    width: 260px;
+    padding: 8px 6px 6px;
+    background: var(--td-bg-color-sidebar);
+    box-sizing: border-box;
+    /* Avoid 100vh because <html> carries a `zoom` multiplier for font-size
+       control; 100vh is evaluated against the unscaled viewport and then
+       scaled, so at "large" the sidebar would extend past the window. The
+       ancestor chain (html/body/#app/.main) is already height: 100%. */
+    height: 100%;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--td-component-stroke);
+    box-shadow: 1px 0 0 rgba(0, 0, 0, 0.02);
+    transition: width 0.25s ease, min-width 0.25s ease;
+    position: relative;
+
+    // macOS Wails 桌面：红绿灯位于 HiddenInset 标题栏区域，需让出顶部空间
+    html.wails-desktop & {
+        padding-top: 30px;
+    }
+
+    &--collapsed {
+        min-width: 60px;
+        width: 60px;
+        padding: 8px 3px 6px;
+        overflow: visible;
+
+        .menu_item {
+            justify-content: center;
+            padding: 9px 0;
+
+            .menu_item-box {
+                justify-content: center;
+                width: auto;
+            }
+
+            .menu_icon {
+                margin-right: 0;
+            }
+        }
+
+        .menu_bottom {
+            align-items: center;
+        }
+
+        .menu_top {
+            margin-right: 0;
+            padding-right: 0;
+        }
+    }
+
+    .logo_row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 50px;
+        flex-shrink: 0;
+        padding: 0 10px 0 var(--sidebar-inset-x);
+    }
+
+    .sidebar-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        flex-shrink: 0;
+        cursor: pointer;
+        color: var(--td-text-color-secondary);
+        border-radius: 4px;
+        transition: background-color 0.2s ease;
+        box-sizing: border-box;
+
+        &:hover {
+            background: var(--td-bg-color-container-hover);
+            color: var(--td-text-color-primary);
+        }
+    }
+
+    .sidebar-drag-handle {
+        position: absolute;
+        top: 0;
+        right: -3px;
+        width: 6px;
+        height: 100%;
+        cursor: ew-resize;
+        z-index: 10;
+
+        &:hover {
+            background: var(--td-brand-color-light);
+        }
+    }
+
+    .logo_box {
+        display: flex;
+        align-items: center;
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+
+        .logo {
+            width: 128px;
+            height: auto;
+        }
+
+        .lite-badge {
+            margin-left: 2px;
+            align-self: flex-start;
+            margin-top: 2px;
+            font-size: 9px;
+            font-weight: 600;
+            color: var(--td-text-color-placeholder);
+            user-select: none;
+            white-space: nowrap;
+        }
+    }
+
+    .logo_img {
+        margin-left: 24px;
+        width: 30px;
+        height: 30px;
+        margin-right: 7.25px;
+    }
+
+    .logo_txt {
+        transform: rotate(0.049deg);
+        color: var(--td-text-color-primary);
+        font-family: "TencentSans";
+        font-size: 24.12px;
+        font-style: normal;
+        font-weight: W7;
+        line-height: 21.7px;
+    }
+
+    .menu_top {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        overflow-x: hidden;
+        min-height: 0;
+        // 抵消 .aside_box 的右内边距，让滚动条贴近面板右缘；
+        // 等量 padding 补回，保证列表文字位置不变。
+        margin-right: -4px;
+        padding-right: 4px;
+
+        // Claude 风格细滚动条：默认透明，悬浮时显示一条圆角细灰条
+        scrollbar-width: thin;
+        scrollbar-color: transparent transparent;
+        transition: scrollbar-color 0.2s ease;
+
+        &::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        &::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        &::-webkit-scrollbar-thumb {
+            background-color: transparent;
+            border-radius: 6px;
+            transition: background-color 0.2s ease;
+        }
+
+        &:hover {
+            scrollbar-color: var(--td-scrollbar-color, rgba(0, 0, 0, 0.18)) transparent;
+
+            &::-webkit-scrollbar-thumb {
+                background-color: var(--td-scrollbar-color, rgba(0, 0, 0, 0.18));
+            }
+        }
+
+        &::-webkit-scrollbar-thumb:hover {
+            background-color: var(--td-scrollbar-hover-color, rgba(0, 0, 0, 0.32));
+        }
+    }
+
+    .menu_bottom {
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .menu_box {
+        display: flex;
+        flex-direction: column;
+
+        // 「新对话」吸顶：作为滚动容器(.menu_top)的直接子级，滚动时钉在顶部，
+        // 知识库/智能体/共享空间及历史列表一起从其下方滚走。背景遮挡滚动内容。
+        &--sticky {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            background: var(--td-bg-color-sidebar);
+        }
+    }
+
+
+    .upload-file-wrap {
+        padding: 6px;
+        border-radius: 3px;
+        height: 32px;
+        width: 32px;
+        box-sizing: border-box;
+    }
+
+    .upload-file-wrap:hover {
+        background-color: var(--td-brand-color-light);
+        color: var(--td-brand-color);
+
+    }
+
+    .upload-file-icon {
+        width: 20px;
+        height: 20px;
+        color: var(--td-text-color-secondary);
+    }
+
+    .active-upload {
+        color: var(--td-brand-color);
+    }
+
+    .menu_item_active {
+        border-radius: 4px;
+        background: var(--td-bg-color-secondarycontainer) !important;
+
+        .menu_icon,
+        .menu_title {
+            color: var(--td-brand-color) !important;
+        }
+    }
+
+    .menu_item_c_active {
+
+        .menu_icon,
+        .menu_title {
+            color: var(--td-text-color-primary);
+        }
+    }
+
+    .menu_p {
+        height: 46px;
+        padding: 3px 0;
+        box-sizing: border-box;
+    }
+
+    .menu_item {
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 38px;
+        padding: 8px 10px 8px var(--sidebar-inset-x);
+        box-sizing: border-box;
+        margin-bottom: 2px;
+        border-radius: 4px;
+        transition: background-color 0.2s ease;
+
+        .menu_item-box {
+            display: flex;
+            align-items: center;
+        }
+
+        &:hover {
+            border-radius: 4px;
+            background: var(--td-bg-color-container-hover);
+
+            .menu_icon,
+            .menu_title {
+                color: var(--td-text-color-primary);
+            }
+        }
+    }
+
+    .menu_icon {
+        display: flex;
+        flex: 0 0 var(--sidebar-icon-size);
+        width: var(--sidebar-icon-size);
+        margin-right: var(--sidebar-icon-gap);
+        color: var(--td-text-color-secondary);
+
+        .icon {
+            width: 18px;
+            height: 18px;
+            overflow: hidden;
+        }
+    }
+
+    .menu_title {
+        color: var(--td-text-color-primary);
+        text-overflow: ellipsis;
+        font-family: var(--app-font-family);
+        font-size: 14px;
+        font-style: normal;
+        font-weight: 600;
+        line-height: 20px;
+        overflow: hidden;
+        white-space: nowrap;
+        max-width: 120px;
+        flex: 1;
+    }
+
+    .submenu {
+        position: relative;
+        font-family: var(--app-font-family);
+        font-size: 14px;
+        font-style: normal;
+        min-width: 0;
+        padding-top: 3px;
+    }
+
+    :deep(.submenu_pin_icon) {
+        color: inherit;
+        font-size: 12px;
+        margin-right: 4px;
+        vertical-align: middle;
+        flex-shrink: 0;
+    }
+
+    .submenu_source_icon {
+        width: 14px;
+        height: 14px;
+        margin-right: 0px;
+        vertical-align: middle;
+        object-fit: contain;
+        flex-shrink: 0;
+        // 默认淡化处理，避免未选中状态下彩色图标与灰色标题不协调；
+        // 悬浮或选中时恢复彩色，交互时才引人注意。
+        filter: grayscale(1);
+        opacity: 0.55;
+        transition: filter 0.15s ease, opacity 0.15s ease;
+    }
+
+    :deep(.submenu_item:hover .submenu_source_icon),
+    :deep(.submenu_item_active .submenu_source_icon) {
+        filter: none;
+        opacity: 1;
+    }
+
+    // 列表行统一栅格：左缘 inset-x + 图标槽 18px + 间距 8px → 文案列与主菜单文字对齐
+    .session-list-row {
+        display: flex;
+        align-items: center;
+        gap: var(--sidebar-icon-gap);
+        padding: 0 10px 0 var(--sidebar-inset-x);
+        min-width: 0;
+        box-sizing: border-box;
+    }
+
+    .session-list-row__icon {
+        flex: 0 0 var(--sidebar-icon-size);
+        width: var(--sidebar-icon-size);
+        height: var(--sidebar-icon-size);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .session-list-row__body {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+    }
+
+    // 聊天区分组标题 / 会话行：与「聊天」节标题同列左对齐，不再预留图标槽
+    .session-list-row--flat {
+        padding-left: var(--sidebar-inset-x);
+        gap: 0;
+    }
+
+    .session-list-loading {
+        display: flex;
+        align-items: center;
+        min-height: 26px;
+        color: var(--td-text-color-placeholder);
+    }
+
+    .timeline_header {
+        font-family: var(--app-font-family);
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--td-text-color-disabled);
+        padding-top: 4px;
+        padding-bottom: 1px;
+        margin-top: 0;
+        line-height: 16px;
+        user-select: none;
+    }
+
+    .timeline_header-label {
+        white-space: nowrap;
+    }
+
+    // Stable filter control: always mounted and absolutely pinned to the list's
+    // top-right so it visually sits on the first row (e.g. beside "近30天") and
+    // never jumps when switching session type reloads a bucket. It overlays the
+    // empty right side of the first header row, so it needs no reserved height.
+    .session-list-scope-header {
+        position: absolute;
+        top: 4px;
+        right: 10px;
+        z-index: 2;
+        display: flex;
+        justify-content: flex-end;
+        max-width: calc(100% - var(--sidebar-inset-x) - 10px);
+
+        :deep(.session-source-filter--inline) {
+            flex: 0 1 auto;
+            min-width: 0;
+            max-width: 100%;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+        }
+    }
+
+    .submenu:hover .session-list-scope-header :deep(.session-source-filter--inline),
+    .session-list-scope-header:hover :deep(.session-source-filter--inline),
+    .session-list-scope-header:focus-within :deep(.session-source-filter--inline),
+    .session-list-scope-header :deep(.session-source-filter--inline.session-source-filter--emphasized) {
+        opacity: 1;
+    }
+
+    .submenu_item_p {
+        padding: 0;
+        box-sizing: border-box;
+        min-width: 0;
+        overflow: hidden;
+
+        &.session-chat-row .session-list-row {
+            min-height: 30px;
+            border-radius: 6px;
+            transition: background 0.15s ease, color 0.15s ease;
+        }
+
+        &.session-chat-row:hover .session-list-row {
+            background: var(--td-bg-color-container-hover);
+
+            :deep(.menu-more) {
+                color: var(--td-text-color-primary);
+            }
+
+            :deep(.menu-more-wrap) {
+                opacity: 1;
+            }
+        }
+
+        &.session-chat-row--active .session-list-row {
+            background: var(--td-bg-color-container-hover);
+
+            :deep(.submenu_item) {
+                color: var(--td-brand-color);
+            }
+
+            :deep(.menu-more) {
+                color: var(--td-text-color-primary);
+            }
+
+            :deep(.menu-more-wrap) {
+                opacity: 1;
+            }
+        }
+
+        &.session-chat-row--selected .session-list-row {
+            background: rgba(7, 192, 95, 0.05);
+        }
+    }
+
+    // SessionSidebarRow 为子组件，需 :deep 才能让标题省略号生效
+    :deep(.submenu_item) {
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        color: var(--td-text-color-primary);
+        font-weight: 400;
+        font-size: 14px;
+        line-height: 20px;
+        height: 100%;
+        width: 100%;
+        padding: 6px 0;
+        position: relative;
+        min-width: 0;
+        background: transparent;
+
+        .submenu_title {
+            display: flex;
+            align-items: center;
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        .submenu_title-text {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+
+        .menu-more-wrap {
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            flex-shrink: 0;
+        }
+
+        .menu-more {
+            display: inline-block;
+            font-weight: bold;
+            color: var(--td-brand-color);
+        }
+
+        .submenu_title--batch {
+            margin-left: 4px;
+        }
+
+        &.submenu_item_batch {
+            padding-left: 0;
+        }
+    }
+
+    :deep(.submenu_item_batch) {
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .batch-checkbox {
+        flex-shrink: 0;
+    }
+
+}
+
+.batch-inline-footer {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    border-top: 1px solid var(--td-component-stroke);
+    background: var(--td-bg-color-container);
+
+    .batch-footer-left {
+        display: flex;
+        align-items: center;
+        font-size: 13px;
+        color: var(--td-text-color-placeholder);
+    }
+
+    .batch-footer-right {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+}
+
+/* 知识库下拉菜单样式 */
+.kb-dropdown-icon {
+    margin-left: auto;
+    color: var(--td-text-color-secondary);
+    transition: transform 0.3s ease, color 0.2s ease;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+
+    &.rotate-180 {
+        transform: rotate(180deg);
+    }
+
+    &:hover {
+        color: var(--td-brand-color);
+    }
+
+    &.active {
+        color: var(--td-brand-color);
+    }
+
+    &.active:hover {
+        color: var(--td-brand-color-active);
+    }
+
+    svg {
+        width: 12px;
+        height: 12px;
+        transition: inherit;
+    }
+}
+
+.kb-dropdown-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--td-bg-color-container);
+    border: 1px solid var(--td-component-stroke);
+    border-radius: 6px;
+    box-shadow: var(--td-shadow-2);
+    z-index: 1000;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.kb-dropdown-item {
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    font-size: 14px;
+    color: var(--td-text-color-primary);
+
+    &:hover {
+        background-color: var(--td-bg-color-container-hover);
+    }
+
+    &.active {
+        background-color: var(--td-brand-color-light);
+        color: var(--td-brand-color);
+        font-weight: 500;
+    }
+
+    &:first-child {
+        border-radius: 6px 6px 0 0;
+    }
+
+    &:last-child {
+        border-radius: 0 0 6px 6px;
+    }
+}
+
+.menu_item-box {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    position: relative;
+}
+
+/* Empty state when there are no sessions. */
+.submenu_empty {
+    padding: 24px 14px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--td-text-color-placeholder);
+    user-select: none;
+}
+
+// 顶部 logo_row 右侧的图标按钮组（搜索 + 折叠），与折叠按钮风格一致
+.logo_actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.header-icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    cursor: pointer;
+    border-radius: 6px;
+    color: var(--td-text-color-secondary);
+    transition: background-color 0.2s ease;
+    box-sizing: border-box;
+
+    &:hover {
+        background: var(--td-bg-color-container-hover);
+    }
+
+    .header-icon-img {
+        width: 18px;
+        height: 18px;
+        display: block;
+    }
+}
+
+// 深色 tooltip 内容：标签 + 浅灰快捷键内联
+.cmdk-tip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+
+    .cmdk-tip-label {
+        font-size: 13px;
+    }
+
+    .cmdk-tip-keys {
+        font-size: 13px;
+        opacity: 0.6;
+        letter-spacing: 0.5px;
+    }
+}
+
+.menu-pending-badge {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    margin-left: 6px;
+    border-radius: 9px;
+    background: rgba(250, 173, 20, 0.2);
+    color: var(--td-warning-color);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 18px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.menu_box {
+    position: relative;
+}

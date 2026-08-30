@@ -210,6 +210,8 @@ onUnmounted(cleanup)
 </template>
 
 <style scoped lang="less">
+@import '@/components/css/chat-markdown.less';
+
 @preview-max-h: calc(100vh - 200px);
 @border-radius: 6px;
 
@@ -363,6 +365,7 @@ onUnmounted(cleanup)
   border: 1px solid var(--td-component-stroke);
   border-radius: @border-radius;
   background: var(--td-bg-color-container);
+  .chat-markdown-typography();
 }
 
 .doc-file-preview__text {

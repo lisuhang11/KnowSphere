@@ -123,10 +123,11 @@ onMounted(() => {
 <template>
   <div class="chat" :class="{ 'has-references-panel': hasReferencesPanel }">
     <ChatHeader
-      v-if="currentSession"
       :session="currentSession"
       :messages="messages"
+      :has-references-panel="hasReferencesPanel"
       @cleared="onHeaderCleared"
+      @deleted="chatStore.startDraftChat()"
     />
 
     <div ref="scrollRef" class="chat_scroll_box" @scroll="handleScroll">
@@ -201,14 +202,18 @@ onMounted(() => {
 
 <style scoped>
 .chat {
+  font-size: 20px;
+  padding: 0 0 20px 20px;
+  box-sizing: border-box;
+  flex: 1;
   height: 100%;
   min-height: 0;
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  background: var(--td-bg-color-page);
-  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 400px;
 }
 
 @media (min-width: 960px) {
@@ -228,15 +233,19 @@ onMounted(() => {
   padding-top: 8px;
   box-sizing: border-box;
   overflow-y: auto;
+  scrollbar-width: auto;
+  scrollbar-color: auto;
 }
 
 .msg-list {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 16px 16px 24px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  max-width: 960px;
+  flex: 1;
+  margin: 0 auto;
+  width: 100%;
+  padding: 16px 16px 24px;
 }
 
 .msg-row.user {
@@ -291,14 +300,14 @@ onMounted(() => {
 }
 
 .input-container {
+  min-height: 115px;
   flex-shrink: 0;
+  margin: 0 auto;
   width: 100%;
   max-width: 960px;
-  margin: 0 auto;
-  padding: 0 16px 16px;
   box-sizing: border-box;
-  min-height: 115px;
   position: relative;
+  padding: 0 16px 0;
 }
 
 .scroll-btn-fade-enter-active,

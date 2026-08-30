@@ -109,6 +109,11 @@ export const useChatStore = defineStore('chat', () => {
     await setKbIds(id == null ? [] : [id])
   }
 
+  /** 进入空白对话：不调后端。会话在首条消息 / 上传附件时由 createChat 创建。 */
+  function startDraftChat() {
+    currentThreadId.value = null
+  }
+
   async function createChat(title?: string): Promise<Session> {
     const t = await createSession(title, currentKbIds.value)
     currentThreadId.value = sessionId(t)
@@ -163,6 +168,7 @@ export const useChatStore = defineStore('chat', () => {
     setKbIds,
     setKbId,
     pruneKbIds,
+    startDraftChat,
     createChat,
     removeThread,
     renameThread,
