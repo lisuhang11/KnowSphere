@@ -85,6 +85,8 @@ target-version = "py311"
 "api/main.py" = ["B008"]
 # rerank 失败降级为 RRF 序的兜底路径，刻意捕获宽异常
 "tools/retrieval/doc_retrieval.py" = ["BLE001"]
+# Redis 闪断时续流读写降级，刻意捕获宽异常
+"services/stream_manager.py" = ["BLE001"]
 # 评测逐题兜底：单题失败跳过不中断整轮
 "evals/run_eval.py" = ["BLE001"]
 # HF_ENDPOINT 需在 import datasets 前设置

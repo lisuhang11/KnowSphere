@@ -56,6 +56,12 @@ class Settings(BaseSettings):
 
     # 异步任务（Celery + Redis 队列）
     redis_url: str = "redis://localhost:6379/0"
+    # 会话续流事件：redis = RPUSH/LRANGE 跨进程可见；memory = 仅本进程。
+    # Redis 连不上时自动降级 memory（多实例 continue-stream 会 404）。
+    stream_manager_type: str = "redis"  # redis | memory
+    stream_ttl_sec: float = 3600
+    stream_key_prefix: str = "ks:stream"
+    stream_stop_poll_sec: float = 0.3
     # 处理中超时（分钟）：超过即被 housekeeping 兜底置 failed，可手动重试
     processing_timeout_minutes: int = 30
     # 文档摄取时每批 embedding 的 chunk 数

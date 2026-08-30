@@ -692,13 +692,13 @@ def _start_session_run(
                 config=config,
             )
         finally:
-            still = mgr.get(sid_str) is run
-            if run.stopped and still:
+            if run.stopped and mgr.owns(run):
                 await _persist_partial_answer(agent, sid_str, run)
-            if still:
+            if mgr.owns(run) and mgr.store_holds(run):
                 mgr.finish(run)
             else:
                 run.done = True
+                mgr.drop_local(run)
             try:
                 await asyncio.to_thread(_db_touch_session, sid)
             except Exception as e:  # noqa: BLE001
