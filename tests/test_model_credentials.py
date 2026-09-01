@@ -6,6 +6,7 @@ import pytest
 
 from utils.model_credentials import PLACEHOLDER_KEYS, model_has_usable_key, validate_model_for_use
 
+
 def test_placeholder_keys():
     assert "sk-xxx" in PLACEHOLDER_KEYS
     assert "EMPTY" in PLACEHOLDER_KEYS
@@ -22,3 +23,23 @@ def test_model_has_usable_key_env_fallback(monkeypatch):
         lambda ref, mtype: None,
     )
     assert model_has_usable_key(None, "KnowledgeQA")
+
+
+def test_local_ollama_does_not_require_api_key():
+    from utils.model_credentials import _key_from_record
+
+    rec = {
+        "source": "local",
+        "parameters": {"provider": "ollama", "model": "llama3.2"},
+    }
+    assert _key_from_record(rec) == "ollama"
+
+
+def test_generic_remote_allows_empty_key():
+    from utils.model_credentials import _key_from_record
+
+    rec = {
+        "source": "remote",
+        "parameters": {"provider": "generic", "base_url": "http://localhost:8000/v1"},
+    }
+    assert _key_from_record(rec) == "EMPTY"

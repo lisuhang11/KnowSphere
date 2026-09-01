@@ -5,47 +5,41 @@
 - POST /models/{id}/debug   测试连接（chat/embedding/rerank 实际调用；ASR 仅校验配置）
 - PUT /models/{id}/credentials           更新凭证（api_key 等）
 - DELETE /models/{id}/credentials/{field} 清空凭证字段
-- GET /models/providers     provider 列表（siliconflow / openai_compatible）
+- GET /models/providers     远程厂商目录（source=remote 时选用）
+- GET /models/ollama/status|models  本地 Ollama 探测
 
 安全约定：读取接口永不返回凭证明文，仅返回 credentials: {field: bool}。
+DB 语义对齐 WeKnora：source = local|remote，厂商在 parameters.provider。
 """
 
 from __future__ import annotations
 
-import base64
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from models import create_chat_model, create_embeddings, create_reranker, create_vlm_model
-from utils.message_content import message_text
-from utils.model_store import (
+from models.ollama import fetch_ollama_status, list_ollama_models
+from models.openai_compat import ollama_openai_base_url
+from models.providers import (
     MODEL_SOURCES,
     MODEL_TYPES,
-    ModelStore,
+    default_base_url,
+    get_provider,
+    list_remote_providers,
+    normalize_provider,
+    runtime_provider,
+    spec_to_public,
+)
+from utils.message_content import message_text
+from utils.model_store import (
     _SECRET_FIELDS,
+    ModelStore,
 )
 
 router = APIRouter(tags=["models"])
-
-_PROVIDERS = [
-    {
-        "source": "siliconflow",
-        "name": "SiliconFlow 硅基流动",
-        "base_url": "https://api.siliconflow.cn/v1",
-        "types": ["KnowledgeQA", "Embedding", "Rerank", "VLLM", "ASR"],
-        "description": "内置默认 provider，API 兼容 OpenAI 格式",
-    },
-    {
-        "source": "openai_compatible",
-        "name": "OpenAI 兼容接口",
-        "base_url": None,
-        "types": ["KnowledgeQA", "Embedding", "Rerank", "VLLM", "ASR"],
-        "description": "任意 OpenAI 兼容服务（OpenAI、Azure、Ollama、DeepSeek 等），自填 base_url",
-    },
-]
 
 _store = ModelStore()
 
@@ -54,12 +48,16 @@ def _to_public(rec: dict) -> dict:
     params = dict(rec.get("parameters") or {})
     credentials = {f: bool(params.get(f)) for f in _SECRET_FIELDS}
     public_params = {k: v for k, v in params.items() if k not in _SECRET_FIELDS}
+    provider_id = runtime_provider(rec["source"], params)
+    spec = get_provider(provider_id)
     return {
         "id": rec["id"],
         "name": rec["name"],
         "display_name": rec["display_name"],
         "type": rec["type"],
         "source": rec["source"],
+        "provider": provider_id,
+        "provider_name": spec.name if spec else provider_id,
         "description": rec["description"],
         "parameters": public_params,
         "is_default": rec["is_default"],
@@ -70,10 +68,21 @@ def _to_public(rec: dict) -> dict:
         "updated_at": rec["updated_at"],
     }
 
-def _params_from_request(body: "ModelCreateRequest") -> dict[str, Any]:
-    params: dict[str, Any] = {"model": body.model or body.name}
-    if body.base_url:
-        params["base_url"] = body.base_url
+def _params_from_request(body: ModelCreateRequest) -> dict[str, Any]:
+    provider_id = (
+        "ollama"
+        if body.source == "local"
+        else normalize_provider(body.provider or "siliconflow")
+    )
+    params: dict[str, Any] = {"model": body.model or body.name, "provider": provider_id}
+    base_url = (body.base_url or "").strip() or None
+    if not base_url:
+        if body.source == "local":
+            base_url = ollama_openai_base_url()
+        else:
+            base_url = default_base_url(provider_id, body.type) or None
+    if base_url:
+        params["base_url"] = base_url
     if body.api_key:
         params["api_key"] = body.api_key
     if body.dimensions is not None:
@@ -96,7 +105,11 @@ class ModelCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200, description="模型名（如 Qwen/Qwen3.5-35B-A3B）")
     display_name: str | None = Field(default=None, max_length=200)
     type: str = Field(description=f"模型类型: {', '.join(MODEL_TYPES)}")
-    source: str = Field(default="siliconflow", description=f"provider: {', '.join(MODEL_SOURCES)}")
+    source: str = Field(default="remote", description=f"部署位置: {', '.join(MODEL_SOURCES)}")
+    provider: str | None = Field(
+        default="siliconflow",
+        description="厂商标识（remote 时必填；local 固定 ollama）",
+    )
     description: str = Field(default="", max_length=500)
     # 连接参数（扁平化，便于前端表单）
     model: str | None = Field(default=None, max_length=200, description="实际调用模型名，缺省用 name")
@@ -117,6 +130,7 @@ class ModelUpdateRequest(BaseModel):
     model: str | None = None
     base_url: str | None = None
     api_key: str | None = None
+    provider: str | None = None
     dimensions: int | None = None
     temperature: float | None = None
     supports_vision: bool | None = None
@@ -150,20 +164,40 @@ def _normalize_debug_image(raw: str | None) -> str:
 # ---------------------------------------------------------------------------
 
 @router.get("/models/providers")
-def list_providers() -> list[dict]:
-    return _PROVIDERS
+def list_providers(type: str | None = Query(default=None, description="按模型类型过滤")) -> list[dict]:
+    if type and type not in MODEL_TYPES:
+        raise HTTPException(status_code=400, detail=f"不支持的模型类型: {type}")
+    return [spec_to_public(p) for p in list_remote_providers(type)]
+
+
+@router.get("/models/ollama/status")
+def ollama_status() -> dict:
+    return fetch_ollama_status()
+
+
+@router.get("/models/ollama/models")
+def ollama_models() -> dict:
+    return list_ollama_models()
+
 
 @router.post("/models")
 def create_model(body: ModelCreateRequest) -> dict:
     if body.type not in MODEL_TYPES:
         raise HTTPException(status_code=400, detail=f"不支持的模型类型: {body.type}，可选: {', '.join(MODEL_TYPES)}")
     if body.source not in MODEL_SOURCES:
-        raise HTTPException(status_code=400, detail=f"不支持的 provider: {body.source}，可选: {', '.join(MODEL_SOURCES)}")
-    if body.source == "siliconflow" and not body.base_url:
-        body.base_url = "https://api.siliconflow.cn/v1"
-    if not body.api_key and body.source == "siliconflow":
-        # 内置 siliconflow key 可沿用 .env 配置；自定义时允许留空（运行时失败时提示）
-        pass
+        legacy = normalize_provider(body.source)
+        if get_provider(legacy):
+            body.provider = legacy
+            body.source = "local" if legacy == "ollama" else "remote"
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"不支持的来源: {body.source}，可选: {', '.join(MODEL_SOURCES)}",
+            )
+    if body.source == "local":
+        body.provider = "ollama"
+    elif not (body.provider or "").strip():
+        raise HTTPException(status_code=400, detail="远程模型必须指定 provider")
     try:
         rec = _store.create_model(
             name=body.name.strip(),
@@ -179,12 +213,16 @@ def create_model(body: ModelCreateRequest) -> dict:
     return _to_public(rec)
 
 @router.get("/models")
-def list_models(type: str | None = None, source: str | None = None) -> list[dict]:
+def list_models(
+    type: str | None = None,
+    source: str | None = None,
+    provider: str | None = None,
+) -> list[dict]:
     if type and type not in MODEL_TYPES:
         raise HTTPException(status_code=400, detail=f"不支持的模型类型: {type}")
     if source and source not in MODEL_SOURCES:
-        raise HTTPException(status_code=400, detail=f"不支持的 provider: {source}")
-    recs = _store.list_models(type_=type, source=source)
+        raise HTTPException(status_code=400, detail=f"不支持的来源: {source}")
+    recs = _store.list_models(type_=type, source=source, provider=provider)
     return [_to_public(r) for r in recs]
 
 @router.get("/models/{model_id}")
@@ -210,6 +248,7 @@ def update_model(model_id: str, body: ModelUpdateRequest) -> dict:
             body.dimensions,
             body.temperature,
             body.supports_vision,
+            body.provider,
         )
     )
     if touched:
@@ -223,6 +262,8 @@ def update_model(model_id: str, body: ModelUpdateRequest) -> dict:
             stored = rec["parameters"].get("api_key")
             if stored:
                 params["api_key"] = stored
+        if body.provider is not None and rec["source"] == "remote":
+            params["provider"] = normalize_provider(body.provider)
         if body.dimensions is not None:
             params["dimensions"] = body.dimensions
         if body.temperature is not None:
@@ -281,10 +322,7 @@ def debug_model(model_id: str, body: ModelDebugRequest | None = None) -> dict:
     if rec["status"] == "disabled":
         raise HTTPException(status_code=400, detail="模型已禁用，无法测试")
     params = rec.get("parameters") or {}
-    provider = rec["source"]
     mtype = rec["type"]
-    base_url = params.get("base_url")
-    api_key = params.get("api_key")
     model_name = params.get("model")
 
     if not model_name:
@@ -293,13 +331,11 @@ def debug_model(model_id: str, body: ModelDebugRequest | None = None) -> dict:
     start = time.time()
     try:
         if mtype == "KnowledgeQA":
-            chat = create_chat_model(
-                provider, model=model_id, api_key=api_key, base_url=base_url
-            )
+            chat = create_chat_model(model=model_id)
             resp = chat.invoke(req.prompt or "ping")
             message = f"连接成功，模型回复: {(resp.content or '')[:120]}"
         elif mtype == "VLLM":
-            llm = create_vlm_model(provider, model=model_id, api_key=api_key, base_url=base_url)
+            llm = create_vlm_model(model=model_id)
             image_uri = _normalize_debug_image(req.image_base64)
             prompt = (req.prompt or "请简要描述这张图片的内容。").strip()
             resp = llm.invoke(
@@ -316,15 +352,11 @@ def debug_model(model_id: str, body: ModelDebugRequest | None = None) -> dict:
             snippet = message_text(getattr(resp, "content", ""))[:200]
             message = f"视觉模型连接成功，回复: {snippet or '（空回复）'}"
         elif mtype == "Embedding":
-            embeddings = create_embeddings(
-                provider, model=model_name, api_key=api_key, base_url=base_url
-            )
+            embeddings = create_embeddings(model=model_id)
             dim = len(embeddings.embed_query("ping"))
             message = f"连接成功，输出维度 {dim}"
         elif mtype == "Rerank":
-            reranker = create_reranker(
-                provider, model=model_name, api_key=api_key, base_url=base_url
-            )
+            reranker = create_reranker(model=model_id)
             result = reranker.rerank("ping", ["a", "b"], top_n=1)
             message = f"连接成功，返回 {len(result)} 条重排结果"
         elif mtype == "ASR":
@@ -336,7 +368,7 @@ def debug_model(model_id: str, body: ModelDebugRequest | None = None) -> dict:
             raise HTTPException(status_code=400, detail=f"不支持的模型类型: {mtype}")
     except HTTPException:
         raise
-    except Exception as exc:  # noqa: BLE001 - 测试失败即返回错误详情
+    except Exception as exc:
         latency = round((time.time() - start) * 1000)
         raise HTTPException(status_code=400, detail=f"连接失败: {exc}") from exc
     latency = round((time.time() - start) * 1000)

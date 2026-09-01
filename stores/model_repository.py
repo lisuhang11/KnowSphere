@@ -12,15 +12,19 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from config.settings import settings
+from models.providers import (
+    MODEL_SOURCES,
+    MODEL_TYPES,
+    get_provider,
+    normalize_provider,
+    provider_supports_type,
+    runtime_provider,
+)
 from stores.common import load_jsonb
 from utils.crypto import decrypt_secret, encrypt_secret
 
 logger = logging.getLogger(__name__)
 
-# 模型类型（对齐 ；VLLM 用于聊天图片/附件视觉理解，ASR 仅管理）
-MODEL_TYPES = ("KnowledgeQA", "Embedding", "Rerank", "VLLM", "ASR")
-# 支持的 provider 来源（OpenAI 兼容接口复用 siliconflow 的 builder）
-MODEL_SOURCES = ("siliconflow", "openai_compatible")
 # parameters 中需要加密存储的字段
 SECRET_FIELDS = ("api_key",)
 
@@ -66,44 +70,100 @@ class ModelStore():
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_models_type ON models(type)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_models_default ON models(type) WHERE is_default")
+            self._migrate_source_to_local_remote(conn)
+            conn.execute("DROP INDEX IF EXISTS idx_models_name_source_type")
             conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_models_name_source_type ON models(name, source, type)"
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_models_name_type_source_provider
+                ON models (name, type, source, COALESCE(parameters->>'provider', ''))
+                """
             )
+
+    @staticmethod
+    def _migrate_source_to_local_remote(conn) -> None:
+        """旧版 source=厂商名 → source=local|remote + parameters.provider。"""
+        conn.execute(
+            """
+            UPDATE models
+            SET parameters = COALESCE(parameters, '{}'::jsonb) || jsonb_build_object(
+                'provider',
+                CASE source
+                    WHEN 'openai_compatible' THEN 'generic'
+                    WHEN 'ollama' THEN 'ollama'
+                    ELSE source
+                END
+            )
+            WHERE source NOT IN ('local', 'remote')
+              AND COALESCE(parameters->>'provider', '') = ''
+            """
+        )
+        conn.execute(
+            """
+            UPDATE models
+            SET source = CASE WHEN source = 'ollama' THEN 'local' ELSE 'remote' END
+            WHERE source NOT IN ('local', 'remote')
+            """
+        )
+        conn.execute(
+            """
+            UPDATE models
+            SET parameters = jsonb_set(parameters, '{provider}', '"generic"')
+            WHERE parameters->>'provider' = 'openai_compatible'
+            """
+        )
+        conn.execute(
+            """
+            UPDATE models
+            SET parameters = COALESCE(parameters, '{}'::jsonb) || '{"provider": "ollama"}'::jsonb
+            WHERE source = 'local' AND COALESCE(parameters->>'provider', '') = ''
+            """
+        )
+        conn.execute(
+            """
+            UPDATE models
+            SET parameters = COALESCE(parameters, '{}'::jsonb) || '{"provider": "generic"}'::jsonb
+            WHERE source = 'remote' AND COALESCE(parameters->>'provider', '') = ''
+            """
+        )
 
     # ---------------------------------------------------------------- seed
 
     def seed_builtin_models(self) -> None:
         """把 .env 的 chat/embedding/rerank 模型注册为内置记录（幂等），
         并把存量 knowledge_bases.embedding_model_id 的模型名迁移为模型 ID。"""
-        entries: list[tuple[str, str, str, str, str]] = []
+        entries: list[tuple[str, str, str, str]] = []
         if settings.chat_model:
             entries.append(
-                (settings.chat_model, "KnowledgeQA", "siliconflow", settings.siliconflow_base_url, settings.siliconflow_api_key)
+                (settings.chat_model, "KnowledgeQA", settings.siliconflow_base_url, settings.siliconflow_api_key)
             )
         if settings.embedding_model:
             entries.append(
-                (settings.embedding_model, "Embedding", "siliconflow", settings.siliconflow_base_url, settings.siliconflow_api_key)
+                (settings.embedding_model, "Embedding", settings.siliconflow_base_url, settings.siliconflow_api_key)
             )
         if settings.rerank_enabled and settings.rerank_model:
             entries.append(
-                (settings.rerank_model, "Rerank", "siliconflow", settings.siliconflow_base_url, settings.siliconflow_api_key)
+                (settings.rerank_model, "Rerank", settings.siliconflow_base_url, settings.siliconflow_api_key)
             )
         if settings.vlm_model:
             entries.append(
-                (settings.vlm_model, "VLLM", "siliconflow", settings.siliconflow_base_url, settings.siliconflow_api_key)
+                (settings.vlm_model, "VLLM", settings.siliconflow_base_url, settings.siliconflow_api_key)
             )
 
-        for name, mtype, source, base_url, api_key in entries:
+        for name, mtype, base_url, api_key in entries:
             existing = self.get_model_by_name_type(name, mtype)
             if existing:
                 # 内置模型凭证随 .env 同步：避免密钥轮换后 DB 仍用旧密文导致 401
                 if existing.get("is_builtin"):
-                    sync_params: dict[str, Any] = {"base_url": base_url}
+                    sync_params: dict[str, Any] = {"base_url": base_url, "provider": "siliconflow"}
                     if api_key:
                         self.update_credentials(existing["id"], {"api_key": api_key})
                     self.update_model(existing["id"], parameters=sync_params)
                 continue
-            params: dict[str, Any] = {"model": name, "base_url": base_url}
+            params: dict[str, Any] = {
+                "model": name,
+                "base_url": base_url,
+                "provider": "siliconflow",
+            }
             if mtype == "VLLM":
                 params["supports_vision"] = True
             if api_key:
@@ -111,7 +171,7 @@ class ModelStore():
             self.create_model(
                 name=name,
                 type_=mtype,
-                source=source,
+                source="remote",
                 display_name=name,
                 description="内置模型（来自 .env 配置）",
                 parameters=params,
@@ -149,7 +209,12 @@ class ModelStore():
 
     # ---------------------------------------------------------------- queries
 
-    def list_models(self, type_: Optional[str] = None, source: Optional[str] = None) -> list[dict]:
+    def list_models(
+        self,
+        type_: Optional[str] = None,
+        source: Optional[str] = None,
+        provider: Optional[str] = None,
+    ) -> list[dict]:
         sql = "SELECT * FROM models WHERE status != 'deleted'"
         args: list[Any] = []
         if type_:
@@ -158,6 +223,9 @@ class ModelStore():
         if source:
             sql += " AND source = %s"
             args.append(source)
+        if provider:
+            sql += " AND COALESCE(parameters->>'provider', '') = %s"
+            args.append(normalize_provider(provider))
         sql += " ORDER BY type, is_default DESC, created_at"
         with self._conn() as conn:
             rows = conn.execute(sql, args).fetchall()
@@ -170,12 +238,21 @@ class ModelStore():
             ).fetchone()
         return self._row_to_model(row) if row else None
 
-    def get_model_by_name_type(self, name: str, type_: str, source: Optional[str] = None) -> Optional[dict]:
+    def get_model_by_name_type(
+        self,
+        name: str,
+        type_: str,
+        source: Optional[str] = None,
+        provider: Optional[str] = None,
+    ) -> Optional[dict]:
         sql = "SELECT * FROM models WHERE name = %s AND type = %s AND status != 'deleted'"
         args: list[Any] = [name, type_]
         if source:
             sql += " AND source = %s"
             args.append(source)
+        if provider:
+            sql += " AND COALESCE(parameters->>'provider', '') = %s"
+            args.append(normalize_provider(provider))
         with self._conn() as conn:
             row = conn.execute(sql, args).fetchone()
         return self._row_to_model(row) if row else None
@@ -205,14 +282,26 @@ class ModelStore():
         if type_ not in MODEL_TYPES:
             raise ValueError(f"不支持的模型类型: {type_}")
         if source not in MODEL_SOURCES:
-            raise ValueError(f"不支持的 provider: {source}")
+            raise ValueError(f"不支持的来源: {source}，可选: {', '.join(MODEL_SOURCES)}")
         if not name or not name.strip():
             raise ValueError("模型名不能为空")
-        if self.get_model_by_name_type(name, type_):
+
+        params = {k: v for k, v in (parameters or {}).items() if v is not None}
+        provider_id = runtime_provider(source, params)
+        spec = get_provider(provider_id)
+        if spec is None:
+            raise ValueError(f"不支持的 provider: {provider_id}")
+        if source == "local":
+            if type_ == "Rerank":
+                raise ValueError("本地 Ollama 不支持 Rerank 模型")
+            provider_id = "ollama"
+        elif not provider_supports_type(provider_id, type_):
+            raise ValueError(f"provider '{provider_id}' 不支持类型 {type_}")
+        params["provider"] = provider_id
+        if self.get_model_by_name_type(name, type_, source=source, provider=provider_id):
             raise ValueError(f"已存在同类型同名模型: {name} ({type_})")
 
-        model_id = new_model_id
-        params = {k: v for k, v in (parameters or {}).items() if v is not None}
+        model_id = new_model_id()
         for f in SECRET_FIELDS:
             if params.get(f):
                 params[f] = encrypt_secret(str(params[f]))

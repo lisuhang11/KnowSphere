@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     siliconflow_api_key: str = ""
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
 
+    # 本地 Ollama（source=local）。Docker 访问宿主机可设 http://host.docker.internal:11434
+    ollama_base_url: str = "http://127.0.0.1:11434"
+
     # 模型选择
     chat_provider: str = "siliconflow"
     # 默认 chat 模型：Qwen3.5-35B-A3B 工具调用稳定；Qwen3-32B 绑定工具时偶尔不触发（幻觉回答）

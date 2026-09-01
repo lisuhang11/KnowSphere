@@ -1,22 +1,25 @@
-"""模型工厂：多 provider 统一接口。首个实现为 SiliconFlow。
+"""模型工厂：多 provider 统一接口。
 
 运行时解析顺序（models 表为主，且兼容现有 .env 部署）：
 1. 显式传入 models 表 ID（"model-..." 前缀）-> 从 models 表解析参数（优先）
 2. 未传模型引用 -> 查 models 表对应 type 的 is_default 模型（若有）
 3. 以上均不可用（无 DB / 未配置）-> 回退 .env 静态配置
 4. 显式传入裸模型名 -> 不查 DB，直接使用（兼容旧存量/维度探测等场景）
+
+DB 语义对齐 WeKnora：source = local|remote，厂商在 parameters.provider。
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from config.settings import settings
+from models.providers import runtime_provider
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +34,16 @@ _MODEL_TYPE_BY_CAPABILITY = {
     "vlm": "VLLM",
 }
 
+
 class Reranker(Protocol):
     """重排器统一接口：返回 [{"index": i, "relevance_score": s}]，按相关性降序。"""
 
     def rerank(self, query: str, documents: list[str], top_n: int | None = None) -> list[dict[str, Any]]: ...
 
+
 def register_provider(provider: str, chat=None, embeddings=None, rerank=None) -> None:
     _REGISTRY[provider] = {"chat": chat, "embeddings": embeddings, "rerank": rerank}
+
 
 def _create(provider: str | None, capability: str, **kwargs):
     """按能力从注册表取 builder 并实例化，统一校验与报错。"""
@@ -48,12 +54,13 @@ def _create(provider: str | None, capability: str, **kwargs):
         raise ValueError(f"provider '{provider}' 未实现 {capability} 模型")
     return builder(**kwargs)
 
+
 # ---------------------------------------------------------------------------
 # models 表解析（DB 优先、.env 兜底）
 # ---------------------------------------------------------------------------
 
-def _resolve_from_db(capability: str, ref: Optional[str]) -> Optional[dict[str, Any]]:
-    """按 models 表解析出 {source, model, api_key, base_url}。
+def _resolve_from_db(capability: str, ref: str | None) -> dict[str, Any] | None:
+    """按 models 表解析出 {provider, model, api_key, base_url, temperature, dimensions}。
 
     - ref 以 "model-" 开头：按 ID 精确查找，并校验 type 匹配
     - ref 为 None：查找该 type 的 is_default 模型
@@ -77,15 +84,21 @@ def _resolve_from_db(capability: str, ref: Optional[str]) -> Optional[dict[str, 
         params = rec.get("parameters") or {}
         return {
             "source": rec["source"],
+            "provider": runtime_provider(rec["source"], params),
             "model": params.get("model"),
             "api_key": params.get("api_key"),
             "base_url": params.get("base_url"),
+            "temperature": params.get("temperature"),
+            "dimensions": params.get("dimensions"),
         }
     except Exception as exc:  # noqa: BLE001 - DB 异常统一降级 .env
         logger.warning("models 表解析失败，回退 .env 配置: %s", exc)
         return None
 
-def _apply_resolved(kwargs: dict[str, Any], resolved: dict[str, Any], ref: Optional[str]) -> tuple[dict[str, Any], Optional[str]]:
+
+def _apply_resolved(
+    kwargs: dict[str, Any], resolved: dict[str, Any], ref: str | None
+) -> tuple[dict[str, Any], str | None]:
     """把 DB 解析结果并入 kwargs；ref 为模型 ID 时替换 model 名，否则 setdefault。"""
     kwargs = dict(kwargs)
     if ref and ref.startswith("model-"):
@@ -94,7 +107,12 @@ def _apply_resolved(kwargs: dict[str, Any], resolved: dict[str, Any], ref: Optio
         kwargs.setdefault("model", resolved["model"])
     kwargs.setdefault("api_key", resolved["api_key"])
     kwargs.setdefault("base_url", resolved["base_url"])
-    return kwargs, resolved["source"]
+    if resolved.get("temperature") is not None:
+        kwargs.setdefault("temperature", resolved["temperature"])
+    if resolved.get("dimensions") is not None:
+        kwargs.setdefault("dimensions", resolved["dimensions"])
+    return kwargs, resolved["provider"]
+
 
 def create_chat_model(provider: str | None = None, **kwargs) -> BaseChatModel:
     """创建聊天模型实例。provider 缺省时用配置值；模型引用支持 models 表 ID。"""
@@ -104,6 +122,7 @@ def create_chat_model(provider: str | None = None, **kwargs) -> BaseChatModel:
         kwargs, provider = _apply_resolved(kwargs, resolved, ref)
     return _create(provider or settings.chat_provider, "chat", **kwargs)
 
+
 def create_vlm_model(provider: str | None = None, **kwargs) -> BaseChatModel:
     """创建 VLLM 视觉模型实例（图片理解 / OCR）。"""
     ref = kwargs.get("model") if isinstance(kwargs.get("model"), str) else None
@@ -112,6 +131,7 @@ def create_vlm_model(provider: str | None = None, **kwargs) -> BaseChatModel:
         kwargs, provider = _apply_resolved(kwargs, resolved, ref)
     return _create(provider or settings.chat_provider, "chat", **kwargs)
 
+
 def create_embeddings(provider: str | None = None, **kwargs) -> Embeddings:
     """创建 Embeddings 实例。provider 缺省时用配置值；模型引用支持 models 表 ID。"""
     ref = kwargs.get("model") if isinstance(kwargs.get("model"), str) else None
@@ -119,6 +139,7 @@ def create_embeddings(provider: str | None = None, **kwargs) -> Embeddings:
     if resolved:
         kwargs, provider = _apply_resolved(kwargs, resolved, ref)
     return _create(provider or settings.embedding_provider, "embeddings", **kwargs)
+
 
 def create_reranker(provider: str | None = None, **kwargs) -> Reranker:
     """创建 Reranker 实例。provider 缺省时用配置值；模型引用支持 models 表 ID。"""

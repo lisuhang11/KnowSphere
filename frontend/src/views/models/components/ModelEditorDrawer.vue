@@ -5,10 +5,15 @@ import {
   clearCredentialField,
   createModel,
   debugModel,
+  getOllamaStatus,
+  listOllamaModels,
   updateCredentials,
   type ModelCreatePayload,
   type ModelInfo,
+  type ModelProvider,
+  type ModelSource,
   type ModelType,
+  type OllamaModelItem,
   updateModel,
 } from '@/api/models'
 import { typeLabel, typeDescription, MODEL_MAIN_TYPES } from '@/utils/modelTypes'
@@ -16,7 +21,7 @@ import { typeLabel, typeDescription, MODEL_MAIN_TYPES } from '@/utils/modelTypes
 const props = defineProps<{
   visible: boolean
   editing: ModelInfo | null
-  providers: { source: string; name: string }[]
+  providers: ModelProvider[]
   defaultType: ModelType
 }>()
 
@@ -26,12 +31,14 @@ const emit = defineEmits<{
 }>()
 
 const OTHER_TYPES: ModelType[] = ['ASR']
+const OLLAMA_DEFAULT_URL = 'http://127.0.0.1:11434/v1'
 
 const form = ref<ModelCreatePayload & { supports_vision?: boolean }>({
   name: '',
   display_name: '',
   type: 'Embedding',
-  source: 'siliconflow',
+  source: 'remote',
+  provider: 'siliconflow',
   description: '',
   model: '',
   base_url: '',
@@ -42,10 +49,48 @@ const form = ref<ModelCreatePayload & { supports_vision?: boolean }>({
   supports_vision: false,
 })
 const saving = ref(false)
+const ollamaOk = ref<boolean | null>(null)
+const ollamaMessage = ref('')
+const ollamaModels = ref<OllamaModelItem[]>([])
+const loadingOllama = ref(false)
 
 const isEditing = computed(() => !!props.editing)
 const isBuiltin = computed(() => !!props.editing?.is_builtin)
 const hasKey = computed(() => !!props.editing?.credentials?.api_key)
+const isLocal = computed(() => form.value.source === 'local')
+const localDisabled = computed(() => form.value.type === 'Rerank')
+
+const filteredProviders = computed(() =>
+  props.providers.filter((p) => p.types?.includes(form.value.type)),
+)
+
+const selectedProvider = computed(() =>
+  filteredProviders.value.find((p) => p.id === form.value.provider || p.source === form.value.provider),
+)
+
+function defaultUrlFor(providerId: string | undefined, type: ModelType): string {
+  const p = props.providers.find((x) => x.id === providerId || x.source === providerId)
+  return p?.default_urls?.[type] || p?.base_url || ''
+}
+
+function emptyForm(type: ModelType): ModelCreatePayload & { supports_vision?: boolean } {
+  const provider = 'siliconflow'
+  return {
+    name: '',
+    display_name: '',
+    type,
+    source: 'remote',
+    provider,
+    description: '',
+    model: '',
+    base_url: defaultUrlFor(provider, type) || 'https://api.siliconflow.cn/v1',
+    api_key: '',
+    dimensions: undefined,
+    temperature: undefined,
+    is_default: false,
+    supports_vision: type === 'VLLM',
+  }
+}
 
 watch(
   () => [props.visible, props.editing, props.defaultType] as const,
@@ -53,11 +98,13 @@ watch(
     if (!open) return
     if (edit) {
       const p = (edit.parameters ?? {}) as Record<string, unknown>
+      const source: ModelSource = edit.source === 'local' ? 'local' : 'remote'
       form.value = {
         name: edit.name,
         display_name: edit.display_name,
         type: edit.type,
-        source: edit.source,
+        source,
+        provider: edit.provider || (p.provider as string) || 'siliconflow',
         description: edit.description,
         model: (p.model as string) ?? '',
         base_url: (p.base_url as string) ?? '',
@@ -68,42 +115,109 @@ watch(
         supports_vision: p.supports_vision === true,
       }
     } else {
-      form.value = {
-        name: '',
-        display_name: '',
-        type: defType,
-        source: 'siliconflow',
-        description: '',
-        model: '',
-        base_url: 'https://api.siliconflow.cn/v1',
-        api_key: '',
-        dimensions: undefined,
-        temperature: undefined,
-        is_default: false,
-        supports_vision: defType === 'VLLM',
-      }
+      form.value = emptyForm(defType)
     }
+    if (form.value.source === 'local') void refreshOllama()
   },
   { immediate: true },
 )
 
 watch(
   () => form.value.type,
-  (t) => {
+  (t, prev) => {
     if (t === 'VLLM') form.value.supports_vision = true
+    if (t === 'Rerank' && form.value.source === 'local') {
+      form.value.source = 'remote'
+    }
+    const stillOk = filteredProviders.value.some(
+      (p) => p.id === form.value.provider || p.source === form.value.provider,
+    )
+    if (form.value.source === 'remote' && !stillOk) {
+      const next = filteredProviders.value[0]
+      form.value.provider = next?.id || 'generic'
+    }
+    if (!isEditing.value && form.value.source === 'remote') {
+      const nextUrl = defaultUrlFor(form.value.provider, t)
+      const prevUrl = prev ? defaultUrlFor(form.value.provider, prev) : ''
+      if (!form.value.base_url || form.value.base_url === prevUrl) {
+        form.value.base_url = nextUrl
+      }
+    }
   },
 )
+
+watch(
+  () => form.value.provider,
+  (pid, prev) => {
+    if (isEditing.value || form.value.source !== 'remote' || !pid) return
+    const nextUrl = defaultUrlFor(pid, form.value.type)
+    const prevUrl = prev ? defaultUrlFor(prev, form.value.type) : ''
+    if (!form.value.base_url || form.value.base_url === prevUrl) {
+      form.value.base_url = nextUrl
+    }
+  },
+)
+
+watch(
+  () => form.value.name,
+  (n) => {
+    if (form.value.source === 'local' && n) form.value.model = n
+  },
+)
+
+watch(
+  () => form.value.source,
+  (source) => {
+    if (!props.visible) return
+    if (source === 'local') {
+      form.value.provider = 'ollama'
+      if (!form.value.base_url || form.value.base_url.includes('api.siliconflow')) {
+        form.value.base_url = OLLAMA_DEFAULT_URL
+      }
+      void refreshOllama()
+    } else if (!form.value.provider || form.value.provider === 'ollama') {
+      form.value.provider = filteredProviders.value[0]?.id || 'siliconflow'
+      if (!form.value.base_url || form.value.base_url === OLLAMA_DEFAULT_URL) {
+        form.value.base_url = defaultUrlFor(form.value.provider, form.value.type)
+      }
+    }
+  },
+)
+
+async function refreshOllama() {
+  loadingOllama.value = true
+  try {
+    const [status, listed] = await Promise.all([getOllamaStatus(), listOllamaModels()])
+    ollamaOk.value = status.ok
+    ollamaMessage.value = status.ok ? status.message : status.message
+    ollamaModels.value = listed.models || []
+    if (!listed.ok && listed.message) ollamaMessage.value = listed.message
+  } catch (e) {
+    ollamaOk.value = false
+    ollamaMessage.value = (e as Error).message
+    ollamaModels.value = []
+  } finally {
+    loadingOllama.value = false
+  }
+}
+
+function setSource(source: ModelSource) {
+  if (source === 'local' && localDisabled.value) return
+  form.value.source = source
+}
 
 function close() {
   emit('update:visible', false)
 }
 
 function buildPayload(): ModelCreatePayload {
+  const source = form.value.source === 'local' ? 'local' : 'remote'
   const payload: ModelCreatePayload = {
     name: form.value.name.trim(),
     display_name: form.value.display_name?.trim() || undefined,
     type: form.value.type,
-    source: form.value.source,
+    source,
+    provider: source === 'local' ? 'ollama' : form.value.provider,
     description: form.value.description?.trim() || undefined,
     model: form.value.model?.trim() || undefined,
     base_url: form.value.base_url?.trim() || undefined,
@@ -131,10 +245,10 @@ function buildUpdatePayload(): Omit<ModelCreatePayload, 'api_key'> {
 
 async function save() {
   if (!form.value.name.trim()) {
-    MessagePlugin.warning('请输入模型名')
+    MessagePlugin.warning(isLocal.value ? '请输入或选择 Ollama 模型名' : '请输入模型名')
     return
   }
-  if (form.value.type === 'Embedding' && !form.value.model?.trim()) {
+  if (form.value.type === 'Embedding' && !form.value.model?.trim() && !isLocal.value) {
     MessagePlugin.warning('Embedding 模型请输入实际模型名（如 BAAI/bge-m3）')
     return
   }
@@ -212,18 +326,79 @@ async function clearKey() {
       />
 
       <section class="form-section">
+        <h4 class="section-title">模型来源</h4>
+        <div class="source-options" role="radiogroup" aria-label="模型来源">
+          <button
+            type="button"
+            class="source-option"
+            :class="{ 'is-active': form.source === 'remote' }"
+            :disabled="isBuiltin"
+            @click="setSource('remote')"
+          >
+            <t-icon name="cloud" />
+            <span>远程 API</span>
+          </button>
+          <button
+            type="button"
+            class="source-option"
+            :class="{ 'is-active': form.source === 'local', 'is-disabled': localDisabled }"
+            :disabled="isBuiltin || localDisabled"
+            @click="setSource('local')"
+          >
+            <t-icon name="server" />
+            <span>本地 Ollama</span>
+          </button>
+        </div>
+        <p v-if="localDisabled" class="type-hint">Rerank 不支持 Ollama，请使用远程厂商（Jina / 硅基流动 / 阿里云等）。</p>
+        <p v-else-if="isLocal && ollamaOk === false" class="type-hint">
+          {{ ollamaMessage || '未检测到 Ollama，仍可手动填写模型名；请确认本机已启动 ollama serve。' }}
+        </p>
+        <p v-else-if="isLocal && ollamaOk" class="type-hint">{{ ollamaMessage }}</p>
+      </section>
+
+      <section v-if="isLocal" class="form-section">
         <h4 class="section-title">连接配置</h4>
-        <t-form-item label="Provider">
-          <t-select v-model="form.source" :disabled="isBuiltin" placeholder="选择 Provider">
+        <t-form-item label="Ollama 模型" required-mark>
+          <div class="ollama-row">
+            <t-select
+              v-model="form.name"
+              filterable
+              creatable
+              :loading="loadingOllama"
+              placeholder="选择已拉取的模型，或输入 llama3.2"
+            >
+              <t-option
+                v-for="m in ollamaModels"
+                :key="m.name"
+                :value="m.name"
+                :label="m.name"
+              />
+            </t-select>
+            <t-button variant="outline" :loading="loadingOllama" @click="refreshOllama">刷新</t-button>
+          </div>
+        </t-form-item>
+        <t-form-item label="展示名称">
+          <t-input v-model="form.display_name" placeholder="留空则用模型名" />
+        </t-form-item>
+        <t-form-item label="Base URL（OpenAI 兼容 /v1）">
+          <t-input v-model="form.base_url" :placeholder="OLLAMA_DEFAULT_URL" />
+        </t-form-item>
+      </section>
+
+      <section v-else class="form-section">
+        <h4 class="section-title">连接配置</h4>
+        <t-form-item label="厂商">
+          <t-select v-model="form.provider" :disabled="isBuiltin" placeholder="选择厂商">
             <t-option
-              v-for="p in providers"
-              :key="p.source"
-              :value="p.source"
-              :label="`${p.name}（${p.source}）`"
+              v-for="p in filteredProviders"
+              :key="p.id"
+              :value="p.id"
+              :label="p.name"
             />
           </t-select>
+          <p v-if="selectedProvider?.description" class="type-hint">{{ selectedProvider.description }}</p>
         </t-form-item>
-        <t-form-item label="模型名（如 Qwen/Qwen3.5-35B-A3B）" required-mark>
+        <t-form-item label="模型名（如 qwen-plus、gpt-4o-mini）" required-mark>
           <t-input v-model="form.name" :disabled="isBuiltin" placeholder="模型名" />
         </t-form-item>
         <t-form-item label="展示名称">
@@ -233,13 +408,16 @@ async function clearKey() {
           <t-input v-model="form.model" placeholder="留空则用模型名" />
         </t-form-item>
         <t-form-item label="Base URL">
-          <t-input v-model="form.base_url" placeholder="如 https://api.siliconflow.cn/v1" />
+          <t-input
+            v-model="form.base_url"
+            :placeholder="selectedProvider?.default_urls?.[form.type] || '如 https://api.openai.com/v1'"
+          />
         </t-form-item>
-        <t-form-item label="API Key">
+        <t-form-item v-if="selectedProvider?.requires_auth !== false" label="API Key">
           <t-input
             v-model="form.api_key"
             type="password"
-            :placeholder="isEditing ? (hasKey ? '已配置（留空保持不变）' : '未配置') : 'SiliconFlow 需填写'"
+            :placeholder="isEditing ? (hasKey ? '已配置（留空保持不变）' : '未配置') : '远程厂商通常需要填写'"
           />
         </t-form-item>
         <t-button
@@ -306,6 +484,43 @@ async function clearKey() {
 }
 .vllm-alert {
   margin-bottom: 16px;
+}
+.source-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.source-option {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  background: var(--td-bg-color-container);
+  color: var(--td-text-color-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+.source-option.is-active {
+  border-color: var(--td-brand-color);
+  color: var(--td-brand-color);
+  background: color-mix(in srgb, var(--td-brand-color) 8%, transparent);
+}
+.source-option.is-disabled,
+.source-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ollama-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ollama-row :deep(.t-select) {
+  flex: 1;
 }
 .drawer-footer {
   display: flex;

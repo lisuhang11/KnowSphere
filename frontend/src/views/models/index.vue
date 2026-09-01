@@ -7,6 +7,7 @@ import {
   listProviders,
   updateModel,
   type ModelInfo,
+  type ModelProvider,
   type ModelType,
 } from '@/api/models'
 import {
@@ -22,7 +23,7 @@ import ModelDebugDrawer from './components/ModelDebugDrawer.vue'
 
 const loading = ref(false)
 const models = ref<ModelInfo[]>([])
-const providers = ref<{ source: string; name: string }[]>([])
+const providers = ref<ModelProvider[]>([])
 
 const activeTab = ref<ModelFilter>('all')
 const drawerVisible = ref(false)
@@ -252,7 +253,7 @@ onMounted(async () => {
               </div>
             </div>
             <p class="model-card__subtitle">
-              <span>{{ providerChipLabel(m.source, providers) }}</span>
+              <span>{{ providerChipLabel(m, providers) }}</span>
               <template v-if="m.type === 'Embedding' && m.parameters?.dimensions">
                 <span class="model-card__sep">·</span>
                 <span>{{ m.parameters.dimensions }} 维</span>

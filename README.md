@@ -101,12 +101,13 @@ python -m evals.run_eval --n 100 --seed 7     # 自定义抽样
 - **混合检索**：向量余弦 + pg_trgm 词法相似度加权（`HYBRID_LEX_WEIGHT`）。中文场景 pg_trgm 免装分词扩展；数据量大后可换 pg_jieba 或 Qdrant 稀疏向量。
 - **单租户共享**：`chunks.owner` 字段已预留，二期加权限只需检索时过滤 owner。
 - **引用来源**：doc_retrieval 返回带 `file_name#chunk_index` 的来源，系统提示强制回答时标注。
-- **模型工厂**：`models/` 支持多 provider 注册（`siliconflow` / `openai_compatible`），新增 provider 在 `models/__init__.py` 注册即可。
+- **模型工厂**：`models/` 按 WeKnora 语义区分 `source=local|remote` 与 `parameters.provider`（硅基流动 / OpenAI / 阿里云 / 智谱 / DeepSeek / Kimi / 火山 / 混元 / 千帆 / OpenRouter / Jina / 自定义兼容口）；本地走 Ollama。新增远程厂商在 `models/providers.py` 登记即可。
 
 ## 模型管理
 
 - **入口**：前端侧边栏「模型管理」；后端 `GET/POST /models`、`GET/PUT/DELETE /models/{id}`、`POST /models/{id}/debug`（测试连接）、`PUT /models/{id}/credentials`（凭证子资源，读接口永不回显密钥）、`GET /models/providers`。
-- **类型**：`Embedding` / `Rerank` / `KnowledgeQA` / `VLLM` / `ASR`（VLLM/ASR 仅管理不接入运行时管道）。
+- **类型**：`Embedding` / `Rerank` / `KnowledgeQA` / `VLLM` / `ASR`。
+- **来源**：`source=remote` 配远程厂商；`source=local` 固定 Ollama（OpenAI 兼容 `/v1`，Rerank 不可用）。启动时会把旧行 `source=siliconflow|openai_compatible` 迁成 `remote` + `parameters.provider`。
 - **存储**：`models` 表（`parameters` JSONB），api_key 用 AES-256-GCM 加密（`MASTER_KEY` 环境变量，未设置时降级为可逆 base64 仅限开发）。
 - **内置种子**：启动时自动把 `.env` 的 chat/embedding/rerank 模型注册为 `is_builtin` 记录（幂等），并把存量知识库 `embedding_model_id` 的裸模型名迁移为模型 ID。
 - **运行时解析顺序**：显式模型 ID → models 表 `is_default`（每类型一个）→ `.env` 兜底；裸模型名直接使用（兼容旧数据）。

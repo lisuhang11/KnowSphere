@@ -123,7 +123,7 @@ function close() {
       <div v-if="selected" class="meta">
         <span>{{ typeLabel(selected.type) }}</span>
         <span class="sep">·</span>
-        <span>{{ selected.source }}</span>
+        <span>{{ selected.source === 'local' ? '本地 · Ollama' : selected.provider_name || selected.provider || selected.source }}</span>
         <t-tag
           v-if="selected.credentials?.api_key"
           size="small"

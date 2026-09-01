@@ -60,12 +60,21 @@ export function typeDescription(t: ModelType): string {
   return TYPE_DESCRIPTIONS[t] ?? ''
 }
 
+export function sourceLabel(source: string): string {
+  if (source === 'local') return '本地'
+  if (source === 'remote') return '远程'
+  return source
+}
+
 export function providerChipLabel(
-  source: string,
-  providers: { source: string; name: string }[],
+  m: { source: string; provider?: string; provider_name?: string },
+  providers: { id?: string; source?: string; name: string }[],
 ): string {
-  const p = providers.find((x) => x.source === source)
-  return p?.name ?? source
+  if (m.source === 'local') return '本地 · Ollama'
+  const pid = m.provider || ''
+  const p = providers.find((x) => x.id === pid || x.source === pid)
+  const vendor = m.provider_name || p?.name || pid || '远程'
+  return `远程 · ${vendor}`
 }
 
 export function modelSummary(m: { parameters?: Record<string, unknown> }): string {

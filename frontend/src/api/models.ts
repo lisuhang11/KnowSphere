@@ -2,13 +2,19 @@ import request from './request'
 
 /** 模型类型（VLLM 用于聊天图片/附件视觉理解） */
 export type ModelType = 'KnowledgeQA' | 'Embedding' | 'Rerank' | 'VLLM' | 'ASR'
+export type ModelSource = 'local' | 'remote'
 
 export interface ModelProvider {
-  source: string
+  id: string
   name: string
-  base_url: string | null
-  types: ModelType[]
   description: string
+  types: ModelType[]
+  default_urls: Partial<Record<ModelType, string>>
+  requires_auth: boolean
+  kind: 'remote' | 'local'
+  /** 兼容旧字段：与 id 相同 */
+  source: string
+  base_url: string | null
 }
 
 export interface ModelInfo {
@@ -16,7 +22,9 @@ export interface ModelInfo {
   name: string
   display_name: string
   type: ModelType
-  source: string
+  source: ModelSource | string
+  provider: string
+  provider_name?: string
   description: string
   parameters: Record<string, unknown>
   is_default: boolean
@@ -31,7 +39,8 @@ export interface ModelCreatePayload {
   name: string
   display_name?: string
   type: ModelType
-  source?: string
+  source?: ModelSource
+  provider?: string
   description?: string
   model?: string
   base_url?: string
@@ -48,6 +57,7 @@ export interface ModelUpdatePayload {
   model?: string
   base_url?: string
   api_key?: string
+  provider?: string
   dimensions?: number
   temperature?: number
   supports_vision?: boolean
@@ -66,8 +76,35 @@ export interface ModelDebugPayload {
   image_base64?: string
 }
 
-export async function listProviders(): Promise<ModelProvider[]> {
-  const resp = await request.get<ModelProvider[]>('/models/providers')
+export interface OllamaStatus {
+  ok: boolean
+  host: string
+  version?: string | null
+  message: string
+}
+
+export interface OllamaModelItem {
+  name: string
+  size?: number
+  modified_at?: string
+}
+
+export async function listProviders(type?: ModelType): Promise<ModelProvider[]> {
+  const params: Record<string, string> = {}
+  if (type) params.type = type
+  const resp = await request.get<ModelProvider[]>('/models/providers', { params })
+  return resp.data
+}
+
+export async function getOllamaStatus(): Promise<OllamaStatus> {
+  const resp = await request.get<OllamaStatus>('/models/ollama/status')
+  return resp.data
+}
+
+export async function listOllamaModels(): Promise<{ ok: boolean; models: OllamaModelItem[]; message: string }> {
+  const resp = await request.get<{ ok: boolean; models: OllamaModelItem[]; message: string }>(
+    '/models/ollama/models',
+  )
   return resp.data
 }
 
