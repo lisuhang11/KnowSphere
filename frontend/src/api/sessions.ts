@@ -8,6 +8,8 @@ export interface Session {
   thread_id?: string
   title?: string
   kb_ids?: number[]
+  agent_id?: string | null
+  web_search_enabled?: boolean
   is_pinned?: boolean
   pinned_at?: string | null
   created_at?: string
@@ -59,11 +61,18 @@ export async function stopSessionRun(sessionId: string): Promise<void> {
   await request.post(`/sessions/${sessionId}/runs/stop`)
 }
 
-export async function createSession(title?: string, kbIds?: number[]): Promise<Session> {
+export async function createSession(
+  title?: string,
+  kbIds?: number[],
+  agentId?: string,
+  webSearchEnabled?: boolean,
+): Promise<Session> {
   const body: Record<string, unknown> = {}
   if (title) body.title = title
   // 显式传入时始终带上（含 []），与流式对话语义一致
   if (kbIds !== undefined) body.kb_ids = kbIds
+  if (agentId?.trim()) body.agent_id = agentId.trim()
+  if (webSearchEnabled !== undefined) body.web_search_enabled = webSearchEnabled
   const resp = await request.post<Session>('/sessions', body)
   return resp.data
 }
@@ -80,7 +89,7 @@ export async function getSession(sessionId: string): Promise<Session> {
 
 export async function updateSession(
   sessionId: string,
-  payload: { title?: string; kb_ids?: number[] },
+  payload: { title?: string; kb_ids?: number[]; agent_id?: string | null; web_search_enabled?: boolean },
 ): Promise<Session> {
   const resp = await request.put<Session>(`/sessions/${sessionId}`, payload)
   return resp.data

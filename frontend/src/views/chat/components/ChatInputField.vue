@@ -3,8 +3,10 @@ import { computed, ref } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import type { KnowledgeBase } from '@/api/knowledgeBases'
 import type { ModelInfo } from '@/api/models'
+import type { AgentInfo } from '@/api/agents'
 import ChatKnowledgeBaseSelector from '@/components/chat/ChatKnowledgeBaseSelector.vue'
 import ChatInputModelDropdown from '@/components/chat/ChatInputModelDropdown.vue'
+import ChatInputAgentDropdown from '@/components/chat/ChatInputAgentDropdown.vue'
 import {
   CHAT_ATTACHMENT_ACCEPT,
   CHAT_DOCUMENT_ACCEPT,
@@ -22,9 +24,14 @@ const props = defineProps<{
   canSend: boolean
   kbList: KnowledgeBase[]
   allModels: ModelInfo[]
+  agents: AgentInfo[]
   selectedKbIds: number[]
   selectedChatModelId: string
   selectedVlmModelId: string
+  selectedAgentId: string
+  webSearchEnabled: boolean
+  webSearchAvailable: boolean
+  graphAvailable: boolean
   pendingAttachments: PendingChatAttachment[]
 }>()
 
@@ -32,6 +39,8 @@ const emit = defineEmits<{
   'update:selectedKbIds': [number[]]
   'update:selectedChatModelId': [string]
   'update:selectedVlmModelId': [string]
+  'update:selectedAgentId': [string]
+  'update:webSearchEnabled': [boolean]
   send: []
   stop: []
   attachmentSelect: [Event]
@@ -55,6 +64,71 @@ const selectedChatModelId = computed({
   get: () => props.selectedChatModelId,
   set: (v) => emit('update:selectedChatModelId', v),
 })
+
+const selectedAgentId = computed({
+  get: () => props.selectedAgentId,
+  set: (v) => emit('update:selectedAgentId', v),
+})
+
+const webSearchEnabled = computed({
+  get: () => props.webSearchEnabled && props.webSearchAvailable,
+  set: (v) => emit('update:webSearchEnabled', v),
+})
+
+const selectedAgent = computed(() =>
+  props.agents.find((a) => a.id === props.selectedAgentId && a.status !== 'disabled'),
+)
+
+const agentHasWeb = computed(
+  () => selectedAgent.value?.tools?.some((t) => t.requires_web) ?? false,
+)
+
+const agentHasGraph = computed(
+  () =>
+    selectedAgent.value?.tools?.some(
+      (t) => t.requires_graph || t.name === 'query_knowledge_graph',
+    ) ?? false,
+)
+
+const selectedHasGraphKb = computed(() => selectedKbs.value.some((k) => Boolean(k.graph_enabled)))
+
+const graphReady = computed(
+  () => agentHasGraph.value && selectedHasGraphKb.value && props.graphAvailable,
+)
+
+const showWebToggle = computed(() => agentHasWeb.value)
+const showGraphStatus = computed(() => agentHasGraph.value)
+
+const inputPlaceholder = computed(() => {
+  const hasKb = selectedKbCount.value > 0
+  const web = showWebToggle.value && webSearchEnabled.value
+  if (hasKb && web) return '可检索知识库，也可联网搜索。Enter 发送'
+  if (hasKb) return '基于已选知识库提问。Enter 发送，Shift + Enter 换行'
+  if (web) return '可联网搜索公开信息。Enter 发送，Shift + Enter 换行'
+  return '请输入问题，Enter 发送，Shift + Enter 换行'
+})
+
+const webTooltip = computed(() => {
+  if (!props.webSearchAvailable) return '管理员已关闭联网搜索'
+  return webSearchEnabled.value ? '关闭联网搜索' : '开启联网搜索'
+})
+
+const graphTooltip = computed(() => {
+  if (!props.graphAvailable) return '知识图谱未启用（需 NEO4J_ENABLE=true）'
+  if (!selectedKbCount.value) return '选择已开启图谱的知识库后，关系型问题会查询实体关系'
+  if (!selectedHasGraphKb.value) return '所选知识库未开启图谱，可在知识库设置中打开'
+  return '知识图谱已就绪：关系型问题会查询实体关系'
+})
+
+function toggleWebSearch() {
+  if (!props.webSearchAvailable || !showWebToggle.value) return
+  webSearchEnabled.value = !webSearchEnabled.value
+}
+
+function onGraphClick() {
+  if (graphReady.value) return
+  MessagePlugin.info(graphTooltip.value)
+}
 
 const selectedKbs = computed(() => {
   // 按 selectedKbIds 顺序展示，避免列表顺序与勾选顺序不一致；并过滤已删库
@@ -205,6 +279,9 @@ defineExpose({
             </span>
           </span>
           <span class="mention-chip__name" :title="kb.name">{{ kb.name }}</span>
+          <t-tooltip v-if="kb.graph_enabled" content="已开启知识图谱" placement="top" theme="light">
+            <t-icon name="relation" size="12px" class="mention-chip__graph" />
+          </t-tooltip>
           <span class="mention-chip__remove" @click.stop="removeKbTag(kb.id)">×</span>
         </span>
       </div>
@@ -212,7 +289,7 @@ defineExpose({
       <t-textarea
         ref="textareaRef"
         v-model="input"
-        placeholder="请输入问题，Enter 发送，Shift + Enter 换行"
+        :placeholder="inputPlaceholder"
         :autosize="true"
         @keydown="onKeydown"
         @input="autoResize"
@@ -296,10 +373,54 @@ defineExpose({
             </div>
           </t-tooltip>
 
-          <ChatInputModelDropdown
-            v-model:selected-model-id="selectedChatModelId"
-            :all-models="allModels"
-          />
+          <t-tooltip v-if="showWebToggle" :content="webTooltip" placement="top" theme="light">
+            <div
+              class="control-btn web-btn"
+              :class="{
+                active: webSearchEnabled,
+                disabled: !webSearchAvailable,
+              }"
+              @click.stop="toggleWebSearch"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="control-icon"
+              >
+                <circle cx="12" cy="12" r="9" />
+                <path d="M3 12h18" />
+                <path d="M12 3a14 14 0 0 1 0 18" />
+                <path d="M12 3a14 14 0 0 0 0 18" />
+              </svg>
+            </div>
+          </t-tooltip>
+
+          <t-tooltip v-if="showGraphStatus" :content="graphTooltip" placement="top" theme="light">
+            <div
+              class="control-btn graph-btn"
+              :class="{ active: graphReady, disabled: !graphReady }"
+              @click.stop="onGraphClick"
+            >
+              <t-icon name="relation" size="16px" class="control-icon" />
+            </div>
+          </t-tooltip>
+
+          <div class="control-selectors">
+            <ChatInputAgentDropdown
+              v-model:selected-agent-id="selectedAgentId"
+              :agents="agents"
+            />
+            <ChatInputModelDropdown
+              v-model:selected-model-id="selectedChatModelId"
+              :all-models="allModels"
+            />
+          </div>
         </div>
 
         <div class="control-right">
@@ -389,6 +510,11 @@ defineExpose({
   align-items: center;
   justify-content: center;
   font-size: 12px;
+}
+
+.mention-chip__graph {
+  flex-shrink: 0;
+  color: var(--td-brand-color);
 }
 
 .mention-chip__name {
@@ -575,6 +701,14 @@ defineExpose({
   min-width: 0;
 }
 
+.control-selectors {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  min-width: 0;
+}
+
 .control-right {
   display: flex;
   align-items: center;
@@ -611,7 +745,9 @@ defineExpose({
 
 .kb-btn,
 .image-upload-btn,
-.attachment-upload-btn {
+.attachment-upload-btn,
+.web-btn,
+.graph-btn {
   width: 28px;
   height: 28px;
   padding: 0;
@@ -621,7 +757,9 @@ defineExpose({
 
 .kb-btn.active,
 .image-upload-btn.active,
-.attachment-upload-btn.active {
+.attachment-upload-btn.active,
+.web-btn.active,
+.graph-btn.active {
   background: rgba(16, 185, 129, 0.1);
   color: var(--td-brand-color);
 }

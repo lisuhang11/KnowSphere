@@ -1,7 +1,6 @@
 """LangGraph 图导出：langgraph.json 引用的入口对象。
 
-LangGraph Studio 通过 langgraph.json 的 graphs.agent 指向本模块的 graph
-（StateGraph：agent → tools → collect_sources → agent）。
+graphs.agent → 智能推理 ReAct（prepare_context → query_understand → agent ↔ tools）。
 """
 
 from agents.agent import build_agent

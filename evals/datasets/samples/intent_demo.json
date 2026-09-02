@@ -103,7 +103,7 @@
       "answer": "",
       "meta": {
         "intent_gt": "clarification",
-        "needs_retrieval_gt": false,
+        "needs_retrieval_gt": true,
         "kb_selected": true,
         "history": [],
         "has_images": false,
@@ -117,7 +117,7 @@
       "answer": "",
       "meta": {
         "intent_gt": "clarification",
-        "needs_retrieval_gt": false,
+        "needs_retrieval_gt": true,
         "kb_selected": true,
         "history": [],
         "has_images": false,
@@ -131,7 +131,7 @@
       "answer": "",
       "meta": {
         "intent_gt": "summarize",
-        "needs_retrieval_gt": false,
+        "needs_retrieval_gt": true,
         "kb_selected": true,
         "history": [
           {"query": "年假有几天？", "answer": "满一年员工年假 5 天。"},
@@ -254,6 +254,20 @@
         "history": [],
         "has_images": false,
         "has_attachments": true
+      }
+    },
+    {
+      "qid": 19,
+      "question": "李稣航是谁",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
       }
     }
   ]

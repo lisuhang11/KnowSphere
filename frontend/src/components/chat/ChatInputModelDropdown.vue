@@ -128,7 +128,6 @@ defineExpose({ triggerRef, close })
 .model-display {
   display: flex;
   align-items: center;
-  margin-left: auto;
   flex-shrink: 0;
 }
 

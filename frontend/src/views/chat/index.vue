@@ -37,6 +37,9 @@ const {
 const {
   kbList,
   allModels,
+  agents,
+  webSearchAvailable,
+  graphAvailable,
   selectedChatModelId,
   selectedVlmModelId,
   pendingAttachments,
@@ -67,6 +70,20 @@ const selectedKbIds = computed<number[]>({
   get: () => chatStore.currentKbIds,
   set: (v) => {
     void chatStore.setKbIds(v)
+  },
+})
+
+const selectedAgentId = computed<string>({
+  get: () => chatStore.currentAgentId || '',
+  set: (v) => {
+    void chatStore.setAgentId(v || null)
+  },
+})
+
+const webSearchEnabled = computed<boolean>({
+  get: () => chatStore.currentWebSearchEnabled,
+  set: (v) => {
+    void chatStore.setWebSearchEnabled(v)
   },
 })
 
@@ -106,6 +123,8 @@ async function doSend(textOverride?: string) {
     fallbackFiles,
     selectedVlmModelId.value || null,
     readyMetas,
+    chatStore.currentAgentId,
+    chatStore.currentWebSearchEnabled,
   )
   if (!ok) return
 }
@@ -160,6 +179,7 @@ onMounted(() => {
           <BotMsg
             v-else
             :msg="msg"
+            :session-id="chatStore.currentThreadId"
             :streaming="streaming"
             :streaming-msg-id="streamingMsgId"
             :rendered-html="renderMsgContent(msg)"
@@ -184,9 +204,14 @@ onMounted(() => {
         :can-send="canSend"
         :kb-list="kbList"
         :all-models="allModels"
+        :agents="agents"
         v-model:selected-kb-ids="selectedKbIds"
         v-model:selected-chat-model-id="selectedChatModelId"
         v-model:selected-vlm-model-id="selectedVlmModelId"
+        v-model:selected-agent-id="selectedAgentId"
+        v-model:web-search-enabled="webSearchEnabled"
+        :web-search-available="webSearchAvailable"
+        :graph-available="graphAvailable"
         :pending-attachments="pendingAttachments"
         @send="doSend()"
         @stop="stop"

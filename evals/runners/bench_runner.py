@@ -27,10 +27,11 @@ def _make_runner(config: EvalConfig):
 
     if config.pipeline_profile == "rag_agent":
         from agents.agent import build_agent
+        from evals.pipelines.agent import EVAL_SYSTEM_PROMPT
         from tools.retrieval.doc_retrieval import doc_retrieval
 
         agent = build_agent(
-            system_prompt=None,
+            system_prompt=EVAL_SYSTEM_PROMPT,
             tools=[doc_retrieval],
             chat_model_kwargs=kwargs,
         )

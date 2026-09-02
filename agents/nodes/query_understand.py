@@ -14,7 +14,7 @@ from prompts.query_understand import build_query_understand_prompts
 from schemas.query import (
     QueryUnderstandOutput,
     fallback_intent,
-    needs_retrieval,
+    needs_agent_tools,
     normalize_intent,
     parse_query_understand_json,
     sanitize_rewrite_query,
@@ -60,10 +60,32 @@ def _last_human_message(state: KnowSphereState) -> HumanMessage | None:
     return None
 
 
-def _apply_intent_side_effects(result: dict, *, kb_selected: bool) -> dict:
+def _web_search_on(state: KnowSphereState | dict) -> bool:
+    v = state.get("web_search_enabled")
+    if v is None:
+        return True
+    return bool(v)
+
+
+def _agent_has_tools(state: KnowSphereState | dict) -> bool:
+    return bool(state.get("agent_has_tools"))
+
+
+def _apply_intent_side_effects(
+    result: dict,
+    *,
+    kb_selected: bool,
+    web_search_enabled: bool = True,
+    agent_has_tools: bool = False,
+) -> dict:
     """非检索意图写入专用系统提示覆盖。"""
     intent = result.get("intent")
-    if needs_retrieval(intent, kb_selected):
+    if needs_agent_tools(
+        intent,
+        kb_selected,
+        web_search_enabled=web_search_enabled,
+        agent_has_tools=agent_has_tools,
+    ):
         return {"system_prompt_override": ""}
     override = intent_system_prompt(intent)
     if override:
@@ -126,6 +148,7 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
         return {}
 
     kb_selected = bool(state.get("kb_selected"))
+    web_on = _web_search_on(state)
     history_pairs = list(state.get("history_pairs") or [])
     has_images = bool(state.get("has_images"))
     has_attachments = bool(state.get("has_attachments"))
@@ -147,13 +170,25 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
             f"检索词：{current_query}\n"
             f"意图：{result['intent']}"
             + (
-                " → 需要检索知识库"
-                if needs_retrieval(result["intent"], kb_selected)
-                else " → 跳过检索"
+                " → 进入工具推理"
+                if needs_agent_tools(
+                    result["intent"],
+                    kb_selected,
+                    web_search_enabled=web_on,
+                    agent_has_tools=_agent_has_tools(state),
+                )
+                else " → 直接生成"
             ),
             None,
         )
-        result.update(_apply_intent_side_effects(result, kb_selected=kb_selected))
+        result.update(
+            _apply_intent_side_effects(
+                result,
+                kb_selected=kb_selected,
+                web_search_enabled=web_on,
+                agent_has_tools=_agent_has_tools(state),
+            )
+        )
         return result
 
     system_prompt, user_prompt = build_query_understand_prompts(
@@ -162,6 +197,7 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
         kb_selected=kb_selected,
         has_images=has_images,
         has_attachments=has_attachments,
+        web_search_enabled=web_on,
     )
 
     rewrite = current_query
@@ -209,7 +245,14 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
     except Exception as exc:
         logger.warning("query_understand 失败，降级原 query: %s", exc)
         _emit_thinking("【1/5 查询理解】LLM 失败，降级使用原问题。", None)
-        result.update(_apply_intent_side_effects(result, kb_selected=kb_selected))
+        result.update(
+            _apply_intent_side_effects(
+                result,
+                kb_selected=kb_selected,
+                web_search_enabled=web_on,
+                agent_has_tools=_agent_has_tools(state),
+            )
+        )
         return result
 
     thinking_extra = ""
@@ -222,19 +265,36 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
         f"改写检索词：{result['rewrite_query']}\n"
         f"意图：{result['intent']}"
         + (
-            " → 需要检索知识库"
-            if needs_retrieval(result["intent"], kb_selected)
-            else " → 跳过检索"
+            " → 进入工具推理"
+            if needs_agent_tools(
+                result["intent"],
+                kb_selected,
+                web_search_enabled=web_on,
+                agent_has_tools=_agent_has_tools(state),
+            )
+            else " → 直接生成"
         )
         + thinking_extra,
         None,
     )
-    result.update(_apply_intent_side_effects(result, kb_selected=kb_selected))
+    result.update(
+        _apply_intent_side_effects(
+            result,
+            kb_selected=kb_selected,
+            web_search_enabled=web_on,
+            agent_has_tools=_agent_has_tools(state),
+        )
+    )
     return result
 
 
 def route_after_understand(state: KnowSphereState) -> str:
-    """条件边：需要检索 → prefetch_retrieval，否则 → agent。"""
-    if needs_retrieval(state.get("intent"), bool(state.get("kb_selected"))):
-        return "prefetch_retrieval"
-    return "agent"
+    """条件边：需要工具 → agent（ReAct）；否则 → generate。"""
+    if needs_agent_tools(
+        state.get("intent"),
+        bool(state.get("kb_selected")),
+        web_search_enabled=_web_search_on(state),
+        agent_has_tools=_agent_has_tools(state),
+    ):
+        return "agent"
+    return "generate"

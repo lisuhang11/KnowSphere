@@ -50,6 +50,39 @@ function sessionKbIds(s: Session | null | undefined): number[] {
   return normalizeKbIds(s?.metadata?.kb_ids)
 }
 
+function sessionAgentId(s: Session | null | undefined): string | null {
+  if (typeof s?.agent_id === 'string' && s.agent_id.trim()) return s.agent_id.trim()
+  const meta = s?.metadata?.agent_id
+  return typeof meta === 'string' && meta.trim() ? meta.trim() : null
+}
+
+const LAST_WEB_SEARCH_KEY = 'knowsphere_web_search_enabled'
+
+function readLastWebSearch(): boolean {
+  try {
+    const v = localStorage.getItem(LAST_WEB_SEARCH_KEY)
+    if (v === '0' || v === 'false') return false
+    return true
+  } catch {
+    return true
+  }
+}
+
+function writeLastWebSearch(on: boolean) {
+  try {
+    localStorage.setItem(LAST_WEB_SEARCH_KEY, on ? '1' : '0')
+  } catch {
+    /* ignore */
+  }
+}
+
+function sessionWebSearchEnabled(s: Session | null | undefined): boolean | null {
+  if (typeof s?.web_search_enabled === 'boolean') return s.web_search_enabled
+  const meta = s?.metadata?.web_search_enabled
+  if (typeof meta === 'boolean') return meta
+  return null
+}
+
 function applyKbIdsToThread(t: Session | undefined, ids: number[]) {
   if (!t) return
   t.kb_ids = ids
@@ -60,13 +93,27 @@ function applyKbIdsToThread(t: Session | undefined, ids: number[]) {
   }
 }
 
+function applyAgentIdToThread(t: Session | undefined, agentId: string | null) {
+  if (!t) return
+  t.agent_id = agentId
+  if (agentId) t.metadata = { ...t.metadata, agent_id: agentId }
+  else if (t.metadata) {
+    const { agent_id: _drop, ...rest } = t.metadata
+    t.metadata = rest
+  }
+}
+
 export const useChatStore = defineStore('chat', () => {
   const threads = ref<Session[]>([])
   const currentThreadId = ref<string | null>(null)
   const currentKbIds = ref<number[]>([])
+  const currentAgentId = ref<string | null>(null)
+  const currentWebSearchEnabled = ref(readLastWebSearch())
   const messagesClearedAt = ref<{ id: string; at: number } | null>(null)
   /** 防止快速多选时 updateSession 乱序回写覆盖最新选择 */
   let kbSaveSeq = 0
+  let agentSaveSeq = 0
+  let webSaveSeq = 0
 
   async function loadThreads() {
     const list = await listSessions()
@@ -77,6 +124,10 @@ export const useChatStore = defineStore('chat', () => {
     currentThreadId.value = id
     const t = id ? threads.value.find((x) => sessionId(x) === id) : null
     currentKbIds.value = sessionKbIds(t)
+    const aid = sessionAgentId(t)
+    if (aid) currentAgentId.value = aid
+    const web = sessionWebSearchEnabled(t)
+    if (web !== null) currentWebSearchEnabled.value = web
   }
 
   async function setKbIds(ids: number[]) {
@@ -105,6 +156,43 @@ export const useChatStore = defineStore('chat', () => {
     void setKbIds(next)
   }
 
+  async function setAgentId(agentId: string | null) {
+    const next = agentId?.trim() || null
+    currentAgentId.value = next
+    const tid = currentThreadId.value
+    if (!tid || !next) return
+    const seq = ++agentSaveSeq
+    try {
+      await updateSession(tid, { agent_id: next })
+      if (seq !== agentSaveSeq || currentThreadId.value !== tid) return
+      applyAgentIdToThread(
+        threads.value.find((x) => sessionId(x) === tid),
+        next,
+      )
+    } catch (e) {
+      if (seq === agentSaveSeq) console.warn('保存智能体选择失败', e)
+    }
+  }
+
+  async function setWebSearchEnabled(on: boolean) {
+    currentWebSearchEnabled.value = on
+    writeLastWebSearch(on)
+    const tid = currentThreadId.value
+    if (!tid) return
+    const seq = ++webSaveSeq
+    try {
+      await updateSession(tid, { web_search_enabled: on })
+      if (seq !== webSaveSeq || currentThreadId.value !== tid) return
+      const t = threads.value.find((x) => sessionId(x) === tid)
+      if (t) {
+        t.web_search_enabled = on
+        t.metadata = { ...t.metadata, web_search_enabled: on }
+      }
+    } catch (e) {
+      if (seq === webSaveSeq) console.warn('保存联网开关失败', e)
+    }
+  }
+
   async function setKbId(id: number | null | undefined) {
     await setKbIds(id == null ? [] : [id])
   }
@@ -115,12 +203,22 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function createChat(title?: string): Promise<Session> {
-    const t = await createSession(title, currentKbIds.value)
+    const t = await createSession(
+      title,
+      currentKbIds.value,
+      currentAgentId.value || undefined,
+      currentWebSearchEnabled.value,
+    )
     currentThreadId.value = sessionId(t)
     await loadThreads()
-    // loadThreads 后重新对齐当前会话的 kb（create 已带上 currentKbIds）
     const created = threads.value.find((x) => sessionId(x) === currentThreadId.value)
-    if (created) currentKbIds.value = sessionKbIds(created)
+    if (created) {
+      currentKbIds.value = sessionKbIds(created)
+      const aid = sessionAgentId(created)
+      if (aid) currentAgentId.value = aid
+      const web = sessionWebSearchEnabled(created)
+      if (web !== null) currentWebSearchEnabled.value = web
+    }
     return t
   }
 
@@ -163,10 +261,14 @@ export const useChatStore = defineStore('chat', () => {
     threads,
     currentThreadId,
     currentKbIds,
+    currentAgentId,
+    currentWebSearchEnabled,
     loadThreads,
     selectThread,
     setKbIds,
     setKbId,
+    setAgentId,
+    setWebSearchEnabled,
     pruneKbIds,
     startDraftChat,
     createChat,

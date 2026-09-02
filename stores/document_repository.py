@@ -384,7 +384,7 @@ class DocumentRepository:
                 "UPDATE documents SET status = %s, error_message = %s, "
                 "stage = NULL, updated_at = now() "
                 "WHERE owner = %s AND status = %s "
-                "AND updated_at < now - make_interval(mins => %s)",
+                "AND updated_at < now() - make_interval(mins => %s)",
                 (self.STATUS_FAILED, message, owner,
                  self.STATUS_PROCESSING, older_than_minutes),
             )

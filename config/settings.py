@@ -124,6 +124,13 @@ class Settings(BaseSettings):
     # LangGraph agent 最大步数（recursion_limit，含 agent/tools 往返）
     agent_max_steps: int = 25
 
+    # 联网搜索（智能推理工具 web_search / web_fetch）
+    web_search_enabled: bool = True
+    web_search_max_results: int = 5
+    web_search_timeout_sec: float = 8
+    web_fetch_timeout_sec: float = 15
+    web_fetch_max_bytes: int = 512_000
+
     # 知识图谱（Neo4j；关闭时抽取/检索全部 no-op）
     neo4j_enable: bool = False
     neo4j_uri: str = "bolt://localhost:7687"

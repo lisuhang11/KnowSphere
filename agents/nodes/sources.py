@@ -19,6 +19,8 @@ def collect_sources(state: KnowSphereState) -> dict[str, list[dict]]:
         if not isinstance(msg, ToolMessage) or msg.name not in (
             "doc_retrieval",
             "query_knowledge_graph",
+            "web_search",
+            "web_fetch",
         ):
             continue
         try:

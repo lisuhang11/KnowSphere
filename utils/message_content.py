@@ -73,6 +73,13 @@ def message_attachments(msg: BaseMessage) -> list[dict[str, str]]:
         )
     return out
 
+
+def message_outputs(msg: BaseMessage) -> list[dict[str, Any]]:
+    """读取 additional_kwargs.ks_outputs（助手生成文件）。"""
+    from utils.file_artifacts import message_outputs as _outputs
+
+    return _outputs(msg)
+
 def message_has_images(msg: BaseMessage) -> bool:
     return bool(message_images(msg))
 

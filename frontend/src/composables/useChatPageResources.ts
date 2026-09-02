@@ -5,6 +5,13 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { listKnowledgeBases, type KnowledgeBase } from '@/api/knowledgeBases'
 import { listModels, type ModelInfo } from '@/api/models'
 import {
+  listAgents,
+  readLastAgentId,
+  selectInitialAgentId,
+  writeLastAgentId,
+  type AgentInfo,
+} from '@/api/agents'
+import {
   attachmentPreviewUrl,
   deleteTemporaryAttachment,
   uploadTemporaryAttachment,
@@ -27,19 +34,26 @@ import {
   writeLastVlmModelId,
 } from '@/utils/modelDefaults'
 import { filterModelsByType } from '@/components/modelSelectorFilter'
-import { uid } from '@/utils/text'
+import { getRuntimeConfig } from '@/api/runtimeConfig'
 
 export function useChatPageResources() {
   const chatStore = useChatStore()
   const kbList = ref<KnowledgeBase[]>([])
   const kbListLoaded = ref(false)
   const allModels = ref<ModelInfo[]>([])
+  const agents = ref<AgentInfo[]>([])
+  const webSearchAvailable = ref(true)
+  const graphAvailable = ref(false)
   const selectedChatModelId = ref('')
   const selectedVlmModelId = ref('')
   const pendingAttachments = ref<PendingChatAttachment[]>([])
 
   watch(selectedChatModelId, (id) => writeLastChatModelId(id || null))
   watch(selectedVlmModelId, (id) => writeLastVlmModelId(id || null))
+  watch(
+    () => chatStore.currentAgentId,
+    (id) => writeLastAgentId(id || null),
+  )
 
   watch(
     () => [...chatStore.currentKbIds],
@@ -205,6 +219,33 @@ export function useChatPageResources() {
     } catch (e) {
       console.warn('加载模型列表失败', e)
     }
+    try {
+      const runtime = await getRuntimeConfig()
+      webSearchAvailable.value = runtime.web_search_available !== false
+      graphAvailable.value = Boolean(runtime.graph_available)
+      if (!webSearchAvailable.value && chatStore.currentWebSearchEnabled) {
+        chatStore.currentWebSearchEnabled = false
+      }
+    } catch (e) {
+      console.warn('加载运行时配置失败', e)
+    }
+    try {
+      const list = await listAgents()
+      agents.value = list
+      const current = chatStore.currentAgentId
+      if (current && list.some((a) => a.id === current && a.status !== 'disabled')) {
+        return
+      }
+      const last = readLastAgentId()
+      if (last && list.some((a) => a.id === last && a.status !== 'disabled')) {
+        chatStore.currentAgentId = last
+      } else {
+        const def = selectInitialAgentId(list)
+        if (def) chatStore.currentAgentId = def
+      }
+    } catch (e) {
+      console.warn('加载智能体列表失败', e)
+    }
   }
 
   onUnmounted(clearPendingAttachments)
@@ -212,6 +253,9 @@ export function useChatPageResources() {
   return {
     kbList,
     allModels,
+    agents,
+    webSearchAvailable,
+    graphAvailable,
     selectedChatModelId,
     selectedVlmModelId,
     pendingAttachments,

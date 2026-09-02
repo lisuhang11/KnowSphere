@@ -38,10 +38,15 @@ class TurnState(TypedDict, total=False):
     intent: str
     history_pairs: list[dict[str, str]]
     kb_selected: bool
+    web_search_enabled: bool
+    graph_enabled: bool
     system_prompt_override: str
     has_images: bool
     has_attachments: bool
     image_description: str
+    context_block: str
+    retrieval_note: str
+    agent_has_tools: bool
 
 
 class OverallState(InputState, OutputState, TurnState):
@@ -61,6 +66,9 @@ class AgentConfig(TypedDict, total=False):
     kb_ids: list[int]  # 会话选定的知识库范围；空/缺省 = 不检索
     chat_model_id: str  # 本轮主对话模型
     vlm_model_id: str  # 本轮 VLM（多模态 query_understand）
+    agent_id: str  # 本轮智能体（工具 + 提示词）
+    web_search_enabled: bool  # 本轮输入框联网开关（管理员总开关仍生效）
+    graph_enabled: bool  # 所选知识库是否已开图谱且 Neo4j 可用
 
 
 __all__ = [

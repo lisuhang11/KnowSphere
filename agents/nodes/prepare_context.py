@@ -6,15 +6,20 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from langchain_core.runnables import RunnableConfig
 
 from config.settings import settings
-from states import KnowSphereState
 from schemas.query import fallback_intent
+from states import KnowSphereState
+from utils.agent_runtime import resolve_agent_tool_names
 from utils.message_content import (
     message_has_attachments,
     message_has_images,
     message_query_text,
     message_text,
 )
-from utils.run_config import kb_ids_from_config
+from utils.run_config import (
+    graph_enabled_from_config,
+    kb_ids_from_config,
+    web_search_enabled_from_config,
+)
 
 
 def _message_text(msg: BaseMessage) -> str:
@@ -39,6 +44,9 @@ def _is_retrieval_tool(msg: BaseMessage) -> bool:
     return isinstance(msg, ToolMessage) and getattr(msg, "name", None) in (
         "doc_retrieval",
         "query_knowledge_graph",
+        "web_search",
+        "web_fetch",
+        "write_plan",
     )
 
 
@@ -74,7 +82,13 @@ def extract_history_pairs(messages: list[BaseMessage], max_rounds: int) -> tuple
     return current_query, pairs
 
 
-def _empty_turn(*, kb_selected: bool = False) -> dict:
+def _empty_turn(
+    *,
+    kb_selected: bool = False,
+    web_search_enabled: bool = False,
+    graph_enabled: bool = False,
+    agent_has_tools: bool = False,
+) -> dict:
     """清零单轮临时通道，避免 checkpoint 脏读上一轮 intent / 图片描述等。"""
     return {
         "current_query": "",
@@ -82,11 +96,16 @@ def _empty_turn(*, kb_selected: bool = False) -> dict:
         "intent": "",
         "history_pairs": [],
         "kb_selected": kb_selected,
+        "web_search_enabled": web_search_enabled,
+        "graph_enabled": graph_enabled,
         "system_prompt_override": "",
         "has_images": False,
         "has_attachments": False,
         "image_description": "",
         "last_sources": [],
+        "context_block": "",
+        "retrieval_note": "",
+        "agent_has_tools": agent_has_tools,
     }
 
 
@@ -96,9 +115,18 @@ def prepare_context(state: KnowSphereState, config: RunnableConfig) -> dict:
         messages, settings.max_rewrite_rounds
     )
     kb_selected = bool(kb_ids_from_config(config))
+    web_on = web_search_enabled_from_config(config)
+    graph_on = graph_enabled_from_config(config)
+    allowed = resolve_agent_tool_names(config)
+    agent_has_tools = bool(allowed)
 
     if not current_query:
-        return _empty_turn(kb_selected=kb_selected)
+        return _empty_turn(
+            kb_selected=kb_selected,
+            web_search_enabled=web_on,
+            graph_enabled=graph_on,
+            agent_has_tools=agent_has_tools,
+        )
 
     has_images = False
     has_attachments = False
@@ -114,7 +142,12 @@ def prepare_context(state: KnowSphereState, config: RunnableConfig) -> dict:
         has_attachments=has_attachments,
     )
     return {
-        **_empty_turn(kb_selected=kb_selected),
+        **_empty_turn(
+            kb_selected=kb_selected,
+            web_search_enabled=web_on,
+            graph_enabled=graph_on,
+            agent_has_tools=agent_has_tools,
+        ),
         "current_query": current_query,
         "history_pairs": history_pairs,
         "rewrite_query": current_query,

@@ -1,0 +1,168 @@
+"""generate 节点：一次生成，不绑定工具。"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
+
+from models import create_chat_model
+from states import KnowSphereState
+from tools.retrieval.doc_retrieval import _emit_thinking
+from utils.agent_runtime import resolve_system_prompt
+from utils.run_config import chat_model_kwargs_from_config, kb_ids_from_config
+
+_RAG_TAIL = (
+    "\n\n【本轮已限定知识库】"
+    "仅依据消息中的【知识库检索结果】作答；"
+    "禁止使用互联网公开常识（同名公众人物等）臆测；"
+    "检索无相关内容时明确说明未找到。"
+)
+
+_NO_KB_TAIL = (
+    "\n\n【本轮未选择知识库】无法检索知识库。"
+    "若消息中已有 [会话附件内容] 或图片说明，请依据这些内容作答；"
+    "对知识库中的人物、项目等具体问题，须提示用户在输入框上方选择知识库；"
+    "禁止凭公开资料作答（尤其同名人物）。"
+)
+
+
+def _delta_text(chunk: Any) -> str:
+    content = getattr(chunk, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text", "")))
+        return "".join(parts)
+    return ""
+
+
+def _inject_image_description(messages: list[BaseMessage], image_description: str) -> list[BaseMessage]:
+    """将 query_understand VLM 输出的图片描述注入最后一条用户消息（仅本轮 LLM 入参）。"""
+    desc = (image_description or "").strip()
+    if not desc:
+        return messages
+    out = list(messages)
+    for idx in range(len(out) - 1, -1, -1):
+        msg = out[idx]
+        if not isinstance(msg, HumanMessage):
+            continue
+        text = msg.content if isinstance(msg.content, str) else str(msg.content)
+        if "[用户上传图片内容]" in text:
+            return out
+        prefix = text.strip() or "请分析上传的图片"
+        new_content = f"{prefix}\n\n[用户上传图片内容]\n{desc}".strip()
+        new_msg = HumanMessage(content=new_content)
+        kwargs = dict(getattr(msg, "additional_kwargs", None) or {})
+        if kwargs:
+            new_msg.additional_kwargs = kwargs
+        out[idx] = new_msg
+        break
+    return out
+
+
+def _append_context_block(messages: list[BaseMessage], context_block: str) -> list[BaseMessage]:
+    block = (context_block or "").strip()
+    if not block:
+        return messages
+    out = list(messages)
+    for idx in range(len(out) - 1, -1, -1):
+        msg = out[idx]
+        if not isinstance(msg, HumanMessage):
+            continue
+        text = msg.content if isinstance(msg.content, str) else str(msg.content)
+        if "【知识库检索结果】" in text:
+            return out
+        new_msg = HumanMessage(content=f"{text.rstrip()}\n\n{block}".strip())
+        kwargs = dict(getattr(msg, "additional_kwargs", None) or {})
+        if kwargs:
+            new_msg.additional_kwargs = kwargs
+        out[idx] = new_msg
+        break
+    else:
+        out.append(HumanMessage(content=block))
+    return out
+
+
+def _prepare_messages(
+    system_prompt: str,
+    messages: list[BaseMessage],
+    config: RunnableConfig | None,
+    *,
+    system_prompt_override: str | None = None,
+) -> list[BaseMessage]:
+    """组装系统消息。非检索意图优先使用 query_understand 写入的 override。"""
+    base = (system_prompt_override or "").strip() or system_prompt
+    if system_prompt_override:
+        return [SystemMessage(content=base)] + list(messages)
+
+    kb_ids = kb_ids_from_config(config)
+    tail = _RAG_TAIL if kb_ids else _NO_KB_TAIL
+    return [SystemMessage(content=base + tail)] + list(messages)
+
+
+def _llm_messages(state: KnowSphereState, config: RunnableConfig, system_prompt: str) -> list[BaseMessage]:
+    messages = _inject_image_description(
+        list(state["messages"]),
+        str(state.get("image_description") or ""),
+    )
+    messages = _append_context_block(messages, str(state.get("context_block") or ""))
+    return _prepare_messages(
+        system_prompt,
+        messages,
+        config,
+        system_prompt_override=state.get("system_prompt_override"),
+    )
+
+
+def call_generate(
+    state: KnowSphereState,
+    config: RunnableConfig,
+    *,
+    system_prompt: str,
+    chat_model_kwargs: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    prompt = resolve_system_prompt(config, system_prompt)
+    model = create_chat_model(**chat_model_kwargs_from_config(config, chat_model_kwargs))
+    messages = _llm_messages(state, config, prompt)
+    _emit_thinking("正在生成回答…", None)
+    response = model.invoke(messages, config)
+    if not isinstance(response, AIMessage):
+        response = AIMessage(content=str(response))
+    return {"messages": [response]}
+
+
+async def acall_generate(
+    state: KnowSphereState,
+    config: RunnableConfig,
+    *,
+    system_prompt: str,
+    chat_model_kwargs: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    prompt = resolve_system_prompt(config, system_prompt)
+    model = create_chat_model(**chat_model_kwargs_from_config(config, chat_model_kwargs))
+    messages = _llm_messages(state, config, prompt)
+    _emit_thinking("正在生成回答…", None)
+    parts: list[str] = []
+    last_chunk: Any = None
+    async for chunk in model.astream(messages, config):
+        last_chunk = chunk
+        text = _delta_text(chunk)
+        if text:
+            parts.append(text)
+    content = "".join(parts)
+    if content:
+        response = AIMessage(content=content)
+    elif last_chunk is not None and isinstance(last_chunk, AIMessage):
+        response = last_chunk
+    else:
+        response = await model.ainvoke(messages, config)
+        if not isinstance(response, AIMessage):
+            response = AIMessage(content=str(response))
+    return {"messages": [response]}

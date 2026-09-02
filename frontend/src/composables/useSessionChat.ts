@@ -34,22 +34,26 @@ export interface ChatMsg {
   content: string
   images?: ChatImageMeta[]
   attachments?: ChatAttachmentMeta[]
+  outputs?: ChatAttachmentMeta[]
   thinking?: string
   thinkingDone?: boolean
   citations?: Citation[]
   sourceDocs?: Citation[]
 }
 
-function extractMessageAttachments(m: LangMessage | Record<string, unknown>): ChatAttachmentMeta[] {
+function extractKwAttachments(
+  m: LangMessage | Record<string, unknown>,
+  key: 'ks_attachments' | 'ks_outputs',
+): ChatAttachmentMeta[] {
   const kwargs =
     ('additional_kwargs' in m ? m.additional_kwargs : undefined) as Record<string, unknown> | undefined
-  const raw = kwargs?.ks_attachments
+  const raw = kwargs?.[key]
   if (!Array.isArray(raw)) return []
   const out: ChatAttachmentMeta[] = []
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue
     const row = item as Record<string, unknown>
-    const id = typeof row.id === 'string' ? row.id : ''
+    const id = typeof row.id === 'string' ? row.id : typeof row.attachment_id === 'string' ? row.attachment_id : ''
     if (!id) continue
     const entry: ChatAttachmentMeta = {
       id,
@@ -64,6 +68,22 @@ function extractMessageAttachments(m: LangMessage | Record<string, unknown>): Ch
     out.push(entry)
   }
   return out
+}
+
+function extractMessageAttachments(m: LangMessage | Record<string, unknown>): ChatAttachmentMeta[] {
+  return extractKwAttachments(m, 'ks_attachments')
+}
+
+function extractMessageOutputs(m: LangMessage | Record<string, unknown>): ChatAttachmentMeta[] {
+  return extractKwAttachments(m, 'ks_outputs')
+}
+
+function pushOutput(ai: ChatMsg, item: ChatAttachmentMeta) {
+  if (!item.id) return
+  const cur = ai.outputs ? [...ai.outputs] : []
+  if (cur.some((x) => x.id === item.id)) return
+  cur.push(item)
+  ai.outputs = cur
 }
 
 function appendThinking(ai: ChatMsg, chunk: string) {
@@ -120,9 +140,10 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
       const text = extractText(m.content).trim()
       const images = extractMessageImages(m)
       const attachments = extractMessageAttachments(m)
+      const outputs = extractMessageOutputs(m)
       const displayText =
         text.split('\n\n[用户上传图片内容]\n')[0]?.split('\n\n[会话附件内容]\n')[0]?.trim() || text
-      if (!displayText && !images.length && !attachments.length) continue
+      if (!displayText && !images.length && !attachments.length && !outputs.length) continue
       if (m.type === 'human') {
         list.push({
           id: uid(),
@@ -132,7 +153,12 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
           attachments: attachments.length ? attachments : undefined,
         })
       } else if (m.type === 'ai') {
-        list.push({ id: uid(), role: 'assistant', content: displayText })
+        list.push({
+          id: uid(),
+          role: 'assistant',
+          content: displayText,
+          outputs: outputs.length ? outputs : undefined,
+        })
       }
     }
     return list
@@ -366,13 +392,33 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
         if (delta) appendThinking(ai, delta)
       } else if (t === 'tool_call') {
         const name = String(data.tool_name || '')
-        if (name === 'attachment_parsing') {
-          appendThinking(ai, '正在解析附件…')
-        }
+        const hint =
+          name === 'attachment_parsing'
+            ? '正在解析附件…'
+            : name === 'doc_retrieval'
+              ? '正在检索知识库…'
+              : name === 'query_knowledge_graph'
+                ? '正在查询知识图谱…'
+                : name === 'web_search'
+                  ? '正在联网搜索…'
+                  : name === 'web_fetch'
+                    ? '正在读取网页…'
+                    : name === 'write_plan'
+                      ? '正在规划步骤…'
+                      : name === 'generate_pptx'
+                        ? '正在生成幻灯片…'
+                        : name
+                          ? `正在调用 ${name}…`
+                          : ''
+        const extra = extractText(data.content)
+        if (hint) appendThinking(ai, extra && extra !== hint ? `${hint}\n${extra}` : hint)
       } else if (t === 'tool_result') {
         const name = String(data.tool_name || '')
+        const body = extractText(data.content)
         if (name === 'attachment_parsing') {
-          appendThinking(ai, extractText(data.content) || '附件解析完成')
+          appendThinking(ai, body || '附件解析完成')
+        } else if (body) {
+          appendThinking(ai, body)
         }
       } else if (t === 'answer') {
         const delta = extractText(data.content)
@@ -386,6 +432,21 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
         const incoming = (data.citations as unknown as Citation[]) || []
         ai.citations = mergeCitationMeta(ai.citations, incoming)
         ai.sourceDocs = uniqueCitationSources(ai.citations)
+      } else if (t === 'file_artifact') {
+        const id = typeof data.id === 'string' ? data.id : ''
+        if (id) {
+          const entry: ChatAttachmentMeta = {
+            id,
+            file_name: typeof data.file_name === 'string' ? data.file_name : '生成文件',
+          }
+          if (typeof data.file_type === 'string' && data.file_type.trim()) {
+            entry.file_type = data.file_type.trim()
+          }
+          if (typeof data.file_size === 'number' && data.file_size > 0) {
+            entry.file_size = data.file_size
+          }
+          pushOutput(ai, entry)
+        }
       }
       return
     }
@@ -406,6 +467,8 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
     fallbackImageFiles: File[] = [],
     vlmModelId?: string | null,
     attachmentMetas: ChatAttachmentMeta[] = [],
+    agentId?: string | null,
+    webSearchEnabled?: boolean,
   ) {
     const query = text.trim()
     const hasAttachments = attachmentIds.length > 0
@@ -474,6 +537,8 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
           imagePayload,
           attachmentIds.length ? attachmentIds : undefined,
           vlmModelId,
+          agentId,
+          webSearchEnabled,
         ),
       () => ai ?? ensureAi(),
       scrollEl,

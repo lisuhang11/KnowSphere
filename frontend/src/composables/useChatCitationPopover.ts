@@ -49,10 +49,11 @@ export function useChatCitationPopover(
     const citations = options.getCitations() || []
     const c = citations.find((x) => x.index === idx)
     if (!c) return
-    float.value.type = 'kb'
+    const isWeb = /^https?:\/\//i.test(c.document_id || '')
+    float.value.type = isWeb ? 'web' : 'kb'
     float.value.title = c.file_name || `来源 ${idx}`
     float.value.content = c.snippet || ''
-    float.value.url = ''
+    float.value.url = isWeb ? c.document_id : ''
     float.value.loading = false
     float.value.error = ''
     float.value.visible = true

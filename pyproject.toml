@@ -20,6 +20,7 @@ dependencies = [
     "pydantic-settings>=2.4",
     "pypdf>=5",
     "httpx>=0.27",  # SiliconFlow /v1/rerank 直调（无 langchain 封装）
+    "ddgs>=9.0",  # web_search 联网（DuckDuckGo，无需 API Key）
     # 异步文档处理（Celery + Redis 队列）：worker 独立进程消费
     "celery>=5.4",
     # kombu 5.6.x 官方要求 redis<6；redis-py 8.x 内部 API 变更会破坏 kombu 连接，钉在 <6
@@ -27,6 +28,7 @@ dependencies = [
     # 文档解析引擎（内嵌库形态）：MarkItDown 优先 + 自研兜底
     "markitdown[docx,pptx]>=0.1",  # docx/pptx 首选引擎（MarkItDown 优先链）
     "python-docx>=1.1",  # docx 兜底解析
+    "python-pptx>=1.0",  # 生成 PPT（generate_pptx）与 pptx 解析兜底
     "pandas>=2",  # xlsx 工作表解析
     "openpyxl>=3.1",  # xlsx 读取（pandas engine）
     "beautifulsoup4>=4.12",  # html → markdown

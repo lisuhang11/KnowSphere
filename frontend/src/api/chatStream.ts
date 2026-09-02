@@ -75,6 +75,8 @@ export async function streamSessionRun(
   images?: StreamImagePayload[],
   attachmentIds?: string[],
   vlmModelId?: string | null,
+  agentId?: string | null,
+  webSearchEnabled?: boolean,
 ): Promise<void> {
   const body: Record<string, unknown> = {
     message: userText,
@@ -84,6 +86,8 @@ export async function streamSessionRun(
   if (kbIds !== undefined) body.kb_ids = kbIds
   if (chatModelId?.trim()) body.chat_model_id = chatModelId.trim()
   if (vlmModelId?.trim()) body.vlm_model_id = vlmModelId.trim()
+  if (agentId?.trim()) body.agent_id = agentId.trim()
+  if (webSearchEnabled !== undefined) body.web_search_enabled = webSearchEnabled
   if (attachmentIds?.length) body.attachment_ids = attachmentIds
   else if (images?.length) body.images = images
 

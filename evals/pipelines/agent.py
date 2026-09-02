@@ -1,8 +1,7 @@
-"""rag_agent：完整 LangGraph，仅绑 doc_retrieval（原 run_eval 链路）。"""
+"""rag_agent：完整 LangGraph 智能推理（ReAct + last_sources）。"""
 
 from __future__ import annotations
 
-import json
 import time
 from typing import Any
 
@@ -18,21 +17,16 @@ EVAL_SYSTEM_PROMPT = """You are KnowSphere, evaluated on a document corpus.
 Rules:
 1. Always call doc_retrieval first; ground every answer in retrieved passages.
 2. If the passages do not contain the answer, state clearly what is missing.
-3. Answer concisely in the same language as the question."""
+3. Answer concisely in the same language as the question.
+4. Do not call web_search."""
 
 
-def _extract(messages: list) -> tuple[str, list[dict]]:
+def _extract(result: dict) -> tuple[str, list[dict]]:
     answer = ""
-    sources: list[dict] = []
-    for m in messages:
+    for m in result.get("messages") or []:
         if getattr(m, "type", "") == "ai" and m.content:
             answer = m.content if isinstance(m.content, str) else str(m.content)
-        if getattr(m, "type", "") == "tool" and getattr(m, "name", "") == "doc_retrieval":
-            try:
-                payload = json.loads(m.content)
-                sources.extend(payload.get("sources") or [])
-            except Exception:
-                continue
+    sources = [s for s in (result.get("last_sources") or []) if isinstance(s, dict)]
     return answer, sources
 
 
@@ -59,7 +53,7 @@ def run_rag_agent(
                 "recursion_limit": settings.agent_max_steps,
             },
         )
-        answer, sources = _extract(result["messages"])
+        answer, sources = _extract(result)
         retrieval_ids = map_retrieval_ids(sources, item)
         metrics = compute_sample_metrics(
             MetricInput([item.pids], retrieval_ids, answer, item.answer),

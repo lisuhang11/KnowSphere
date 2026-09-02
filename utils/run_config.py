@@ -6,10 +6,15 @@ from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
-def kb_ids_from_config(config: RunnableConfig | None) -> list[int]:
+def _configurable(config: RunnableConfig | None) -> dict[str, Any]:
     if not config:
-        return []
-    configurable = config.get("configurable") or {}
+        return {}
+    raw = config.get("configurable") or {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def kb_ids_from_config(config: RunnableConfig | None) -> list[int]:
+    configurable = _configurable(config)
     raw = configurable.get("kb_ids")
     if not isinstance(raw, (list, tuple)):
         return []
@@ -26,19 +31,60 @@ def kb_ids_from_config(config: RunnableConfig | None) -> list[int]:
                 out.append(int(s))
     return out
 
-def chat_model_id_from_config(config: RunnableConfig | None) -> str | None:
-    if not config:
+def web_search_enabled_from_config(config: RunnableConfig | None) -> bool:
+    """本轮是否绑定联网工具。管理员 WEB_SEARCH_ENABLED=false 为总开关。
+
+    configurable 未传 web_search_enabled 时默认开启（兼容测试/评测）。
+    """
+    from config.settings import settings
+
+    if not settings.web_search_enabled:
+        return False
+    configurable = _configurable(config)
+    if "web_search_enabled" not in configurable:
+        return True
+    return bool(configurable["web_search_enabled"])
+
+
+def graph_enabled_from_config(config: RunnableConfig | None) -> bool:
+    """本轮是否绑定知识图谱工具。
+
+    生产会话会显式写入 graph_enabled；测试只传 kb_ids 时视为可用。
+    """
+    if not kb_ids_from_config(config):
+        return False
+    configurable = _configurable(config)
+    if "graph_enabled" not in configurable:
+        return True
+    return bool(configurable["graph_enabled"])
+
+
+def thread_id_from_config(config: RunnableConfig | None) -> str | None:
+    configurable = _configurable(config)
+    raw = configurable.get("thread_id")
+    if raw is None:
         return None
-    configurable = config.get("configurable") or {}
+    ident = str(raw).strip()
+    return ident or None
+
+
+def agent_id_from_config(config: RunnableConfig | None) -> str | None:
+    configurable = _configurable(config)
+    raw = configurable.get("agent_id")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    return raw.strip()
+
+
+def chat_model_id_from_config(config: RunnableConfig | None) -> str | None:
+    configurable = _configurable(config)
     raw = configurable.get("chat_model_id")
     if not isinstance(raw, str) or not raw.strip():
         return None
     return raw.strip()
 
 def vlm_model_id_from_config(config: RunnableConfig | None) -> str | None:
-    if not config:
-        return None
-    configurable = config.get("configurable") or {}
+    configurable = _configurable(config)
     raw = configurable.get("vlm_model_id")
     if not isinstance(raw, str) or not raw.strip():
         return None

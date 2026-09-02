@@ -111,6 +111,8 @@ import zhishiku from '@/assets/img/zhishiku.svg'
 import zhishikuGreen from '@/assets/img/zhishiku-green.svg'
 import setting from '@/assets/img/setting.svg'
 import settingGreen from '@/assets/img/setting-green.svg'
+import agentIcon from '@/assets/img/agent.svg'
+import agentIconGreen from '@/assets/img/agent-green.svg'
 import evalIcon from '@/assets/img/eval.svg'
 import evalIconGreen from '@/assets/img/eval-green.svg'
 
@@ -128,6 +130,8 @@ const ICON_MAP: Record<string, string> = {
   'zhishiku-green.svg': zhishikuGreen,
   'setting.svg': setting,
   'setting-green.svg': settingGreen,
+  'agent.svg': agentIcon,
+  'agent-green.svg': agentIconGreen,
   'eval.svg': evalIcon,
   'eval-green.svg': evalIconGreen,
 }
@@ -135,6 +139,7 @@ const ICON_MAP: Record<string, string> = {
 const topMenuItems: MenuItem[] = [
   { title: '新对话', path: 'creatChat', children: true },
   { title: '知识库', path: 'knowledge-bases' },
+  { title: '智能体', path: 'agents' },
   { title: '模型管理', path: 'models' },
   { title: '效果评测', path: 'evaluation' },
 ]
@@ -182,6 +187,8 @@ function isMenuItemActive(itemPath: string): boolean {
   switch (itemPath) {
     case 'knowledge-bases':
       return currentRoute === 'knowledge-bases' || currentRoute === 'knowledge-base-detail'
+    case 'agents':
+      return currentRoute === 'agents'
     case 'models':
       return currentRoute === 'models'
     case 'evaluation':
@@ -196,6 +203,9 @@ function isMenuItemActive(itemPath: string): boolean {
 function iconFile(path: string): string {
   if (path === 'knowledge-bases') {
     return isMenuItemActive(path) ? 'zhishiku-green.svg' : 'zhishiku.svg'
+  }
+  if (path === 'agents') {
+    return isMenuItemActive(path) ? 'agent-green.svg' : 'agent.svg'
   }
   if (path === 'models') {
     return isMenuItemActive(path) ? 'setting-green.svg' : 'setting.svg'

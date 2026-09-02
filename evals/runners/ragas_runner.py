@@ -123,7 +123,7 @@ def run_ragas_eval(
                     "recursion_limit": settings.agent_max_steps,
                 },
             )
-            answer, sources = _extract(result["messages"])
+            answer, sources = _extract(result)
             contexts = [
                 f"[{s['file_name']}#chunk{s['chunk_index']}] {s['snippet']}"
                 for s in sources
@@ -236,7 +236,7 @@ def run_ragas_eval_dataset(
                     "recursion_limit": settings.agent_max_steps,
                 },
             )
-            answer, sources = _extract(result["messages"])
+            answer, sources = _extract(result)
             contexts = [
                 f"[{s['file_name']}#chunk{s['chunk_index']}] {s['snippet']}"
                 for s in sources

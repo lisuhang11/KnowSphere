@@ -30,6 +30,11 @@ const router = createRouter({
           component: () => import('@/views/models/index.vue'),
         },
         {
+          path: 'agents',
+          name: 'agents',
+          component: () => import('@/views/agents/index.vue'),
+        },
+        {
           path: 'evaluation',
           name: 'evaluation',
           component: () => import('@/views/evaluation/index.vue'),

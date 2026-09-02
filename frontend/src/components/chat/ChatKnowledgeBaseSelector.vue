@@ -248,6 +248,9 @@ onUnmounted(unbindPositionListeners)
               <t-icon name="folder-open" class="kb-icon" />
               <div class="kb-name-wrap">
                 <span class="kb-name">{{ kb.name }}</span>
+                <t-tooltip v-if="kb.graph_enabled" content="已开启知识图谱" placement="top" theme="light">
+                  <t-icon name="relation" size="12px" class="kb-graph-icon" />
+                </t-tooltip>
               </div>
             </div>
           </div>
@@ -385,12 +388,25 @@ onUnmounted(unbindPositionListeners)
   font-size: 14px;
 }
 
+.kb-name-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
 .kb-name {
   font-size: 13px;
   color: var(--td-text-color-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.kb-graph-icon {
+  flex-shrink: 0;
+  color: var(--td-brand-color);
 }
 
 .kb-empty {

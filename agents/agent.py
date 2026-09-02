@@ -1,4 +1,4 @@
-"""单智能体组装：StateGraph 工作流（agent / tools / collect_sources）。"""
+"""对话图组装：编译智能推理 ReAct StateGraph。"""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from config.settings import settings
 from prompts import build_system_prompt
 from tools import get_tools
 
+
 def build_agent(
     checkpointer=None,
     *,
@@ -18,11 +19,11 @@ def build_agent(
     tools: list[Any] | None = None,
     chat_model_kwargs: dict[str, Any] | None = None,
 ) -> CompiledStateGraph:
-    """构建并编译 KnowSphere 智能体。
+    """构建并编译 KnowSphere 智能推理图。
 
     checkpointer: AsyncPostgresSaver / MemorySaver，启用多轮对话记忆。
     system_prompt: 覆盖默认系统提示（评测英文提示等场景）。
-    tools: 覆盖默认工具列表（评测仅 doc_retrieval）。
+    tools: 覆盖默认工具列表（评测可只挂 doc_retrieval）。
     """
     prompt = system_prompt or build_system_prompt(settings.citation_enabled)
     tool_list = tools if tools is not None else get_tools()
