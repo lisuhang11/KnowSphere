@@ -95,8 +95,16 @@ class Settings(BaseSettings):
 
     # Query understanding
     enable_rewrite: bool = True
-    max_rewrite_rounds: int = 5
+    max_rewrite_rounds: int = 8  # 与 stm_keep_turns 对齐：改写看到的近期问答轮数
     query_understand_model: str = ""  # 空 = 复用 chat_model
+
+    # 短期记忆（LLM 视图；不改写 checkpoint 原文）
+    stm_max_context_tokens: int = 32000
+    stm_keep_turns: int = 8
+    stm_consolidate_ratio: float = 0.5
+    stm_hard_trim_ratio: float = 0.8
+    stm_redact_old_retrieval: bool = True
+    stm_working_memory_max_chars: int = 1200
 
     # 会话图片
     chat_images_enabled: bool = True

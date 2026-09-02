@@ -8,14 +8,23 @@ import logging
 from langchain_core.messages import ToolMessage
 
 from states import KnowSphereState
+from utils.short_term_memory import turn_ranges
 
 logger = logging.getLogger(__name__)
 
 
 def collect_sources(state: KnowSphereState) -> dict[str, list[dict]]:
-    """解析检索类 ToolMessage，合并为 last_sources（供观测与后续节点扩展）。"""
+    """解析本轮检索类 ToolMessage，合并为 last_sources。
+
+    只扫当前轮（最后一条 Human 起），避免把历史检索来源挂到本轮回答的 ks_citations。
+    """
+    messages = list(state.get("messages") or [])
+    ranges = turn_ranges(messages)
+    if not ranges:
+        return {"last_sources": []}
+    start, end = ranges[-1]
     sources: list[dict] = []
-    for msg in state["messages"]:
+    for msg in messages[start:end]:
         if not isinstance(msg, ToolMessage) or msg.name not in (
             "doc_retrieval",
             "query_knowledge_graph",

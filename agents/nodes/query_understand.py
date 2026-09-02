@@ -198,6 +198,8 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
         has_images=has_images,
         has_attachments=has_attachments,
         web_search_enabled=web_on,
+        session_summary=str(state.get("session_summary") or ""),
+        working_memory=state.get("working_memory") if isinstance(state.get("working_memory"), dict) else None,
     )
 
     rewrite = current_query

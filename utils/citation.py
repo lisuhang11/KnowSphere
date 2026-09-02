@@ -29,6 +29,40 @@ class Citation:
     score: float = 0.0
     snippet: str = ""
 
+def citation_payload_from_source_dicts(sources: list | None) -> list[dict]:
+    """把 last_sources 字典列表编成可挂到 AIMessage.additional_kwargs['ks_citations'] 的载荷。"""
+    out: list[dict] = []
+    for i, raw in enumerate(sources or [], 1):
+        if not isinstance(raw, dict):
+            continue
+        doc = str(raw.get("document_id") or "").strip()
+        name = str(raw.get("file_name") or "").strip() or doc or f"来源 {i}"
+        if not doc and not name:
+            continue
+        try:
+            chunk_index = int(raw.get("chunk_index") or 0)
+        except (TypeError, ValueError):
+            chunk_index = 0
+        try:
+            score = float(raw.get("score") or 0.0)
+        except (TypeError, ValueError):
+            score = 0.0
+        c = Citation(
+            index=i,
+            document_id=doc or name,
+            file_name=name,
+            chunk_index=chunk_index,
+            score=score,
+            snippet=str(raw.get("snippet") or ""),
+        )
+        item = _citation_dict(c)
+        url = str(raw.get("url") or "").strip()
+        if url.lower().startswith(("http://", "https://")):
+            item["url"] = url
+        out.append(item)
+    return out
+
+
 def citations_from_sources(sources) -> dict[int, Citation]:
     """把 doc_retrieval 的 Source 列表映射为 {1-based 序号: Citation}。"""
     return {

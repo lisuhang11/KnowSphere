@@ -13,6 +13,7 @@ from langgraph.types import RetryPolicy
 
 from agents.nodes.agent import acall_agent, call_agent
 from agents.nodes.generate import acall_generate, call_generate
+from agents.nodes.manage_memory import manage_memory
 from agents.nodes.prepare_context import prepare_context
 from agents.nodes.query_understand import query_understand, route_after_understand
 from agents.nodes.sources import collect_sources
@@ -79,6 +80,7 @@ def compile_workflow(
         output_schema=OutputState,
     )
     workflow.add_node("prepare_context", prepare_context)
+    workflow.add_node("manage_memory", manage_memory)
     workflow.add_node("query_understand", query_understand)
     workflow.add_node("agent", _make_agent_runnable(system_prompt, tools, chat_model_kwargs))
     workflow.add_node("tools", ToolNode(tools), retry_policy=_TOOLS_RETRY)
@@ -86,7 +88,8 @@ def compile_workflow(
     workflow.add_node("generate", _make_generate_runnable(system_prompt, chat_model_kwargs))
 
     workflow.add_edge(START, "prepare_context")
-    workflow.add_edge("prepare_context", "query_understand")
+    workflow.add_edge("prepare_context", "manage_memory")
+    workflow.add_edge("manage_memory", "query_understand")
     workflow.add_conditional_edges(
         "query_understand",
         route_after_understand,

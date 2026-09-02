@@ -7,19 +7,20 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
+from agents.nodes.generate import _inject_image_description
 from models import create_chat_model
 from states import KnowSphereState
 from tools.catalog import get_tool_spec
 from tools.events import emit_thinking
 from utils.agent_runtime import resolve_agent_tool_names, resolve_system_prompt
+from utils.citation import citation_payload_from_source_dicts
 from utils.run_config import (
     chat_model_kwargs_from_config,
     graph_enabled_from_config,
     kb_ids_from_config,
     web_search_enabled_from_config,
 )
-
-from agents.nodes.generate import _delta_text, _inject_image_description
+from utils.short_term_memory import memory_system_suffix_from_state, memory_view_from_state
 
 
 def _are_more_steps_needed(state: KnowSphereState, response: AIMessage) -> bool:
@@ -69,6 +70,7 @@ def _prepare_messages(
     *,
     rewrite_query: str | None = None,
     bound_tool_names: list[str] | None = None,
+    memory_suffix: str | None = None,
 ) -> list[BaseMessage]:
     kb_ids = kb_ids_from_config(config)
     web_on = web_search_enabled_from_config(config)
@@ -120,6 +122,9 @@ def _prepare_messages(
             f"\n\n【本轮改写检索词】{rewrite}\n"
             "调用 doc_retrieval / web_search 时优先使用该检索词；多跳可按中间结果改写。"
         )
+    memory_block = (memory_suffix or "").strip()
+    if memory_block:
+        parts.append("\n\n" + memory_block)
     return [SystemMessage(content="".join(parts))] + list(messages)
 
 
@@ -129,8 +134,9 @@ def _llm_messages(
     system_prompt: str,
     bound_tool_names: list[str] | None = None,
 ) -> list[BaseMessage]:
+    window = memory_view_from_state(state).window_messages
     messages = _inject_image_description(
-        list(state["messages"]),
+        window,
         str(state.get("image_description") or ""),
     )
     return _prepare_messages(
@@ -139,6 +145,7 @@ def _llm_messages(
         config,
         rewrite_query=state.get("rewrite_query"),
         bound_tool_names=bound_tool_names,
+        memory_suffix=memory_system_suffix_from_state(state),
     )
 
 
@@ -154,6 +161,12 @@ def _finalize_response(state: KnowSphereState, response: Any) -> AIMessage:
             id=response.id,
             content="抱歉，处理该请求需要更多步骤，请简化问题或拆分后再试。",
         )
+    if not getattr(response, "tool_calls", None):
+        cites = citation_payload_from_source_dicts(state.get("last_sources") or [])
+        if cites:
+            kwargs = dict(getattr(response, "additional_kwargs", None) or {})
+            kwargs["ks_citations"] = cites
+            response.additional_kwargs = kwargs
     return response
 
 

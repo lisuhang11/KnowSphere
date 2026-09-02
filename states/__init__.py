@@ -53,6 +53,10 @@ class OverallState(InputState, OutputState, TurnState):
     """节点共享的完整内部状态（含 managed remaining_steps）。"""
 
     remaining_steps: NotRequired[RemainingSteps]
+    # 短期记忆（跨轮保留；prepare_context 不得清空）
+    session_summary: NotRequired[str]
+    summary_upto_message_id: NotRequired[str]
+    working_memory: NotRequired[dict]
 
 
 # 兼容既有 import；语义等同 OverallState

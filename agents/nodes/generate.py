@@ -11,7 +11,9 @@ from models import create_chat_model
 from states import KnowSphereState
 from tools.retrieval.doc_retrieval import _emit_thinking
 from utils.agent_runtime import resolve_system_prompt
+from utils.citation import citation_payload_from_source_dicts
 from utils.run_config import chat_model_kwargs_from_config, kb_ids_from_config
+from utils.short_term_memory import memory_system_suffix_from_state, memory_view_from_state
 
 _RAG_TAIL = (
     "\n\n【本轮已限定知识库】"
@@ -96,9 +98,13 @@ def _prepare_messages(
     config: RunnableConfig | None,
     *,
     system_prompt_override: str | None = None,
+    memory_suffix: str | None = None,
 ) -> list[BaseMessage]:
     """组装系统消息。非检索意图优先使用 query_understand 写入的 override。"""
     base = (system_prompt_override or "").strip() or system_prompt
+    extra = (memory_suffix or "").strip()
+    if extra:
+        base = f"{base.rstrip()}\n\n{extra}"
     if system_prompt_override:
         return [SystemMessage(content=base)] + list(messages)
 
@@ -108,8 +114,9 @@ def _prepare_messages(
 
 
 def _llm_messages(state: KnowSphereState, config: RunnableConfig, system_prompt: str) -> list[BaseMessage]:
+    window = memory_view_from_state(state).window_messages
     messages = _inject_image_description(
-        list(state["messages"]),
+        window,
         str(state.get("image_description") or ""),
     )
     messages = _append_context_block(messages, str(state.get("context_block") or ""))
@@ -118,7 +125,18 @@ def _llm_messages(state: KnowSphereState, config: RunnableConfig, system_prompt:
         messages,
         config,
         system_prompt_override=state.get("system_prompt_override"),
+        memory_suffix=memory_system_suffix_from_state(state),
     )
+
+
+def _with_ks_citations(state: KnowSphereState, response: AIMessage) -> AIMessage:
+    cites = citation_payload_from_source_dicts(state.get("last_sources") or [])
+    if not cites:
+        return response
+    kwargs = dict(getattr(response, "additional_kwargs", None) or {})
+    kwargs["ks_citations"] = cites
+    response.additional_kwargs = kwargs
+    return response
 
 
 def call_generate(
@@ -135,7 +153,7 @@ def call_generate(
     response = model.invoke(messages, config)
     if not isinstance(response, AIMessage):
         response = AIMessage(content=str(response))
-    return {"messages": [response]}
+    return {"messages": [_with_ks_citations(state, response)]}
 
 
 async def acall_generate(
@@ -165,4 +183,4 @@ async def acall_generate(
         response = await model.ainvoke(messages, config)
         if not isinstance(response, AIMessage):
             response = AIMessage(content=str(response))
-    return {"messages": [response]}
+    return {"messages": [_with_ks_citations(state, response)]}

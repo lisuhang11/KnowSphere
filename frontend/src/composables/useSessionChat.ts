@@ -41,6 +41,32 @@ export interface ChatMsg {
   sourceDocs?: Citation[]
 }
 
+function extractKwCitations(m: LangMessage | Record<string, unknown>): Citation[] {
+  const kwargs =
+    ('additional_kwargs' in m ? m.additional_kwargs : undefined) as Record<string, unknown> | undefined
+  const raw = kwargs?.ks_citations
+  if (!Array.isArray(raw)) return []
+  const out: Citation[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const row = item as Record<string, unknown>
+    const documentId = typeof row.document_id === 'string' ? row.document_id : ''
+    const fileName = typeof row.file_name === 'string' ? row.file_name : ''
+    if (!documentId && !fileName) continue
+    const entry: Citation = {
+      index: typeof row.index === 'number' && row.index > 0 ? row.index : out.length + 1,
+      document_id: documentId || fileName,
+      file_name: fileName || documentId || `来源 ${out.length + 1}`,
+      chunk_index: typeof row.chunk_index === 'number' ? row.chunk_index : 0,
+    }
+    if (typeof row.score === 'number') entry.score = row.score
+    if (typeof row.snippet === 'string') entry.snippet = row.snippet
+    if (typeof row.url === 'string' && row.url.trim()) entry.url = row.url.trim()
+    out.push(entry)
+  }
+  return out
+}
+
 function extractKwAttachments(
   m: LangMessage | Record<string, unknown>,
   key: 'ks_attachments' | 'ks_outputs',
@@ -153,11 +179,14 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
           attachments: attachments.length ? attachments : undefined,
         })
       } else if (m.type === 'ai') {
+        const citations = extractKwCitations(m)
         list.push({
           id: uid(),
           role: 'assistant',
           content: displayText,
           outputs: outputs.length ? outputs : undefined,
+          citations: citations.length ? citations : undefined,
+          sourceDocs: citations.length ? uniqueCitationSources(citations) : undefined,
         })
       }
     }

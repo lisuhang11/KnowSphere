@@ -1,6 +1,6 @@
 """Token 近似估算：不加载分词器，按中英字符占比估算（兼容 bge-m3 sentencepiece 量级）。
 
-仅用于切块列表/预览的展示（"预估 token 数"），不参与计费或截断判断。
+用于切块预览，以及短期记忆 LLM 视图的窗口预算（近似值，非计费）。
 """
 
 from __future__ import annotations

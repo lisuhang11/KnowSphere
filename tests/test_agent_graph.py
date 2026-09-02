@@ -18,6 +18,7 @@ def test_graph_node_names():
     graph = build_agent()
     assert set(graph.nodes.keys()) >= {
         "prepare_context",
+        "manage_memory",
         "query_understand",
         "agent",
         "tools",
@@ -127,6 +128,32 @@ def test_collect_sources_merges_tool_messages():
     assert out["last_sources"][0]["file_name"] == "a.md"
 
 
+def test_collect_sources_ignores_previous_turn_retrieval():
+    import json
+
+    old = {
+        "sources": [
+            {"document_id": "old", "file_name": "old.md", "chunk_index": 0, "snippet": "旧"}
+        ]
+    }
+    now = {
+        "sources": [
+            {"document_id": "now", "file_name": "now.md", "chunk_index": 0, "snippet": "新"}
+        ]
+    }
+    state: KnowSphereState = {
+        "messages": [
+            HumanMessage(content="上一问"),
+            ToolMessage(content=json.dumps(old), name="doc_retrieval", tool_call_id="old"),
+            AIMessage(content="旧答"),
+            HumanMessage(content="这一问"),
+            ToolMessage(content=json.dumps(now), name="doc_retrieval", tool_call_id="now"),
+        ]
+    }
+    out = collect_sources(state)
+    assert [s["file_name"] for s in out["last_sources"]] == ["now.md"]
+
+
 def test_greeting_goes_to_generate_without_tools():
     graph = build_agent()
     fake_response = AIMessage(content="你好，我是 KnowSphere。")
@@ -207,6 +234,8 @@ def test_kb_search_react_calls_doc_retrieval():
     assert result.get("last_sources")
     assert result["last_sources"][0]["file_name"] == "自我介绍.txt"
     assert result["messages"][-1].content == "李稣航是文档中的实习生。"
+    cites = (result["messages"][-1].additional_kwargs or {}).get("ks_citations") or []
+    assert cites and cites[0]["file_name"] == "自我介绍.txt"
 
 
 def test_doc_only_generate_reads_attachment_block():

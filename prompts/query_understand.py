@@ -158,6 +158,28 @@ def format_history(pairs: list[dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
+def format_rewrite_conversation(
+    pairs: list[dict[str, str]],
+    *,
+    session_summary: str = "",
+    working_memory: dict | None = None,
+) -> str:
+    """改写器用的对话上下文：工作记忆 + 滚动摘要 + 近期问答。"""
+    from utils.short_term_memory import format_working_memory
+
+    parts: list[str] = []
+    wm = format_working_memory(working_memory)
+    if wm:
+        parts.append("Working memory:\n" + wm)
+    summary = (session_summary or "").strip()
+    if summary:
+        parts.append("Earlier conversation summary:\n" + summary)
+    hist = format_history(pairs)
+    if hist:
+        parts.append(hist)
+    return "\n\n".join(parts)
+
+
 def _query_with_attachment_tags(
     query: str, *, has_images: bool, has_attachments: bool
 ) -> str:
@@ -182,10 +204,17 @@ def build_query_understand_prompts(
     has_images: bool = False,
     has_attachments: bool = False,
     web_search_enabled: bool = True,
+    session_summary: str = "",
+    working_memory: dict | None = None,
 ) -> tuple[str, str]:
     now = datetime.now()
     system = QUERY_UNDERSTAND_SYSTEM.replace("{{language}}", "中文").replace(
-        "{{conversation}}", format_history(history_pairs)
+        "{{conversation}}",
+        format_rewrite_conversation(
+            history_pairs,
+            session_summary=session_summary,
+            working_memory=working_memory,
+        ),
     )
     user = (
         QUERY_UNDERSTAND_USER.replace(

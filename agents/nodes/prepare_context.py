@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from config.settings import settings
@@ -12,18 +12,13 @@ from utils.agent_runtime import resolve_agent_tool_names
 from utils.message_content import (
     message_has_attachments,
     message_has_images,
-    message_query_text,
-    message_text,
 )
 from utils.run_config import (
     graph_enabled_from_config,
     kb_ids_from_config,
     web_search_enabled_from_config,
 )
-
-
-def _message_text(msg: BaseMessage) -> str:
-    return message_text(getattr(msg, "content", ""))
+from utils.short_term_memory import extract_history_pairs_from_messages
 
 
 def _is_human(msg: BaseMessage) -> bool:
@@ -33,53 +28,9 @@ def _is_human(msg: BaseMessage) -> bool:
     return role in ("human", "user")
 
 
-def _is_ai(msg: BaseMessage) -> bool:
-    if isinstance(msg, AIMessage):
-        return True
-    role = getattr(msg, "type", None)
-    return role in ("ai", "assistant")
-
-
-def _is_retrieval_tool(msg: BaseMessage) -> bool:
-    return isinstance(msg, ToolMessage) and getattr(msg, "name", None) in (
-        "doc_retrieval",
-        "query_knowledge_graph",
-        "web_search",
-        "web_fetch",
-        "write_plan",
-    )
-
-
 def extract_history_pairs(messages: list[BaseMessage], max_rounds: int) -> tuple[str | None, list[dict[str, str]]]:
     """返回 (current_query, history_pairs)。history 不含当前轮。"""
-    human_indices = [
-        i for i, m in enumerate(messages) if _is_human(m) and _message_text(m)
-    ]
-    if not human_indices:
-        return None, []
-
-    last_idx = human_indices[-1]
-    last_msg = messages[last_idx]
-    current_query = message_query_text(last_msg) or _message_text(last_msg)
-
-    pairs: list[dict[str, str]] = []
-    for hi in human_indices[:-1]:
-        q = message_query_text(messages[hi]) or _message_text(messages[hi])
-        answer = ""
-        for j in range(hi + 1, len(messages)):
-            if _is_human(messages[j]):
-                break
-            if _is_retrieval_tool(messages[j]):
-                continue
-            if _is_ai(messages[j]):
-                answer = _message_text(messages[j])
-                break
-        if q:
-            pairs.append({"query": q, "answer": answer})
-
-    if max_rounds > 0:
-        pairs = pairs[-max_rounds:]
-    return current_query, pairs
+    return extract_history_pairs_from_messages(messages, max_rounds)
 
 
 def _empty_turn(
@@ -111,8 +62,8 @@ def _empty_turn(
 
 def prepare_context(state: KnowSphereState, config: RunnableConfig) -> dict:
     messages = list(state.get("messages") or [])
-    current_query, history_pairs = extract_history_pairs(
-        messages, settings.max_rewrite_rounds
+    current_query, history_pairs = extract_history_pairs_from_messages(
+        messages, settings.stm_keep_turns
     )
     kb_selected = bool(kb_ids_from_config(config))
     web_on = web_search_enabled_from_config(config)
