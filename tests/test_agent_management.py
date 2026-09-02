@@ -192,3 +192,48 @@ def test_create_agent_binds_tools_directly(pg_available):
         assert updated["tool_names"] == ["web_search"]
     finally:
         store.delete_agent(aid)
+
+
+def test_reasoning_agent_tools_are_immutable(pg_available):
+    if not pg_available:
+        pytest.skip("postgres unavailable")
+
+    from stores.agent_repository import AgentStore
+
+    store = AgentStore()
+    store.init_schema()
+    store.seed_builtins()
+    before = store.get_agent(BUILTIN_AGENT_ID)
+    assert before is not None
+    with pytest.raises(ValueError, match="智能推理"):
+        store.update_agent(BUILTIN_AGENT_ID, tool_names=["generate_pptx"])
+    after = store.get_agent(BUILTIN_AGENT_ID)
+    assert after is not None
+    assert after["tool_names"] == before["tool_names"] == list(REASONING_TOOL_NAMES)
+
+
+def test_ppt_agent_tools_can_be_changed(pg_available):
+    if not pg_available:
+        pytest.skip("postgres unavailable")
+
+    from stores.agent_repository import AgentStore
+
+    store = AgentStore()
+    store.init_schema()
+    store.seed_builtins()
+    original = store.get_agent(BUILTIN_PPT_AGENT_ID)
+    assert original is not None
+    try:
+        updated = store.update_agent(BUILTIN_PPT_AGENT_ID, tool_names=["generate_pptx"])
+        assert updated["tool_names"] == ["generate_pptx"]
+        store.seed_builtins()
+        again = store.get_agent(BUILTIN_PPT_AGENT_ID)
+        assert again is not None
+        assert again["tool_names"] == ["generate_pptx"]
+        restored = store.update_agent(
+            BUILTIN_PPT_AGENT_ID, tool_names=["generate_pptx", "doc_retrieval"]
+        )
+        assert "generate_pptx" in restored["tool_names"]
+        assert "doc_retrieval" in restored["tool_names"]
+    finally:
+        store.update_agent(BUILTIN_PPT_AGENT_ID, tool_names=list(PPT_AGENT_TOOL_NAMES))

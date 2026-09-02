@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
+  BUILTIN_AGENT_ID,
   createAgent,
   updateAgent,
   type AgentInfo,
@@ -29,14 +30,32 @@ const form = ref<AgentPayload>({
   is_default: false,
 })
 const saving = ref(false)
+const addOpen = ref(false)
 
 const isEditing = computed(() => !!props.editing)
-const isBuiltin = computed(() => !!props.editing?.is_builtin)
+const toolsLocked = computed(() => props.editing?.id === BUILTIN_AGENT_ID)
 
-const groupedCatalog = computed(() => {
+const catalogByName = computed(() => {
+  const map = new Map<string, ToolSpec>()
+  for (const tool of props.catalog) map.set(tool.name, tool)
+  return map
+})
+
+const boundTools = computed(() => {
+  const out: ToolSpec[] = []
+  for (const name of form.value.tool_names || []) {
+    const spec = catalogByName.value.get(name)
+    if (spec) out.push(spec)
+  }
+  return out
+})
+
+const availableGroups = computed(() => {
+  const bound = new Set(form.value.tool_names || [])
   const groups: { category: string; label: string; tools: ToolSpec[] }[] = []
   const index = new Map<string, number>()
   for (const tool of props.catalog) {
+    if (bound.has(tool.name)) continue
     const key = tool.category || 'other'
     let i = index.get(key)
     if (i == null) {
@@ -49,6 +68,13 @@ const groupedCatalog = computed(() => {
   return groups
 })
 
+const canAddTool = computed(() => !toolsLocked.value && availableGroups.value.length > 0)
+
+function orderedNames(names: string[]) {
+  const wanted = new Set(names)
+  return props.catalog.filter((tool) => wanted.has(tool.name)).map((tool) => tool.name)
+}
+
 function reset() {
   form.value = {
     name: '',
@@ -58,12 +84,16 @@ function reset() {
     max_iterations: 25,
     is_default: false,
   }
+  addOpen.value = false
 }
 
 watch(
   () => [props.visible, props.editing] as const,
   ([open, editing]) => {
-    if (!open) return
+    if (!open) {
+      addOpen.value = false
+      return
+    }
     if (editing) {
       form.value = {
         name: editing.name,
@@ -80,15 +110,24 @@ watch(
 )
 
 function close() {
+  addOpen.value = false
   emit('update:visible', false)
 }
 
-function toggleTool(name: string, checked: boolean) {
-  if (isBuiltin.value) return
-  const cur = new Set(form.value.tool_names || [])
-  if (checked) cur.add(name)
-  else cur.delete(name)
-  form.value.tool_names = [...cur]
+function addTool(name: string) {
+  if (toolsLocked.value) return
+  form.value.tool_names = orderedNames([...(form.value.tool_names || []), name])
+  if (!availableGroups.value.length) addOpen.value = false
+}
+
+function removeTool(name: string) {
+  if (toolsLocked.value) return
+  const next = (form.value.tool_names || []).filter((item) => item !== name)
+  if (!next.length) {
+    MessagePlugin.warning('请至少保留一个工具')
+    return
+  }
+  form.value.tool_names = next
 }
 
 async function save() {
@@ -98,7 +137,7 @@ async function save() {
     return
   }
   if (!(form.value.tool_names || []).length) {
-    MessagePlugin.warning('请至少选择一个工具')
+    MessagePlugin.warning('请至少添加一个工具')
     return
   }
   saving.value = true
@@ -107,10 +146,10 @@ async function save() {
       name,
       description: form.value.description || '',
       system_prompt: form.value.system_prompt || '',
-      tool_names: form.value.tool_names || [],
       max_iterations: form.value.max_iterations || 25,
       is_default: form.value.is_default,
     }
+    if (!toolsLocked.value) payload.tool_names = form.value.tool_names || []
     if (props.editing) await updateAgent(props.editing.id, payload)
     else await createAgent(payload)
     MessagePlugin.success(isEditing.value ? '智能体已更新' : '智能体已创建')
@@ -128,144 +167,272 @@ async function save() {
   <t-drawer
     :visible="visible"
     :header="isEditing ? '编辑智能体' : '新建智能体'"
-    size="520px"
+    size="720px"
     :close-btn="true"
     :footer="true"
+    :z-index="2500"
     @update:visible="emit('update:visible', $event)"
   >
     <div class="agent-form">
-      <t-form layout="vertical">
-        <t-form-item label="名称" required>
-          <t-input v-model="form.name" placeholder="例如：资料整理助手" :maxlength="40" />
-        </t-form-item>
-        <t-form-item label="说明">
-          <t-textarea
-            v-model="form.description"
-            placeholder="这个智能体适合做什么"
-            :autosize="{ minRows: 2, maxRows: 4 }"
-          />
-        </t-form-item>
-        <t-form-item label="工具" required>
-          <p v-if="isBuiltin" class="builtin-hint">内置智能体的工具随系统更新，不能改勾选。</p>
-          <p v-else-if="!catalog.length" class="empty-hint">还没有可用工具。</p>
-          <div v-for="group in groupedCatalog" :key="group.category" class="tool-group">
-            <div class="tool-group__title">{{ group.label }}</div>
-            <label
-              v-for="tool in group.tools"
-              :key="tool.name"
-              class="tool-check"
-              :class="{ 'is-checked': (form.tool_names || []).includes(tool.name) }"
+      <label class="field">
+        <span class="field-label">名称</span>
+        <t-input v-model="form.name" placeholder="例如：资料整理助手" :maxlength="40" />
+      </label>
+      <label class="field">
+        <span class="field-label">说明</span>
+        <t-textarea
+          v-model="form.description"
+          placeholder="这个智能体适合做什么"
+          :autosize="{ minRows: 2, maxRows: 4 }"
+        />
+      </label>
+
+      <div class="field">
+        <div class="field-label-row">
+          <span class="field-label">工具</span>
+          <t-button
+            v-if="!toolsLocked"
+            theme="primary"
+            size="small"
+            :disabled="!canAddTool"
+            @click="addOpen = true"
+          >
+            <template #icon><t-icon name="add" /></template>
+            添加工具
+          </t-button>
+        </div>
+        <p v-if="toolsLocked" class="hint">「智能推理」的工具由系统维护，不能添加或删除。</p>
+        <p v-else class="hint">一行一个工具。点右上角「添加工具」，或点右侧「删除」从本智能体移除。</p>
+
+        <div v-if="boundTools.length" class="bound-list">
+          <div v-for="tool in boundTools" :key="tool.name" class="bound-tool">
+            <span class="bound-tool__name">{{ tool.display_name }}</span>
+            <t-button
+              v-if="!toolsLocked"
+              class="bound-tool__remove"
+              theme="danger"
+              variant="text"
+              size="small"
+              @click="removeTool(tool.name)"
             >
-              <t-checkbox
-                :checked="(form.tool_names || []).includes(tool.name)"
-                :disabled="isBuiltin"
-                @change="(v: boolean) => toggleTool(tool.name, v)"
-              />
-              <span class="tool-check__body">
-                <span class="tool-check__title">
-                  <span class="tool-check__name">{{ tool.display_name }}</span>
-                  <code class="tool-check__code">{{ tool.name }}</code>
-                </span>
-                <span class="tool-check__desc">{{ tool.description }}</span>
-              </span>
-            </label>
+              删除
+            </t-button>
+            <span class="bound-tool__tag">{{ tool.category_label }}</span>
+            <span class="bound-tool__desc">{{ tool.description }}</span>
           </div>
-        </t-form-item>
-        <t-form-item label="系统提示词">
-          <t-textarea
-            v-model="form.system_prompt"
-            placeholder="留空则按所绑工具自动生成。以后做 PPT / 整理数据智能体时，可在此写角色与输出格式。"
-            :autosize="{ minRows: 4, maxRows: 10 }"
-          />
-        </t-form-item>
-        <t-form-item label="最大推理步数">
-          <t-input-number v-model="form.max_iterations" :min="4" :max="80" theme="column" />
-        </t-form-item>
-        <t-form-item>
-          <t-checkbox v-model="form.is_default">设为默认智能体</t-checkbox>
-        </t-form-item>
-      </t-form>
+        </div>
+        <div v-else class="bound-empty">还没有绑定工具，请点「添加工具」。</div>
+        <p v-if="!toolsLocked && !canAddTool && boundTools.length" class="hint">目录中的工具都已绑定。</p>
+      </div>
+
+      <label class="field">
+        <span class="field-label">系统提示词</span>
+        <t-textarea
+          v-model="form.system_prompt"
+          placeholder="留空则按所绑工具自动生成。可以在这里写角色、页数、输出格式。"
+          :autosize="{ minRows: 4, maxRows: 8 }"
+        />
+      </label>
+      <label class="field">
+        <span class="field-label">最大推理步数</span>
+        <t-input-number v-model="form.max_iterations" :min="4" :max="80" theme="column" />
+      </label>
+      <t-checkbox v-model="form.is_default">设为默认智能体</t-checkbox>
     </div>
     <template #footer>
       <t-button variant="outline" @click="close">取消</t-button>
       <t-button theme="primary" :loading="saving" @click="save">保存</t-button>
     </template>
   </t-drawer>
+
+  <t-dialog
+    v-model:visible="addOpen"
+    header="添加工具"
+    width="520px"
+    attach="body"
+    :z-index="3200"
+    :footer="false"
+    :confirm-on-enter="false"
+  >
+    <p v-if="!availableGroups.length" class="hint">没有可添加的工具。</p>
+    <div v-else class="picker-groups">
+      <section v-for="group in availableGroups" :key="group.category" class="picker-group">
+        <div class="picker-group__title">{{ group.label }}</div>
+        <button
+          v-for="tool in group.tools"
+          :key="tool.name"
+          type="button"
+          class="picker-tool"
+          @click="addTool(tool.name)"
+        >
+          <span class="picker-tool__name">{{ tool.display_name }}</span>
+          <span class="picker-tool__desc">{{ tool.description }}</span>
+          <span class="picker-tool__action">添加</span>
+        </button>
+      </section>
+    </div>
+  </t-dialog>
 </template>
 
 <style scoped>
 .agent-form {
-  padding: 4px 4px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 0 16px;
 }
 
-.builtin-hint,
-.empty-hint {
-  margin: 0 0 8px;
+.field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+}
+
+.field-label,
+.field-label-row .field-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--td-text-color-primary);
+  white-space: nowrap;
+}
+
+.field-label-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hint {
+  margin: 0;
   font-size: 12px;
+  line-height: 1.5;
   color: var(--td-text-color-placeholder);
 }
 
-.tool-group {
+.bound-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-bottom: 14px;
+  width: 100%;
 }
 
-.tool-group__title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--td-text-color-secondary);
-}
-
-.tool-check {
+.bound-tool {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
   padding: 10px 12px;
   border: 1px solid var(--td-component-stroke);
   border-radius: 8px;
-  cursor: pointer;
   background: var(--td-bg-color-container);
 }
 
-.tool-check :deep(.t-checkbox) {
-  margin-top: 3px;
-}
-
-.tool-check.is-checked {
-  border-color: color-mix(in srgb, var(--td-brand-color) 45%, var(--td-component-stroke));
-  background: color-mix(in srgb, var(--td-brand-color) 5%, var(--td-bg-color-container));
-}
-
-.tool-check__body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.tool-check__title {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.tool-check__name {
+.bound-tool__name {
+  flex: 0 0 auto;
   font-size: 13px;
   font-weight: 600;
   color: var(--td-text-color-primary);
+  white-space: nowrap;
 }
 
-.tool-check__code {
-  font-size: 11px;
+.bound-tool__remove {
+  flex: 0 0 auto;
+}
+
+.bound-tool__tag {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+  white-space: nowrap;
+}
+
+.bound-tool__desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--td-text-color-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bound-empty {
+  padding: 14px;
+  border: 1px dashed var(--td-component-stroke);
+  border-radius: 8px;
+  text-align: center;
+  font-size: 13px;
   color: var(--td-text-color-placeholder);
 }
 
-.tool-check__desc {
+.picker-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.picker-group__title {
+  margin-bottom: 8px;
   font-size: 12px;
+  font-weight: 600;
   color: var(--td-text-color-secondary);
-  line-height: 1.55;
+}
+
+.picker-tool {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  background: var(--td-bg-color-container);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.picker-tool:hover {
+  border-color: var(--td-brand-color);
+}
+
+.picker-tool__name {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--td-text-color-primary);
+  white-space: nowrap;
+}
+
+.picker-tool__desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--td-text-color-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.picker-tool__action {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--td-brand-color);
+  white-space: nowrap;
 }
 </style>

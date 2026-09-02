@@ -12,7 +12,6 @@ import {
 import AgentEditorDrawer from './components/AgentEditorDrawer.vue'
 
 const loading = ref(false)
-const tab = ref<'agents' | 'tools'>('agents')
 const agents = ref<AgentInfo[]>([])
 const catalog = ref<ToolSpec[]>([])
 
@@ -20,31 +19,6 @@ const agentDrawer = ref(false)
 const editingAgent = ref<AgentInfo | null>(null)
 
 const agentCount = computed(() => agents.value.length)
-const toolCount = computed(() => catalog.value.length)
-
-const groupedCatalog = computed(() => {
-  const groups: { category: string; label: string; tools: ToolSpec[] }[] = []
-  const index = new Map<string, number>()
-  for (const tool of catalog.value) {
-    const key = tool.category || 'other'
-    let i = index.get(key)
-    if (i == null) {
-      i = groups.length
-      index.set(key, i)
-      groups.push({ category: key, label: tool.category_label || key, tools: [] })
-    }
-    groups[i].tools.push(tool)
-  }
-  return groups
-})
-
-function toolIcon(category: string) {
-  if (category === 'planning') return 'root-list'
-  if (category === 'knowledge') return 'folder'
-  if (category === 'web') return 'internet'
-  if (category === 'creation') return 'file'
-  return 'tools'
-}
 
 async function load() {
   loading.value = true
@@ -110,17 +84,14 @@ onMounted(() => {
     <div class="section-header">
       <h2>智能体</h2>
       <p class="section-description">
-        给智能体勾选可用工具。当前内置「智能推理」绑定了规划、知识库、图谱与联网工具；之后可以再做 PPT、整理数据这类自定义智能体。
+        配置智能体的名称、提示词和可用工具。「智能推理」自带的工具由系统维护，不能改；其它智能体可在编辑页增删。系统工具目录见
+        <router-link to="/tools">工具</router-link>。
       </p>
     </div>
 
-    <t-tabs v-model="tab" class="agent-tabs">
-      <t-tab-panel value="agents" :label="`智能体(${agentCount})`" />
-      <t-tab-panel value="tools" :label="`工具(${toolCount})`" />
-    </t-tabs>
-
     <t-loading :loading="loading" size="small">
-      <div v-if="tab === 'agents'" class="card-grid">
+      <p class="list-meta">共 {{ agentCount }} 个智能体</p>
+      <div class="card-grid">
         <div
           v-for="item in agents"
           :key="item.id"
@@ -177,28 +148,6 @@ onMounted(() => {
           <span class="res-card--add__label">添加智能体</span>
         </button>
       </div>
-
-      <div v-else class="tool-sections">
-        <section v-for="group in groupedCatalog" :key="group.category" class="tool-section">
-          <h3 class="tool-section__title">{{ group.label }}</h3>
-          <div class="card-grid">
-            <div v-for="tool in group.tools" :key="tool.name" class="res-card res-card--tool">
-              <div class="res-card__badge res-card__badge--tool">
-                <t-icon :name="toolIcon(tool.category)" size="18px" />
-              </div>
-              <div class="res-card__body">
-                <div class="res-card__header">
-                  <h3 class="res-card__title">{{ tool.display_name }}</h3>
-                  <t-tag size="small" variant="light">{{ tool.category_label }}</t-tag>
-                </div>
-                <p class="res-card__code">{{ tool.name }}</p>
-                <p class="res-card__desc">{{ tool.description }}</p>
-              </div>
-            </div>
-          </div>
-        </section>
-        <p v-if="!catalog.length" class="empty-hint">还没有可用工具。</p>
-      </div>
     </t-loading>
 
     <AgentEditorDrawer
@@ -214,6 +163,7 @@ onMounted(() => {
 .agent-settings {
   width: 100%;
   height: 100%;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 20px 28px;
   box-sizing: border-box;
@@ -234,31 +184,25 @@ onMounted(() => {
   line-height: 20px;
 }
 
-.agent-tabs {
-  margin: 16px 0;
+.section-description a {
+  color: var(--td-brand-color);
+  text-decoration: none;
 }
 
-.agent-tabs :deep(.t-tabs__content) {
-  display: none;
+.section-description a:hover {
+  text-decoration: underline;
+}
+
+.list-meta {
+  margin: 16px 0 12px;
+  font-size: 13px;
+  color: var(--td-text-color-placeholder);
 }
 
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   gap: 12px;
-}
-
-.tool-sections {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.tool-section__title {
-  margin: 0 0 10px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--td-text-color-secondary);
 }
 
 .res-card {
@@ -271,6 +215,8 @@ onMounted(() => {
   border-radius: 10px;
   background: var(--td-bg-color-container);
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   text-align: left;
 }
 
@@ -297,11 +243,6 @@ onMounted(() => {
   justify-content: center;
   background: rgba(0, 82, 217, 0.1);
   color: #0052d9;
-}
-
-.res-card__badge--tool {
-  background: rgba(98, 53, 187, 0.1);
-  color: #6235bb;
 }
 
 .res-card__body {
@@ -344,17 +285,12 @@ onMounted(() => {
   line-height: 1.55;
 }
 
-.res-card__code {
-  margin: 0;
-  font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  color: var(--td-text-color-placeholder);
-}
-
 .chip-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .tool-chip {
@@ -404,11 +340,5 @@ onMounted(() => {
 .res-card--add__label {
   font-size: 13px;
   font-weight: 500;
-}
-
-.empty-hint {
-  margin: 0;
-  font-size: 13px;
-  color: var(--td-text-color-placeholder);
 }
 </style>

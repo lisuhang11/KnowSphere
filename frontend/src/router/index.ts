@@ -35,6 +35,11 @@ const router = createRouter({
           component: () => import('@/views/agents/index.vue'),
         },
         {
+          path: 'tools',
+          name: 'tools',
+          component: () => import('@/views/tools/index.vue'),
+        },
+        {
           path: 'evaluation',
           name: 'evaluation',
           component: () => import('@/views/evaluation/index.vue'),

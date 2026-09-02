@@ -173,8 +173,7 @@ class AgentStore:
                 conn.execute(
                     """
                     UPDATE agents
-                    SET tool_names = %s,
-                        description = CASE
+                    SET description = CASE
                             WHEN description IN ('', %s) THEN %s
                             ELSE description
                         END,
@@ -182,7 +181,6 @@ class AgentStore:
                     WHERE id = %s
                     """,
                     (
-                        Jsonb(ppt_names),
                         BUILTIN_PPT_AGENT_DESCRIPTION,
                         BUILTIN_PPT_AGENT_DESCRIPTION,
                         BUILTIN_PPT_AGENT_ID,
@@ -388,15 +386,13 @@ class AgentStore:
             sets.append("system_prompt = %s")
             args.append(system_prompt)
         if tool_names is not None:
-            names = (
-                list(REASONING_TOOL_NAMES)
-                if rec["is_builtin"] and rec["id"] == BUILTIN_AGENT_ID
-                else list(PPT_AGENT_TOOL_NAMES)
-                if rec["is_builtin"] and rec["id"] == BUILTIN_PPT_AGENT_ID
-                else self._validate_tool_names(tool_names)
-            )
-            sets.append("tool_names = %s")
-            args.append(Jsonb(names))
+            if rec["id"] == BUILTIN_AGENT_ID:
+                if ordered_tool_names(tool_names) != list(REASONING_TOOL_NAMES):
+                    raise ValueError("内置「智能推理」的工具不可修改")
+            else:
+                names = self._validate_tool_names(tool_names)
+                sets.append("tool_names = %s")
+                args.append(Jsonb(names))
         if max_iterations is not None:
             sets.append("max_iterations = %s")
             args.append(self._clamp_iterations(max_iterations))
