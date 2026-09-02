@@ -4,6 +4,7 @@ import { useChatReferencesDrawer } from '@/composables/useChatReferencesDrawer'
 import {
   buildReferenceSections,
   formatReferenceSnippet,
+  openExternalUrl,
   resolveReferenceHighlightKey,
   type ReferenceListItem,
 } from '@/utils/referenceSources'
@@ -62,6 +63,10 @@ function toggleDocumentSnippet(item: ReferenceListItem) {
     return
   }
   expandedKeys.add(item.key)
+}
+
+function onOpenWeb(item: ReferenceListItem, event: MouseEvent) {
+  openExternalUrl(item.url, event)
 }
 
 async function scrollToHighlight() {
@@ -134,9 +139,36 @@ watch(visible, (open) => {
               :key="item.key"
               :ref="(el) => setItemRef(item.key, el)"
               class="reference-item"
-              :class="{ 'is-highlighted': item.key === activeHighlightKey }"
+              :class="{
+                'is-highlighted': item.key === activeHighlightKey,
+                'is-web': Boolean(item.url),
+              }"
             >
+              <a
+                v-if="item.url"
+                class="reference-item__body reference-item__body--link"
+                :href="item.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                :title="item.url"
+                @click="onOpenWeb(item, $event)"
+              >
+                <div class="reference-item__document">
+                  <t-icon name="link" class="reference-item__doc-icon" />
+                  <div class="reference-item__document-main">
+                    <h5 class="reference-item__title">{{ item.title }}</h5>
+                    <p class="reference-item__host">
+                      {{ item.host || item.url }}
+                      <span class="reference-item__open">打开网页</span>
+                    </p>
+                    <p v-if="item.snippet" class="reference-item__snippet">
+                      {{ formatReferenceSnippet(item.snippet) }}
+                    </p>
+                  </div>
+                </div>
+              </a>
               <div
+                v-else
                 class="reference-item__body"
                 :class="{ 'is-expandable': hasMoreContent(item) }"
                 role="button"
@@ -268,6 +300,15 @@ watch(visible, (open) => {
   display: block;
   padding: 10px 12px;
   color: inherit;
+  text-decoration: none;
+}
+
+.reference-item__body--link {
+  cursor: pointer;
+}
+
+.reference-item__body--link:hover .reference-item__title {
+  color: var(--td-brand-color);
 }
 
 .reference-item__body.is-expandable {
@@ -300,6 +341,26 @@ watch(visible, (open) => {
   line-height: 1.4;
   color: var(--td-text-color-primary);
   word-break: break-word;
+}
+
+.reference-item__host {
+  margin: 0 0 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--td-brand-color);
+  word-break: break-all;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.reference-item__open {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--td-brand-color);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .reference-item__snippet,

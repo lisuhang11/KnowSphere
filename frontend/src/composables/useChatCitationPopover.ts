@@ -1,7 +1,7 @@
 import { onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import type { Citation } from '@/api/sessions'
 import { useChatReferencesDrawer } from '@/composables/useChatReferencesDrawer'
-import { citationsToReferences } from '@/utils/referenceSources'
+import { citationsToReferences, extractHttpUrl } from '@/utils/referenceSources'
 
 export type CitationFloatState = {
   visible: boolean
@@ -49,11 +49,11 @@ export function useChatCitationPopover(
     const citations = options.getCitations() || []
     const c = citations.find((x) => x.index === idx)
     if (!c) return
-    const isWeb = /^https?:\/\//i.test(c.document_id || '')
-    float.value.type = isWeb ? 'web' : 'kb'
+    const webUrl = extractHttpUrl(c.url) || extractHttpUrl(c.document_id)
+    float.value.type = webUrl ? 'web' : 'kb'
     float.value.title = c.file_name || `来源 ${idx}`
     float.value.content = c.snippet || ''
-    float.value.url = isWeb ? c.document_id : ''
+    float.value.url = webUrl || ''
     float.value.loading = false
     float.value.error = ''
     float.value.visible = true

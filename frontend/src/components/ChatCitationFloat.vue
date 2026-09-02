@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { CitationFloatState } from '@/composables/useChatCitationPopover'
+import { openExternalUrl } from '@/utils/referenceSources'
 
 defineProps<{
   float: CitationFloatState
@@ -25,6 +26,7 @@ defineProps<{
           :href="float.url"
           target="_blank"
           rel="noopener noreferrer"
+          @click="openExternalUrl(float.url, $event)"
         >
           {{ float.url }}
         </a>

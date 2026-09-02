@@ -56,7 +56,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     "web_search": ToolSpec(
         name="web_search",
         display_name="联网搜索",
-        description="公开网页搜索（DuckDuckGo，失败时回退 Bing），无需 API Key。",
+        description="公开网页搜索（Bing HTML，DuckDuckGo 短超时回退），无需 API Key。",
         category="web",
         prompt_line=(
             "- web_search：仅当本轮联网已开启，且知识库缺失或不相关"

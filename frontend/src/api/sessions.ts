@@ -47,6 +47,8 @@ export interface Citation {
   chunk_index: number
   score?: number
   snippet?: string
+  /** 网页引用时由后端附带，与 document_id 同为 http(s) 链接 */
+  url?: string
 }
 
 export type StreamHandler = (event: string, data: Record<string, unknown>) => void

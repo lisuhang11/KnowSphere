@@ -2,7 +2,7 @@
 import { computed, reactive, ref } from 'vue'
 import type { Citation } from '@/api/sessions'
 import { useChatReferencesDrawer } from '@/composables/useChatReferencesDrawer'
-import { citationsToReferences } from '@/utils/referenceSources'
+import { citationsToReferences, extractHttpUrl, openExternalUrl } from '@/utils/referenceSources'
 
 const props = defineProps<{
   citations: Citation[]
@@ -18,12 +18,17 @@ const references = computed(() => citationsToReferences(props.citations))
 const groupedRefs = computed(() => {
   const groupMap = new Map<
     string,
-    { key: string; title: string; chunks: Array<{ content?: string; chunkIndex?: number }> }
+    { key: string; title: string; url?: string; chunks: Array<{ content?: string; chunkIndex?: number }> }
   >()
   for (const c of props.citations) {
     const key = c.document_id || c.file_name || String(c.index)
     if (!groupMap.has(key)) {
-      groupMap.set(key, { key, title: c.file_name || `来源 ${c.index}`, chunks: [] })
+      groupMap.set(key, {
+        key,
+        title: c.file_name || `来源 ${c.index}`,
+        url: extractHttpUrl(c.url) || extractHttpUrl(c.document_id),
+        chunks: [],
+      })
     }
     groupMap.get(key)!.chunks.push({ content: c.snippet, chunkIndex: c.chunk_index })
   }
@@ -31,9 +36,12 @@ const groupedRefs = computed(() => {
 })
 
 const headerText = computed(() => {
-  const docCount = groupedRefs.value.length
-  if (docCount === 0) return '引用来源'
-  return `引用 ${docCount} 篇文档`
+  const groups = groupedRefs.value
+  if (groups.length === 0) return '引用来源'
+  const webCount = groups.filter((g) => Boolean(g.url)).length
+  if (webCount === groups.length) return `引用 ${webCount} 个网页`
+  if (webCount === 0) return `引用 ${groups.length} 篇文档`
+  return `引用来源 · ${groups.length}`
 })
 
 function referBoxSwitch() {
@@ -74,8 +82,17 @@ function truncateContent(text: string | undefined, maxLen: number) {
       <div v-for="group in groupedRefs" :key="group.key" class="doc-group">
         <div class="doc-group-header" @click="toggleGroup(group.key)">
           <div class="doc-group-left">
-            <t-icon name="file" size="14px" class="doc-group-icon" />
-            <span class="doc-group-title" :title="group.title">{{ group.title }}</span>
+            <t-icon :name="group.url ? 'link' : 'file'" size="14px" class="doc-group-icon" />
+            <a
+              v-if="group.url"
+              class="doc-group-title doc-group-title--link"
+              :href="group.url"
+              target="_blank"
+              rel="noopener noreferrer"
+              :title="group.url"
+              @click.stop="openExternalUrl(group.url, $event)"
+            >{{ group.title }}</a>
+            <span v-else class="doc-group-title" :title="group.title">{{ group.title }}</span>
             <span class="doc-group-count">{{ group.chunks.length }} 段</span>
           </div>
           <t-icon
@@ -184,6 +201,15 @@ function truncateContent(text: string | undefined, maxLen: number) {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 420px;
+}
+
+.doc-group-title--link {
+  color: var(--td-brand-color);
+  text-decoration: none;
+}
+
+.doc-group-title--link:hover {
+  text-decoration: underline;
 }
 
 .doc-group-count {

@@ -61,7 +61,7 @@ def unique_sources_by_document(citations: dict[int, Citation]) -> list[Citation]
     return unique
 
 def _citation_dict(c: Citation) -> dict:
-    return {
+    payload = {
         "index": c.index,
         "document_id": c.document_id,
         "file_name": c.file_name,
@@ -69,6 +69,10 @@ def _citation_dict(c: Citation) -> dict:
         "score": c.score,
         "snippet": c.snippet,
     }
+    doc = (c.document_id or "").strip()
+    if doc.lower().startswith(("http://", "https://")):
+        payload["url"] = doc
+    return payload
 
 def merge_citation_maps(
     existing: dict[int, Citation], incoming: dict[int, Citation]

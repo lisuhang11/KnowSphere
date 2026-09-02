@@ -128,6 +128,8 @@ class Settings(BaseSettings):
     web_search_enabled: bool = True
     web_search_max_results: int = 5
     web_search_timeout_sec: float = 8
+    web_search_proxy: str = ""  # 可选 HTTP/HTTPS 代理，如 http://127.0.0.1:7890
+    web_search_searxng_url: str = ""  # 可选自建 SearXNG，如 http://127.0.0.1:8888
     web_fetch_timeout_sec: float = 15
     web_fetch_max_bytes: int = 512_000
 

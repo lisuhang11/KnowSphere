@@ -139,7 +139,9 @@ def web_fetch(
                 snippet=body[:400],
             )
         )
-    note = body if body else "页面没有可提取的正文。"
-    # 全文放 note，便于模型阅读；snippet 仅作引用预览
+    if body:
+        note = f"URL: {raw}\n标题：{title}\n\n{body}"
+    else:
+        note = f"URL: {raw}\n页面没有可提取的正文。"
     result = RetrievalResult(query=raw, sources=sources, note=note).model_dump()
     return result

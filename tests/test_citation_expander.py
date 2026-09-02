@@ -95,6 +95,24 @@ def test_citations_from_sources():
     assert payload["citations"][0]["index"] == 1
     assert payload["citations"][0]["file_name"] == "x.md"
     assert payload["sources"] == payload["citations"]
+    assert "url" not in payload["citations"][0]
+
+
+def test_citation_meta_includes_url_for_web_sources():
+    from schemas import Source
+
+    sources = [
+        Source(
+            document_id="https://news.qq.com/a/jingtian",
+            file_name="景甜热搜",
+            chunk_index=0,
+            score=1.0,
+            snippet="摘要",
+        )
+    ]
+    payload = citation_meta_payload(citations_from_sources(sources))
+    assert payload["citations"][0]["url"] == "https://news.qq.com/a/jingtian"
+    assert payload["citations"][0]["document_id"] == "https://news.qq.com/a/jingtian"
 
 def test_unique_sources_by_document():
     cites = {
