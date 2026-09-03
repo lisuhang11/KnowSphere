@@ -115,6 +115,8 @@ import agentIcon from '@/assets/img/agent.svg'
 import agentIconGreen from '@/assets/img/agent-green.svg'
 import toolsIcon from '@/assets/img/tools.svg'
 import toolsIconGreen from '@/assets/img/tools-green.svg'
+import skillIcon from '@/assets/img/skill.svg'
+import skillIconGreen from '@/assets/img/skill-green.svg'
 import evalIcon from '@/assets/img/eval.svg'
 import evalIconGreen from '@/assets/img/eval-green.svg'
 
@@ -136,6 +138,8 @@ const ICON_MAP: Record<string, string> = {
   'agent-green.svg': agentIconGreen,
   'tools.svg': toolsIcon,
   'tools-green.svg': toolsIconGreen,
+  'skill.svg': skillIcon,
+  'skill-green.svg': skillIconGreen,
   'eval.svg': evalIcon,
   'eval-green.svg': evalIconGreen,
 }
@@ -145,6 +149,7 @@ const topMenuItems: MenuItem[] = [
   { title: '知识库', path: 'knowledge-bases' },
   { title: '智能体', path: 'agents' },
   { title: '工具', path: 'tools' },
+  { title: '技能', path: 'skills' },
   { title: '模型管理', path: 'models' },
   { title: '效果评测', path: 'evaluation' },
 ]
@@ -196,6 +201,8 @@ function isMenuItemActive(itemPath: string): boolean {
       return currentRoute === 'agents'
     case 'tools':
       return currentRoute === 'tools'
+    case 'skills':
+      return currentRoute === 'skills'
     case 'models':
       return currentRoute === 'models'
     case 'evaluation':
@@ -216,6 +223,9 @@ function iconFile(path: string): string {
   }
   if (path === 'tools') {
     return isMenuItemActive(path) ? 'tools-green.svg' : 'tools.svg'
+  }
+  if (path === 'skills') {
+    return isMenuItemActive(path) ? 'skill-green.svg' : 'skill.svg'
   }
   if (path === 'models') {
     return isMenuItemActive(path) ? 'setting-green.svg' : 'setting.svg'

@@ -11,6 +11,8 @@ SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 MAX_SKILL_NAME_LEN = 64
 MAX_DESCRIPTION_LEN = 1024
 MAX_READ_CHARS = 80_000
+MAX_FILE_BYTES = 2 * 1024 * 1024
+IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".bmp"})
 
 SKIP_DIR_NAMES = frozenset(
     {".venv", "__pycache__", ".git", "node_modules", ".mypy_cache", ".ruff_cache"}

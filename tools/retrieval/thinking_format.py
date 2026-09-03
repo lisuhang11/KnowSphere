@@ -76,10 +76,12 @@ def format_source_preview(rows: list[dict[str, Any]], limit: int = 5) -> str:
     lines: list[str] = []
     for i, r in enumerate(rows[:limit], 1):
         name = r.get("file_name") or r.get("document_id") or "?"
-        idx = r.get("chunk_index", "?")
+        cite = r.get("cite_id") or f"c{i}"
+        cid = r.get("chunk_id") or r.get("id") or "?"
+        alias = f" {r['doc_alias']}" if r.get("doc_alias") else ""
         score = float(r.get("score") or 0)
         snippet = (r.get("snippet") or r.get("content") or "")[:60].replace("\n", " ")
-        lines.append(f"  [{i}] {name}#{idx} score={score:.3f} | {snippet}…")
+        lines.append(f"  [{cite}] {name} chunk_id={cid}{alias} score={score:.3f} | {snippet}…")
     if len(rows) > limit:
         lines.append(f"  … 另有 {len(rows) - limit} 条未展示")
     return "\n".join(lines)

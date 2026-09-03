@@ -51,7 +51,9 @@ def build_system_prompt(
         if has_list:
             rules.append(
                 "doc_retrieval 或 grep_chunks 返回的正文仍不够时，用 list_chunks："
-                "chunk_id 读一块，或 document_id 翻页读整篇。"
+                "传入检索结果里的 chunk_id（或句柄 cN，与 [[cN]] 相同）读一块，"
+                "或传入 document_id / dN 翻页读整篇。"
+                "禁止把 [[c2]] 的数字 2 或文件名#后的序号当成数据库 id。"
             )
         if has_doc_info:
             rules.append(

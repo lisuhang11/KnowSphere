@@ -139,7 +139,11 @@ def compact_historical_human(msg: BaseMessage) -> BaseMessage:
 def compact_historical_tool(msg: ToolMessage, *, redact_retrieval: bool) -> ToolMessage:
     name = str(getattr(msg, "name", "") or "")
     if redact_retrieval and name in RETRIEVAL_TOOL_NAMES:
-        return _copy_tool(msg, COMPACT_RETRIEVAL)
+        from utils.source_aliases import format_read_handle_table, sources_from_tool_payload
+
+        table = format_read_handle_table(sources_from_tool_payload(getattr(msg, "content", "")))
+        content = COMPACT_RETRIEVAL if not table else f"{COMPACT_RETRIEVAL}\n{table}"
+        return _copy_tool(msg, content)
     body = message_text(getattr(msg, "content", ""))
     if name == "generate_pptx" and len(body) > 240:
         return _copy_tool(msg, body[:240].rstrip() + "…")

@@ -67,5 +67,5 @@ def test_format_source_preview():
         }
     ]
     text = format_source_preview(rows)
-    assert "自我介绍.txt#0" in text
+    assert "[c1] 自我介绍.txt chunk_id=?" in text or "自我介绍.txt chunk_id=" in text
     assert "0.910" in text

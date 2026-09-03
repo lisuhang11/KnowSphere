@@ -15,6 +15,8 @@ class Source(BaseModel):
     parent_resolved: bool = Field(default=False, description="是否已从子块扩展为父块上下文")
     sub_chunk_index: int | None = Field(default=None, description="原始命中的子块序号")
     chunk_id: int | None = Field(default=None, description="分块主键，供 list_chunks 精读")
+    cite_id: str = Field(default="", description="本轮短句柄 cN，与 [[cN]] 相同")
+    doc_alias: str = Field(default="", description="本轮文档短句柄 dN")
     content: str = Field(default="", description="给模型的正文（检索为父块/分块全文，可截断）")
 
 class RetrievalResult(BaseModel):

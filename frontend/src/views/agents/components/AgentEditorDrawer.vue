@@ -39,7 +39,6 @@ const addSkillOpen = ref(false)
 
 const isEditing = computed(() => !!props.editing)
 const toolsLocked = computed(() => props.editing?.id === BUILTIN_AGENT_ID)
-const skillsLocked = computed(() => !!props.editing?.is_builtin)
 
 const catalogByName = computed(() => {
   const map = new Map<string, ToolSpec>()
@@ -86,7 +85,7 @@ const availableSkills = computed(() => {
   return props.skillCatalog.filter((s) => !bound.has(s.name))
 })
 
-const canAddSkill = computed(() => !skillsLocked.value && availableSkills.value.length > 0)
+const canAddSkill = computed(() => availableSkills.value.length > 0)
 
 function orderedNames(names: string[]) {
   const wanted = new Set(names)
@@ -94,8 +93,15 @@ function orderedNames(names: string[]) {
 }
 
 function orderedSkillNames(names: string[]) {
-  const wanted = new Set(names)
-  return props.skillCatalog.filter((s) => wanted.has(s.name)).map((s) => s.name)
+  const known = new Set(props.skillCatalog.map((s) => s.name))
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const name of names) {
+    if (!name || seen.has(name) || !known.has(name)) continue
+    seen.add(name)
+    out.push(name)
+  }
+  return out
 }
 
 function reset() {
@@ -159,13 +165,11 @@ function removeTool(name: string) {
 }
 
 function addSkill(name: string) {
-  if (skillsLocked.value) return
   form.value.skill_names = orderedSkillNames([...(form.value.skill_names || []), name])
   if (!availableSkills.value.length) addSkillOpen.value = false
 }
 
 function removeSkill(name: string) {
-  if (skillsLocked.value) return
   form.value.skill_names = (form.value.skill_names || []).filter((item) => item !== name)
 }
 
@@ -189,7 +193,7 @@ async function save() {
       is_default: form.value.is_default,
     }
     if (!toolsLocked.value) payload.tool_names = form.value.tool_names || []
-    if (!skillsLocked.value) payload.skill_names = form.value.skill_names || []
+    payload.skill_names = form.value.skill_names || []
     if (props.editing) await updateAgent(props.editing.id, payload)
     else await createAgent(payload)
     MessagePlugin.success(isEditing.value ? '智能体已更新' : '智能体已创建')
@@ -269,7 +273,6 @@ async function save() {
         <div class="field-label-row">
           <span class="field-label">技能</span>
           <t-button
-            v-if="!skillsLocked"
             theme="primary"
             size="small"
             :disabled="!canAddSkill"
@@ -279,8 +282,7 @@ async function save() {
             添加技能
           </t-button>
         </div>
-        <p v-if="skillsLocked" class="hint">内置智能体不启用技能。自定义智能体可勾选仓库内技能；空列表表示关闭。</p>
-        <p v-else class="hint">技能不是工具勾选。绑定后模型会按描述自行匹配；输入框 @ 只是本轮点名。</p>
+        <p class="hint">技能按白名单装配，不是工具勾选。绑定后模型会按描述自行匹配；输入框 @ 只是本轮点名。空列表表示关闭技能。</p>
 
         <div v-if="boundSkills.length" class="bound-list">
           <div v-for="skill in boundSkills" :key="skill.name" class="bound-tool bound-tool--skill">
@@ -289,7 +291,6 @@ async function save() {
             </span>
             <span class="bound-tool__name">{{ skill.name }}</span>
             <t-button
-              v-if="!skillsLocked"
               class="bound-tool__remove"
               theme="danger"
               variant="text"
@@ -301,8 +302,8 @@ async function save() {
             <span class="bound-tool__desc">{{ skill.description }}</span>
           </div>
         </div>
-        <div v-else class="bound-empty">{{ skillsLocked ? '未启用技能。' : '还没有绑定技能，可点「添加技能」。' }}</div>
-        <p v-if="!skillsLocked && !canAddSkill && boundSkills.length" class="hint">目录中的技能都已绑定。</p>
+        <div v-else class="bound-empty">还没有绑定技能，可点「添加技能」。</div>
+        <p v-if="!canAddSkill && boundSkills.length" class="hint">目录中的技能都已绑定。</p>
       </div>
 
       <label class="field">

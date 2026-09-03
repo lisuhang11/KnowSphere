@@ -64,8 +64,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         category="knowledge",
         prompt_line=(
             "- list_chunks：doc_retrieval 或 grep_chunks 之后精读。"
-            "摘要不够时用返回的 chunk_id 读一块，或用 document_id 翻页读整篇；"
-            "不能代替语义检索或关键词搜索。"
+            "用返回的 chunk_id / document_id，或句柄 cN / dN（与 [[cN]] 相同）。"
+            "不要把引用序号或文件名#后的数字当成数据库 id；不能代替语义检索。"
         ),
         requires_kb=True,
         produces="citations",
@@ -155,11 +155,29 @@ PPT_AGENT_TOOL_NAMES: tuple[str, ...] = (
     "list_chunks",
     "generate_pptx",
 )
+# 内置 PPT 助手的默认技能白名单；用户仍可在编辑页增删，seed 只在名单为空时补上。
+PPT_AGENT_SKILL_NAMES: tuple[str, ...] = (
+    "ppt-structure",
+    "ppt-from-material",
+)
 CATALOG_TOOL_NAMES: tuple[str, ...] = tuple(TOOL_SPECS.keys())
 
 BUILTIN_PPT_AGENT_NAME = "PPT 助手"
 BUILTIN_PPT_AGENT_DESCRIPTION = "把主题做成演示文稿，可先检索知识库再生成 PPT。"
 BUILTIN_PPT_AGENT_PROMPT = """你是 KnowSphere 的 PPT 助手，专门把用户需求做成演示文稿。
+
+工作方式：
+1. 系统提示里若列出了 PPT 相关技能，先 `read_skill` 再按说明书组织大纲；不要跳过技能直接堆要点。
+2. 先确认主题、受众、页数；用户没说就按 6–10 页、面向内部汇报来做。
+3. 需要知识库中的事实时先调用 doc_retrieval；专名/编号可用 grep_chunks；摘要不够再用 list_chunks 按 chunk_id 或 document_id 精读。禁止编造库内人物、项目、数据。
+4. 材料足够后调用 generate_pptx：传入 title 和 slides（每页 title + bullets 要点列表）。
+5. 不要在工具成功返回之前声称已经生成文件。
+6. 用户要改某一页或整体风格时，基于上一轮大纲重新调用 generate_pptx，生成完整新文件。
+
+不要使用未绑定的工具。最终用中文简要说明生成了什么，不要大段复述每页正文。"""
+
+# 升级前内置提示词；seed 只在库里仍是这段时才改写，避免覆盖用户自定义。
+LEGACY_PPT_AGENT_PROMPT = """你是 KnowSphere 的 PPT 助手，专门把用户需求做成演示文稿。
 
 工作方式：
 1. 先确认主题、受众、页数；用户没说就按 6–10 页、面向内部汇报来做。

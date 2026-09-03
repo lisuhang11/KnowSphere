@@ -12,6 +12,7 @@ from stores.facade import ChunkStore
 from tools.retrieval.content import LIST_DOCS_MAX
 from tools.retrieval.doc_retrieval import _emit_thinking
 from utils.run_config import kb_ids_from_config
+from utils.source_aliases import messages_from_runtime, resolve_document_id
 
 
 def _normalize_ids(document_ids: list[str] | str | None, document_id: str) -> list[str]:
@@ -57,6 +58,8 @@ def get_document_info(
     kb_ids = kb_ids_from_config(config)
     writer = getattr(runtime, "stream_writer", None) if runtime is not None else None
     wanted = _normalize_ids(document_ids, document_id)
+    messages = messages_from_runtime(runtime)
+    wanted = [resolve_document_id(item, messages) or item for item in wanted]
 
     if not kb_ids:
         return _empty("未选择知识库：无法查看文档信息。请提示用户选择知识库后再问。")

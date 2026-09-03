@@ -169,7 +169,21 @@ class RetrievalService:
         rows = rows[:k]
         if rows:
             doc_n = len({r["document_id"] for r in rows})
-            preview = format_source_preview(rows)
+            preview_rows = []
+            docs: list[str] = []
+            seen_docs: set[str] = set()
+            for i, r in enumerate(rows, 1):
+                doc = str(r.get("document_id") or "")
+                if doc and doc not in seen_docs:
+                    seen_docs.add(doc)
+                    docs.append(doc)
+                item = dict(r)
+                item["cite_id"] = f"c{i}"
+                item["chunk_id"] = _as_int(r.get("id"))
+                if doc:
+                    item["doc_alias"] = f"d{docs.index(doc) + 1}"
+                preview_rows.append(item)
+            preview = format_source_preview(preview_rows)
             self._think(
                 on_thinking,
                 f"检索完成：{len(rows)} 条片段，来自 {doc_n} 篇文档\n{preview}",
@@ -177,6 +191,14 @@ class RetrievalService:
         else:
             self._think(on_thinking, "检索完成：未命中任何片段。")
 
+        docs_out: list[str] = []
+        seen_out: set[str] = set()
+        for r in rows:
+            doc = str(r.get("document_id") or "")
+            if doc and doc not in seen_out:
+                seen_out.add(doc)
+                docs_out.append(doc)
+        doc_alias = {d: f"d{i}" for i, d in enumerate(docs_out, 1)}
         return RetrievalResult(
             query=query,
             sources=[
@@ -189,9 +211,11 @@ class RetrievalService:
                     parent_resolved=bool(r.get("parent_resolved")),
                     sub_chunk_index=r.get("sub_chunk_index"),
                     chunk_id=_as_int(r.get("id")),
+                    cite_id=f"c{i}",
+                    doc_alias=doc_alias.get(str(r.get("document_id") or ""), ""),
                     content=clip_content(r.get("content") or "", SEARCH_CONTENT_MAX),
                 )
-                for r in rows
+                for i, r in enumerate(rows, 1)
             ],
         )
 

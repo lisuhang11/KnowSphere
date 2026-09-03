@@ -20,6 +20,11 @@ from tools.retrieval.content import (
 from tools.retrieval.doc_retrieval import _emit_citation_meta, _emit_thinking
 from tools.retrieval.parent_resolve import resolve_parent_chunks
 from utils.run_config import kb_ids_from_config
+from utils.source_aliases import (
+    messages_from_runtime,
+    resolve_chunk_id,
+    resolve_document_id,
+)
 
 
 def _as_int(value: Any) -> int | None:
@@ -33,6 +38,14 @@ def _as_int(value: Any) -> int | None:
 
 def _empty(query: str, note: str) -> dict:
     return RetrievalResult(query=query, sources=[], note=note).model_dump()
+
+
+def _missing_id_hint(requested: Any, *, kind: str) -> str:
+    return (
+        f"「{requested}」不是数据库里的{('分块' if kind == 'chunk' else '文档')} id。"
+        "请使用检索结果中的 chunk_id / document_id，或句柄 cN / dN（与 [[cN]] 相同）。"
+        "不要把引用序号或文件名#后的数字当成 id。"
+    )
 
 
 def _kb_ok(kb_id: Any, kb_ids: list[int]) -> bool:
@@ -58,7 +71,7 @@ def _source_from_row(row: dict[str, Any], *, file_name: str, score: float = 1.0)
 @tool
 def list_chunks(
     document_id: str = "",
-    chunk_id: int = 0,
+    chunk_id: str | int = "",
     offset: int = 0,
     limit: int = 0,
     config: Annotated[RunnableConfig, InjectedToolArg] = None,  # noqa: B008
@@ -66,14 +79,19 @@ def list_chunks(
 ) -> dict:
     """精读知识库文档：按 chunk_id 读取一块全文，或按 document_id 分页列出分块正文。
 
-    在 doc_retrieval 命中后，若摘要不够回答，用返回的 chunk_id 或 document_id 调用本工具。
-    不要用它代替语义检索。必须提供 chunk_id 或 document_id 之一。
+    在 doc_retrieval / grep_chunks 之后，若摘要不够，用工具返回的 chunk_id、document_id，
+    或短句柄 cN / dN（与 [[cN]] 相同，例如 c2、d1）。
+    不要把 [[c2]] 里的数字 2、或文件名#后的序号当成数据库 id。
+    不能代替语义检索。必须提供 chunk_id 或 document_id 之一。
     """
     store = ChunkStore()
     kb_ids = kb_ids_from_config(config)
+    messages = messages_from_runtime(runtime)
+    resolved_chunk = resolve_chunk_id(chunk_id, messages)
+    resolved_doc = resolve_document_id(document_id, messages)
     query = (
         f"chunk_id={chunk_id}"
-        if chunk_id
+        if str(chunk_id).strip() not in ("", "0")
         else f"document_id={document_id} offset={offset}"
     )
     writer = getattr(runtime, "stream_writer", None) if runtime is not None else None
@@ -84,15 +102,22 @@ def list_chunks(
             "未选择知识库：无法精读用户文档。请提示用户选择知识库后再问。",
         )
 
-    cid = _as_int(chunk_id) or 0
-    doc_id = (document_id or "").strip()
+    cid = resolved_chunk or 0
+    doc_id = (resolved_doc or "").strip()
     if cid <= 0 and not doc_id:
-        return _empty(query, "必须提供 chunk_id 或 document_id 之一。")
+        return _empty(
+            query,
+            "必须提供 chunk_id 或 document_id 之一。"
+            "请使用检索结果里的 chunk_id / document_id，或句柄 cN / dN（与 [[cN]] 相同）。"
+            "不要把引用序号或文件名#后的数字当成数据库 id。",
+        )
 
     if cid > 0:
-        result = _read_one_chunk(store, cid, kb_ids, query)
+        result = _read_one_chunk(store, cid, kb_ids, query, requested=chunk_id)
     else:
-        result = _list_document(store, doc_id, kb_ids, offset, limit, query)
+        result = _list_document(
+            store, doc_id, kb_ids, offset, limit, query, requested=document_id
+        )
 
     sources = [Source.model_validate(s) if isinstance(s, dict) else s for s in result.get("sources") or []]
     if sources:
@@ -107,11 +132,21 @@ def list_chunks(
 
 
 def _read_one_chunk(
-    store: ChunkStore, chunk_id: int, kb_ids: list[int], query: str
+    store: ChunkStore,
+    chunk_id: int,
+    kb_ids: list[int],
+    query: str,
+    *,
+    requested: Any = None,
 ) -> dict:
     rows = store.get_chunks_by_ids([chunk_id])
     if not rows:
-        return _empty(query, f"分块不存在：chunk_id={chunk_id}")
+        hint = _missing_id_hint(requested, kind="chunk")
+        return _empty(
+            query,
+            f"分块不存在：chunk_id={requested if requested not in (None, '') else chunk_id}。"
+            f"{hint}",
+        )
     row = dict(rows[0])
     if not _kb_ok(row.get("knowledge_base_id"), kb_ids):
         return _empty(query, "该分块不在本轮选定的知识库范围内。")
@@ -139,6 +174,8 @@ def _list_document(
     offset: int,
     limit: int,
     query: str,
+    *,
+    requested: Any = None,
 ) -> dict:
     page_size = limit if limit and limit > 0 else LIST_CHUNKS_DEFAULT_LIMIT
     page_size = max(1, min(int(page_size), LIST_CHUNKS_MAX_LIMIT))
@@ -160,7 +197,11 @@ def _list_document(
         kb_id = chunks[0].get("knowledge_base_id")
     if not _kb_ok(kb_id, kb_ids):
         if total == 0 and meta is None:
-            return _empty(query, f"文档不存在：document_id={document_id}")
+            hint = _missing_id_hint(requested or document_id, kind="document")
+            return _empty(
+                query,
+                f"文档不存在：document_id={requested or document_id}。{hint}",
+            )
         return _empty(query, "该文档不在本轮选定的知识库范围内。")
     if not file_name and chunks:
         file_name = str(chunks[0].get("file_name") or "")

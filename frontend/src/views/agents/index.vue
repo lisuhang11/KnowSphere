@@ -88,8 +88,9 @@ onMounted(() => {
     <div class="section-header">
       <h2>智能体</h2>
       <p class="section-description">
-        配置智能体的名称、提示词、可用工具和技能。「智能推理」自带的工具由系统维护，不能改；其它智能体可在编辑页增删。系统工具目录见
-        <router-link to="/tools">工具</router-link>。
+        配置智能体的名称、提示词、可用工具和技能。「智能推理」的工具由系统维护，不能改；技能对所有智能体都可增删。系统工具目录见
+        <router-link to="/tools">工具</router-link>，技能目录见
+        <router-link to="/skills">技能</router-link>。
       </p>
     </div>
 

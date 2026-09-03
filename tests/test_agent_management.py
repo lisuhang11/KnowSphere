@@ -15,6 +15,7 @@ from tools.catalog import (
     BUILTIN_AGENT_ID,
     BUILTIN_PPT_AGENT_ID,
     CATALOG_TOOL_NAMES,
+    PPT_AGENT_SKILL_NAMES,
     PPT_AGENT_TOOL_NAMES,
     REASONING_TOOL_NAMES,
     ordered_tool_names,
@@ -173,7 +174,7 @@ def test_seed_builtin_agent_binds_catalog_tools(pg_available):
     assert ppt["is_builtin"]
     assert not ppt["is_default"]
     assert set(ppt["tool_names"]) == set(PPT_AGENT_TOOL_NAMES)
-    assert ppt["skill_names"] == []
+    assert ppt["skill_names"] == list(PPT_AGENT_SKILL_NAMES)
     assert "generate_pptx" in ppt["system_prompt"]
     default = store.get_default_agent()
     assert default is not None
@@ -224,7 +225,7 @@ def test_reasoning_agent_tools_are_immutable(pg_available):
     assert after["tool_names"] == before["tool_names"] == list(REASONING_TOOL_NAMES)
 
 
-def test_builtin_agents_reject_skill_binding(pg_available):
+def test_builtin_agents_can_bind_skills(pg_available):
     if not pg_available:
         pytest.skip("postgres unavailable")
 
@@ -233,11 +234,37 @@ def test_builtin_agents_reject_skill_binding(pg_available):
     store = AgentStore()
     store.init_schema()
     store.seed_builtins()
-    with pytest.raises(ValueError, match="技能"):
-        store.update_agent(BUILTIN_AGENT_ID, skill_names=["pdf-extract"])
-    with pytest.raises(ValueError, match="技能"):
-        store.update_agent(BUILTIN_PPT_AGENT_ID, skill_names=["pdf-extract"])
-    assert store.get_agent(BUILTIN_AGENT_ID)["skill_names"] == []
+    try:
+        reasoning = store.update_agent(BUILTIN_AGENT_ID, skill_names=["pdf-extract"])
+        assert reasoning["skill_names"] == ["pdf-extract"]
+        ppt = store.update_agent(BUILTIN_PPT_AGENT_ID, skill_names=["pdf-extract"])
+        assert ppt["skill_names"] == ["pdf-extract"]
+        store.seed_builtins()
+        again = store.get_agent(BUILTIN_PPT_AGENT_ID)
+        assert again is not None
+        assert again["skill_names"] == ["pdf-extract"]
+    finally:
+        store.update_agent(BUILTIN_AGENT_ID, skill_names=[])
+        store.update_agent(BUILTIN_PPT_AGENT_ID, skill_names=list(PPT_AGENT_SKILL_NAMES))
+
+
+def test_seed_refills_empty_ppt_skills(pg_available):
+    if not pg_available:
+        pytest.skip("postgres unavailable")
+
+    from stores.agent_repository import AgentStore
+
+    store = AgentStore()
+    store.init_schema()
+    store.seed_builtins()
+    try:
+        store.update_agent(BUILTIN_PPT_AGENT_ID, skill_names=[])
+        store.seed_builtins()
+        ppt = store.get_agent(BUILTIN_PPT_AGENT_ID)
+        assert ppt is not None
+        assert ppt["skill_names"] == list(PPT_AGENT_SKILL_NAMES)
+    finally:
+        store.update_agent(BUILTIN_PPT_AGENT_ID, skill_names=list(PPT_AGENT_SKILL_NAMES))
 
 
 def test_ppt_agent_tools_can_be_changed(pg_available):

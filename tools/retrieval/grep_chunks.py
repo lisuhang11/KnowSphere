@@ -56,7 +56,8 @@ def grep_chunks(
     """在知识库分块正文里按正则精确查找（忽略大小写），适合工号、错误码、产品名、接口路径。
 
     多个词用 | 写进一条正则，不要拆成多次调用。只返回匹配附近片段，不是全文；
-    命中后用 list_chunks 按 chunk_id 读一块，或按 document_id 翻页读整篇。
+    命中后用 list_chunks 传入返回的 chunk_id / cN，或 document_id / dN 读全文。
+    不要把 [[cN]] 的数字或文件名#后的序号当成数据库 id。
     不要用它代替语义检索。
     """
     kb_ids = kb_ids_from_config(config)
@@ -101,15 +102,23 @@ def grep_chunks(
     top = ranked[:GREP_RETURN_LIMIT]
 
     sources: list[Source] = []
+    docs_order: list[str] = []
+    seen_docs: set[str] = set()
     for _title, score, row, snippet in top:
+        doc = str(row.get("document_id") or "")
+        if doc and doc not in seen_docs:
+            seen_docs.add(doc)
+            docs_order.append(doc)
         sources.append(
             Source(
-                document_id=str(row.get("document_id") or ""),
+                document_id=doc,
                 file_name=str(row.get("file_name") or ""),
                 chunk_index=int(row.get("chunk_index") or 0),
                 score=float(score),
                 snippet=snippet,
                 chunk_id=int(row["id"]) if row.get("id") is not None else None,
+                cite_id=f"c{len(sources) + 1}",
+                doc_alias=f"d{docs_order.index(doc) + 1}" if doc else "",
                 content=snippet,
             )
         )
@@ -124,7 +133,7 @@ def grep_chunks(
         note = (
             f"关键词搜索「{pattern}」命中 {len(sources)} 块、{len(docs)} 篇。"
             f"{extra}"
-            "片段不是全文；需要上下文时用 list_chunks（chunk_id 或 document_id）。"
+            "片段不是全文；需要上下文时用 list_chunks（chunk_id / cN 或 document_id / dN）。"
         )
     result = RetrievalResult(query=pattern, sources=sources, note=note).model_dump()
     if sources:

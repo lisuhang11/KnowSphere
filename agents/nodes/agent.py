@@ -111,7 +111,7 @@ def _prepare_messages(
         if has_grep:
             seq.append("专名/编号/错误码用 grep_chunks")
         if has_list:
-            seq.append("摘要不够再用 list_chunks 按 chunk_id 或 document_id 精读")
+            seq.append("摘要不够再用 list_chunks，传入检索结果的 chunk_id / cN 或 document_id / dN 精读")
         if has_doc_info:
             seq.append("文件名和解析状态用 get_document_info（无正文）")
         if has_graph_tool:

@@ -18,9 +18,17 @@ def format_context_block(sources: list[dict], note: str | None = None) -> str:
     chunks: list[str] = []
     for i, item in enumerate(sources, 1):
         name = str(item.get("file_name") or "")
-        idx = item.get("chunk_index", 0)
+        cid = item.get("chunk_id") or item.get("id") or ""
+        alias = str(item.get("doc_alias") or "").strip()
         snippet = str(item.get("snippet") or "").strip()
-        header = f"[{i}] {name}#{idx}" if name else f"[{i}]"
+        parts = [f"[{item.get('cite_id') or f'c{i}'}]"]
+        if name:
+            parts.append(name)
+        if cid != "":
+            parts.append(f"chunk_id={cid}")
+        if alias:
+            parts.append(alias)
+        header = " ".join(parts)
         chunks.append(f"{header}\n{snippet}" if snippet else header)
     lines.append("\n\n".join(chunks))
     if note and note.strip():

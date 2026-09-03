@@ -47,6 +47,8 @@ def retrieve(state: KnowSphereState, config: RunnableConfig) -> dict:
                     parent_resolved=bool(s.get("parent_resolved")),
                     sub_chunk_index=s.get("sub_chunk_index"),
                     chunk_id=s.get("chunk_id"),
+                    cite_id=str(s.get("cite_id") or ""),
+                    doc_alias=str(s.get("doc_alias") or ""),
                     content=s.get("content") or "",
                 )
                 for s in sources

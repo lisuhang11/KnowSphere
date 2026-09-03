@@ -24,6 +24,8 @@ from tools.catalog import (
     BUILTIN_PPT_AGENT_ID,
     BUILTIN_PPT_AGENT_NAME,
     BUILTIN_PPT_AGENT_PROMPT,
+    LEGACY_PPT_AGENT_PROMPT,
+    PPT_AGENT_SKILL_NAMES,
     PPT_AGENT_TOOL_NAMES,
     REASONING_TOOL_NAMES,
     known_tool_names,
@@ -145,7 +147,7 @@ class AgentStore:
                 conn.execute(
                     """
                     UPDATE agents
-                    SET tool_names = %s, skill_names = '[]'::jsonb, updated_at = now()
+                    SET tool_names = %s, updated_at = now()
                     WHERE id = %s
                     """,
                     (Jsonb(reasoning_names), BUILTIN_AGENT_ID),
@@ -173,7 +175,7 @@ class AgentStore:
                 )
 
             existing_ppt = conn.execute(
-                "SELECT id, system_prompt, tool_names FROM agents WHERE id = %s",
+                "SELECT id, system_prompt, tool_names, skill_names FROM agents WHERE id = %s",
                 (BUILTIN_PPT_AGENT_ID,),
             ).fetchone()
             if existing_ppt:
@@ -184,7 +186,6 @@ class AgentStore:
                             WHEN description IN ('', %s) THEN %s
                             ELSE description
                         END,
-                        skill_names = '[]'::jsonb,
                         updated_at = now()
                     WHERE id = %s
                     """,
@@ -194,7 +195,17 @@ class AgentStore:
                         BUILTIN_PPT_AGENT_ID,
                     ),
                 )
-                if not (existing_ppt.get("system_prompt") or "").strip():
+                current_skills = ordered_skill_names(
+                    _as_str_list(existing_ppt.get("skill_names"))
+                )
+                desired_skills = self._ppt_default_skills()
+                if not current_skills or set(current_skills) == set(desired_skills):
+                    conn.execute(
+                        "UPDATE agents SET skill_names = %s, updated_at = now() WHERE id = %s",
+                        (Jsonb(desired_skills), BUILTIN_PPT_AGENT_ID),
+                    )
+                current_prompt = (existing_ppt.get("system_prompt") or "").strip()
+                if current_prompt in ("", LEGACY_PPT_AGENT_PROMPT.strip()):
                     conn.execute(
                         "UPDATE agents SET system_prompt = %s, updated_at = now() WHERE id = %s",
                         (BUILTIN_PPT_AGENT_PROMPT, BUILTIN_PPT_AGENT_ID),
@@ -213,7 +224,7 @@ class AgentStore:
                         id, name, description, system_prompt, tool_names, skill_names,
                         max_iterations, is_builtin, is_default
                     )
-                    VALUES (%s, %s, %s, %s, %s, '[]'::jsonb, %s, TRUE, FALSE)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, FALSE)
                     """,
                     (
                         BUILTIN_PPT_AGENT_ID,
@@ -221,6 +232,7 @@ class AgentStore:
                         BUILTIN_PPT_AGENT_DESCRIPTION,
                         BUILTIN_PPT_AGENT_PROMPT,
                         Jsonb(ppt_names),
+                        Jsonb(self._ppt_default_skills()),
                         settings.agent_max_steps,
                     ),
                 )
@@ -319,6 +331,10 @@ class AgentStore:
             raise ValueError("请至少选择一个工具")
         return names
 
+    def _ppt_default_skills(self) -> list[str]:
+        known = known_skill_names()
+        return ordered_skill_names(n for n in PPT_AGENT_SKILL_NAMES if n in known)
+
     def _validate_skill_names(self, skill_names: list[str] | None) -> list[str]:
         raw = skill_names or []
         unknown = [
@@ -355,7 +371,7 @@ class AgentStore:
             names = list(REASONING_TOOL_NAMES)
         else:
             names = self._validate_tool_names(tool_names)
-        skills = [] if is_builtin else self._validate_skill_names(skill_names)
+        skills = self._validate_skill_names(skill_names)
         iterations = self._clamp_iterations(max_iterations)
         with self._conn() as conn, conn.transaction():
             if is_default:
@@ -424,8 +440,6 @@ class AgentStore:
                 sets.append("tool_names = %s")
                 args.append(Jsonb(names))
         if skill_names is not None:
-            if rec["is_builtin"]:
-                raise ValueError("内置智能体不可绑定技能")
             skills = self._validate_skill_names(skill_names)
             sets.append("skill_names = %s")
             args.append(Jsonb(skills))

@@ -87,7 +87,9 @@ def test_historical_retrieval_is_redacted_current_turn_kept():
     view = build_memory_view(messages, keep_turns=8, redact_old_retrieval=True)
     old = [m for m in view.window_messages if isinstance(m, ToolMessage) and m.tool_call_id == "c-张三是谁"]
     cur = [m for m in view.window_messages if isinstance(m, ToolMessage) and m.tool_call_id == "c-now"]
-    assert old and old[0].content == COMPACT_RETRIEVAL
+    assert old and str(old[0].content).startswith(COMPACT_RETRIEVAL)
+    assert "机密正文" not in str(old[0].content)
+    assert "document_id=d1" in str(old[0].content)
     assert cur and "本轮机密" in str(cur[0].content)
 
 
@@ -110,7 +112,9 @@ def test_historical_list_chunks_is_redacted():
     ]
     view = build_memory_view(messages, keep_turns=8, redact_old_retrieval=True)
     old = [m for m in view.window_messages if isinstance(m, ToolMessage) and m.tool_call_id == "c-old"]
-    assert old and old[0].content == COMPACT_RETRIEVAL
+    assert old and str(old[0].content).startswith(COMPACT_RETRIEVAL)
+    assert "北门8:00" not in str(old[0].content)
+    assert "document_id=d1" in str(old[0].content)
 
 
 def test_working_memory_keeps_write_plan():
@@ -256,5 +260,5 @@ def test_llm_view_does_not_mutate_checkpoint_tool_content():
     ]
     view = memory_view_from_state({"messages": messages})
     compacted = [m for m in view.window_messages if isinstance(m, ToolMessage)]
-    assert compacted and compacted[0].content == COMPACT_RETRIEVAL
+    assert compacted and str(compacted[0].content).startswith(COMPACT_RETRIEVAL)
     assert messages[1].content == original

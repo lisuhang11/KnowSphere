@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from skills.catalog import skills_to_public
+from skills.catalog import (
+    get_skill,
+    list_skill_files,
+    read_skill_file_for_api,
+    skill_to_detail,
+    skills_to_public,
+)
 from stores.agent_repository import AgentStore
 from tools.catalog import tools_to_public
 
@@ -53,6 +59,32 @@ def list_tools() -> list[dict[str, Any]]:
 def list_skills() -> list[dict[str, Any]]:
     """仓库内技能目录（name + description），供智能体勾选。"""
     return skills_to_public()
+
+
+@router.get("/skills/{skill_name}/files/content")
+def get_skill_file(skill_name: str, path: str = Query(..., min_length=1)) -> dict[str, Any]:
+    """读取技能包内文件，供前端预览（对齐 WeKnora catalog files/content）。"""
+    if get_skill(skill_name) is None:
+        raise HTTPException(status_code=404, detail="技能不存在")
+    rec = read_skill_file_for_api(skill_name, path)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="文件不存在或路径无效")
+    return rec
+
+
+@router.get("/skills/{skill_name}/files")
+def list_skill_file_entries(skill_name: str) -> dict[str, Any]:
+    if get_skill(skill_name) is None:
+        raise HTTPException(status_code=404, detail="技能不存在")
+    return {"files": [{"path": item} for item in list_skill_files(skill_name)]}
+
+
+@router.get("/skills/{skill_name}")
+def get_skill_detail(skill_name: str) -> dict[str, Any]:
+    rec = skill_to_detail(skill_name)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="技能不存在")
+    return rec
 
 
 @router.get("/agents")

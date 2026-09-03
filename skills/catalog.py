@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import mimetypes
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,9 +11,14 @@ from typing import Any
 
 from skills.paths import (
     CODE_FILENAMES,
+    IMAGE_EXTS,
     MAX_DESCRIPTION_LEN,
+    MAX_FILE_BYTES,
+    MAX_READ_CHARS,
     SKILL_MD,
     is_valid_skill_name,
+    list_skill_files,
+    resolve_skill_file,
     skills_root,
 )
 
@@ -126,12 +133,20 @@ def known_skill_names(*, root: Path | None = None) -> frozenset[str]:
 
 
 def ordered_skill_names(names: Iterable[str] | None, *, root: Path | None = None) -> list[str]:
-    """按目录扫描顺序去重；未知 name 丢弃。"""
+    """去重并丢掉未知 name。传入名单时保持原有顺序；未传则按目录扫描顺序。"""
     catalog = [s.name for s in list_skills(root=root)]
     if names is None:
         return list(catalog)
-    wanted = {str(n).strip() for n in names if str(n).strip()}
-    return [n for n in catalog if n in wanted]
+    known = set(catalog)
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in names:
+        name = str(raw).strip()
+        if not name or name in seen or name not in known:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
 
 
 def skill_metadata_for_names(
@@ -150,7 +165,75 @@ def skills_to_public(
         if names is None
         else skill_metadata_for_names(names, root=root)
     )
-    return [{"name": s.name, "description": s.description} for s in records]
+    return [
+        {
+            "name": s.name,
+            "description": s.description,
+            "file_count": len(list_skill_files(s.name, root=root)),
+        }
+        for s in records
+    ]
+
+
+def skill_to_detail(name: str, *, root: Path | None = None) -> dict[str, Any] | None:
+    rec = get_skill(name, root=root)
+    if rec is None:
+        return None
+    files = list_skill_files(name, root=root)
+    return {
+        "name": rec.name,
+        "description": rec.description,
+        "files": files,
+        "file_count": len(files),
+    }
+
+
+def read_skill_file_for_api(
+    name: str, rel: str, *, root: Path | None = None
+) -> dict[str, Any] | None:
+    """给前端文件预览：UTF-8 文本、图片 base64，或标记为 binary。"""
+    path = resolve_skill_file(name, rel, root=root)
+    if path is None:
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    truncated = False
+    if len(data) > MAX_FILE_BYTES:
+        data = data[:MAX_FILE_BYTES]
+        truncated = True
+    public_path = (rel or "").replace("\\", "/").strip()
+    ext = path.suffix.lower()
+    if ext in IMAGE_EXTS:
+        media = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return {
+            "path": public_path,
+            "encoding": "base64",
+            "media_type": media,
+            "content": base64.b64encode(data).decode("ascii"),
+            "truncated": truncated,
+        }
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return {
+            "path": public_path,
+            "encoding": "binary",
+            "media_type": None,
+            "content": None,
+            "truncated": False,
+        }
+    if len(text) > MAX_READ_CHARS:
+        text = text[:MAX_READ_CHARS]
+        truncated = True
+    return {
+        "path": public_path,
+        "encoding": "utf-8",
+        "media_type": "text/plain",
+        "content": text,
+        "truncated": truncated,
+    }
 
 
 def get_skill(name: str, *, root: Path | None = None) -> SkillInfo | None:

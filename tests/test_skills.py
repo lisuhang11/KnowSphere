@@ -25,10 +25,15 @@ from tools.skills.read_skill import read_skill
 def test_builtin_pdf_extract_skill_is_catalogued():
     names = {s.name for s in list_skills()}
     assert "pdf-extract" in names
+    assert "ppt-structure" in names
+    assert "ppt-from-material" in names
     public = skills_to_public()
     rec = next(s for s in public if s["name"] == "pdf-extract")
     assert "PDF" in rec["description"] or "pdf" in rec["description"].lower()
+    assert rec["file_count"] >= 2
     assert "scripts/extract_text.py" in list_skill_files("pdf-extract")
+    ppt = next(s for s in public if s["name"] == "ppt-structure")
+    assert "PPT" in ppt["description"] or "ppt" in ppt["description"].lower()
 
 
 def test_frontmatter_requires_name_match_directory(tmp_path: Path, monkeypatch):
@@ -183,3 +188,40 @@ def test_execute_skill_script_uses_runner():
 def test_format_skills_prompt_empty():
     assert format_skills_prompt([]) == ""
     assert format_skills_prompt(None) == ""
+
+
+def test_skill_detail_and_file_preview_api():
+    from fastapi import HTTPException
+
+    from api.agents import get_skill_detail, get_skill_file, list_skill_file_entries
+    from skills.catalog import read_skill_file_for_api, skill_to_detail
+
+    detail = skill_to_detail("pdf-extract")
+    assert detail is not None
+    assert detail["name"] == "pdf-extract"
+    assert "SKILL.md" in detail["files"]
+
+    listing = list_skill_file_entries("pdf-extract")
+    paths = {item["path"] for item in listing["files"]}
+    assert "SKILL.md" in paths
+    assert "scripts/extract_text.py" in paths
+
+    http = get_skill_detail("pdf-extract")
+    assert http["file_count"] == detail["file_count"]
+
+    md = get_skill_file("pdf-extract", "SKILL.md")
+    assert md["encoding"] == "utf-8"
+    assert "pdf-extract" in (md["content"] or "")
+    assert read_skill_file_for_api("pdf-extract", "../catalog.py") is None
+
+    try:
+        get_skill_detail("no-such-skill")
+        raise AssertionError("expected 404")
+    except HTTPException as exc:
+        assert exc.status_code == 404
+
+    try:
+        get_skill_file("pdf-extract", "../catalog.py")
+        raise AssertionError("expected 404")
+    except HTTPException as exc:
+        assert exc.status_code == 404

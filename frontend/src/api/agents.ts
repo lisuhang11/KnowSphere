@@ -1,4 +1,8 @@
 import request from './request'
+import type { SkillSpec } from './skills'
+
+export type { SkillSpec } from './skills'
+export { listSkills } from './skills'
 
 export type ToolCategory = 'planning' | 'knowledge' | 'web' | 'creation'
 
@@ -12,11 +16,6 @@ export interface ToolSpec {
   requires_web: boolean
   requires_graph?: boolean
   produces?: 'text' | 'citations' | 'file' | string
-}
-
-export interface SkillSpec {
-  name: string
-  description: string
 }
 
 export interface AgentInfo {
@@ -52,11 +51,6 @@ export const BUILTIN_AGENT_ID = 'agent-smart-reasoning'
 
 export async function listTools(): Promise<ToolSpec[]> {
   const resp = await request.get<ToolSpec[]>('/tools')
-  return resp.data
-}
-
-export async function listSkills(): Promise<SkillSpec[]> {
-  const resp = await request.get<SkillSpec[]>('/skills')
   return resp.data
 }
 

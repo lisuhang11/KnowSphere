@@ -150,3 +150,58 @@ def test_list_chunks_offset_out_of_range():
         )
     assert out["sources"] == []
     assert "超出范围" in (out.get("note") or "")
+
+
+class _Runtime:
+    def __init__(self, messages):
+        self.state = {"messages": messages}
+        self.stream_writer = None
+
+
+def test_list_chunks_resolves_citation_handle():
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    fake = _FakeStore()
+    messages = [
+        HumanMessage(content="园区几点开门"),
+        ToolMessage(
+            content='{"sources":[{"chunk_id":11,"document_id":"doc-1","file_name":"园区.md"}]}',
+            name="doc_retrieval",
+            tool_call_id="t1",
+        ),
+    ]
+    with patch("tools.retrieval.list_chunks.ChunkStore", return_value=fake):
+        out = list_chunks.func(
+            document_id="",
+            chunk_id=1,
+            offset=0,
+            limit=0,
+            config={"configurable": {"kb_ids": [1]}},
+            runtime=_Runtime(messages),
+        )
+    assert out["sources"][0]["chunk_id"] == 11
+    assert "南门 9:00" in out["sources"][0]["content"]
+
+
+def test_list_chunks_resolves_document_alias():
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    fake = _FakeStore()
+    messages = [
+        HumanMessage(content="再详细一点"),
+        ToolMessage(
+            content='{"sources":[{"chunk_id":11,"document_id":"doc-1","file_name":"园区.md"}]}',
+            name="doc_retrieval",
+            tool_call_id="t1",
+        ),
+    ]
+    with patch("tools.retrieval.list_chunks.ChunkStore", return_value=fake):
+        out = list_chunks.func(
+            document_id=1,
+            chunk_id="",
+            offset=0,
+            limit=0,
+            config={"configurable": {"kb_ids": [1]}},
+            runtime=_Runtime(messages),
+        )
+    assert out["sources"][0]["document_id"] == "doc-1"
