@@ -36,7 +36,24 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         display_name="知识库检索",
         description="在用户知识库中混合检索文档片段（选了库才生效）。",
         category="knowledge",
-        prompt_line="- doc_retrieval：在用户知识库中检索文档片段。库内事实必须先走它。",
+        prompt_line=(
+            "- doc_retrieval：在用户知识库中语义+词法检索。"
+            "返回 chunk_id、document_id 和正文。"
+            "库内事实必须先走它；没命中或问法不对可换检索词再搜。"
+        ),
+        requires_kb=True,
+        produces="citations",
+    ),
+    "list_chunks": ToolSpec(
+        name="list_chunks",
+        display_name="精读文档",
+        description="按 chunk_id 读一块全文，或按 document_id 分页列出分块正文。",
+        category="knowledge",
+        prompt_line=(
+            "- list_chunks：doc_retrieval 之后精读。"
+            "摘要不够时用返回的 chunk_id 读一块，或用 document_id 翻页读整篇；"
+            "不能代替语义检索。"
+        ),
         requires_kb=True,
         produces="citations",
     ),
@@ -99,6 +116,7 @@ BUILTIN_PPT_AGENT_ID = "agent-ppt"
 REASONING_TOOL_NAMES: tuple[str, ...] = (
     "write_plan",
     "doc_retrieval",
+    "list_chunks",
     "query_knowledge_graph",
     "web_search",
     "web_fetch",
@@ -106,6 +124,7 @@ REASONING_TOOL_NAMES: tuple[str, ...] = (
 PPT_AGENT_TOOL_NAMES: tuple[str, ...] = (
     "write_plan",
     "doc_retrieval",
+    "list_chunks",
     "generate_pptx",
 )
 CATALOG_TOOL_NAMES: tuple[str, ...] = tuple(TOOL_SPECS.keys())
@@ -116,7 +135,7 @@ BUILTIN_PPT_AGENT_PROMPT = """你是 KnowSphere 的 PPT 助手，专门把用户
 
 工作方式：
 1. 先确认主题、受众、页数；用户没说就按 6–10 页、面向内部汇报来做。
-2. 需要知识库中的事实时先调用 doc_retrieval，禁止编造库内人物、项目、数据。
+2. 需要知识库中的事实时先调用 doc_retrieval；摘要不够再用 list_chunks 按 chunk_id 或 document_id 精读。禁止编造库内人物、项目、数据。
 3. 材料足够后调用 generate_pptx：传入 title 和 slides（每页 title + bullets 要点列表）。
 4. 不要在工具成功返回之前声称已经生成文件。
 5. 用户要改某一页或整体风格时，基于上一轮大纲重新调用 generate_pptx，生成完整新文件。

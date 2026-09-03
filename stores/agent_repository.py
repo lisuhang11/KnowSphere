@@ -166,7 +166,7 @@ class AgentStore:
                 )
 
             existing_ppt = conn.execute(
-                "SELECT id, system_prompt FROM agents WHERE id = %s",
+                "SELECT id, system_prompt, tool_names FROM agents WHERE id = %s",
                 (BUILTIN_PPT_AGENT_ID,),
             ).fetchone()
             if existing_ppt:
@@ -190,6 +190,13 @@ class AgentStore:
                     conn.execute(
                         "UPDATE agents SET system_prompt = %s, updated_at = now() WHERE id = %s",
                         (BUILTIN_PPT_AGENT_PROMPT, BUILTIN_PPT_AGENT_ID),
+                    )
+                current_ppt = ordered_tool_names(_as_str_list(existing_ppt.get("tool_names")))
+                legacy_ppt = ["write_plan", "doc_retrieval", "generate_pptx"]
+                if current_ppt in (legacy_ppt, ppt_names, []):
+                    conn.execute(
+                        "UPDATE agents SET tool_names = %s, updated_at = now() WHERE id = %s",
+                        (Jsonb(ppt_names), BUILTIN_PPT_AGENT_ID),
                     )
             else:
                 conn.execute(

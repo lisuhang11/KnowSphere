@@ -8,8 +8,6 @@ langgraph/
 data/uploads/*
 !data/uploads/.gitkeep
 
-# Local reference repo — do not push
-WeKnora/
 
 # Build artifacts & runtime caches
 frontend/dist/

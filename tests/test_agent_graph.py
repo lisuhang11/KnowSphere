@@ -128,6 +128,32 @@ def test_collect_sources_merges_tool_messages():
     assert out["last_sources"][0]["file_name"] == "a.md"
 
 
+def test_collect_sources_includes_list_chunks():
+    import json
+
+    payload = {
+        "sources": [
+            {
+                "document_id": "d1",
+                "file_name": "a.md",
+                "chunk_index": 1,
+                "score": 1.0,
+                "snippet": "全文",
+                "chunk_id": 9,
+                "content": "全文更长",
+            }
+        ]
+    }
+    state: KnowSphereState = {
+        "messages": [
+            HumanMessage(content="q"),
+            ToolMessage(content=json.dumps(payload), name="list_chunks", tool_call_id="2"),
+        ]
+    }
+    out = collect_sources(state)
+    assert out["last_sources"][0]["chunk_id"] == 9
+
+
 def test_collect_sources_ignores_previous_turn_retrieval():
     import json
 

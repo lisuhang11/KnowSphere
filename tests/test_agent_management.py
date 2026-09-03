@@ -51,9 +51,11 @@ def test_system_prompt_lists_bound_tools_only():
     assert "generate_pptx" not in prompt
     full = build_system_prompt()
     assert "doc_retrieval" in full
+    assert "list_chunks" in full
     assert "write_plan" in full
     assert "query_knowledge_graph" in full
     assert "知识库检索之后" in full
+    assert "换更具体的检索词" in full
     ppt = build_system_prompt(tool_names=["generate_pptx", "doc_retrieval"])
     assert "generate_pptx" in ppt
     assert "不要在工具成功返回前声称已经生成文件" in ppt
@@ -235,5 +237,27 @@ def test_ppt_agent_tools_can_be_changed(pg_available):
         )
         assert "generate_pptx" in restored["tool_names"]
         assert "doc_retrieval" in restored["tool_names"]
+    finally:
+        store.update_agent(BUILTIN_PPT_AGENT_ID, tool_names=list(PPT_AGENT_TOOL_NAMES))
+
+
+def test_seed_migrates_legacy_ppt_tools(pg_available):
+    if not pg_available:
+        pytest.skip("postgres unavailable")
+
+    from stores.agent_repository import AgentStore
+
+    store = AgentStore()
+    store.init_schema()
+    store.seed_builtins()
+    try:
+        store.update_agent(
+            BUILTIN_PPT_AGENT_ID,
+            tool_names=["write_plan", "doc_retrieval", "generate_pptx"],
+        )
+        store.seed_builtins()
+        after = store.get_agent(BUILTIN_PPT_AGENT_ID)
+        assert after is not None
+        assert after["tool_names"] == list(PPT_AGENT_TOOL_NAMES)
     finally:
         store.update_agent(BUILTIN_PPT_AGENT_ID, tool_names=list(PPT_AGENT_TOOL_NAMES))

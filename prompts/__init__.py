@@ -26,8 +26,9 @@ def build_system_prompt(
     ]
     tool_block = "\n".join(tool_lines) if tool_lines else "- （本智能体未绑定工具，直接根据对话作答。）"
     has_doc = "doc_retrieval" in names
+    has_list = "list_chunks" in names
     has_graph = "query_knowledge_graph" in names
-    has_kb = has_doc or has_graph
+    has_kb = has_doc or has_graph or has_list
     has_web = "web_search" in names or "web_fetch" in names
     has_plan = "write_plan" in names
 
@@ -38,6 +39,16 @@ def build_system_prompt(
         )
         if has_doc:
             rules.append("库内事实必须先调用 doc_retrieval。")
+        if has_list:
+            rules.append(
+                "doc_retrieval 返回的正文仍不够时，用 list_chunks："
+                "chunk_id 读一块，或 document_id 翻页读整篇。"
+            )
+        if has_doc:
+            rules.append(
+                "检索没命中、或命中不相关时，可换更具体的检索词再调用 doc_retrieval；"
+                "不要用同一检索词空转。"
+            )
         if has_graph:
             rules.append(
                 "关系、归属、组织架构类问题，可在知识库检索之后再调用 "
@@ -74,7 +85,10 @@ def build_system_prompt(
             "需要产出演示文稿时调用 generate_pptx，传入 title 和每页 slides；"
             "不要在工具成功返回前声称已经生成文件。"
         )
-    rules.append("工具结果足够后直接给出最终中文回答，不要无意义地重复调用同一工具。")
+    rules.append(
+        "工具结果足够后直接给出最终中文回答。"
+        "不要用同一参数重复调用同一工具；换检索词再搜、或检索后精读，不算重复。"
+    )
     rules.append("检索不到时明确说明未找到，禁止编造来源。")
     rules.append("结构清晰、直接，不要大段复述检索原文。")
 

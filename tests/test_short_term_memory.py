@@ -91,6 +91,28 @@ def test_historical_retrieval_is_redacted_current_turn_kept():
     assert cur and "本轮机密" in str(cur[0].content)
 
 
+def test_historical_list_chunks_is_redacted():
+    messages = [
+        HumanMessage(content="园区几点开门", id="h1"),
+        AIMessage(
+            content="",
+            id="ai-1",
+            tool_calls=[{"name": "list_chunks", "id": "c-old", "args": {"chunk_id": 11}}],
+        ),
+        ToolMessage(
+            content='{"sources":[{"document_id":"d1","file_name":"园区.md","content":"北门8:00"}]}',
+            name="list_chunks",
+            tool_call_id="c-old",
+            id="t-old",
+        ),
+        AIMessage(content="北门八点", id="a1"),
+        HumanMessage(content="南门呢", id="h-now"),
+    ]
+    view = build_memory_view(messages, keep_turns=8, redact_old_retrieval=True)
+    old = [m for m in view.window_messages if isinstance(m, ToolMessage) and m.tool_call_id == "c-old"]
+    assert old and old[0].content == COMPACT_RETRIEVAL
+
+
 def test_working_memory_keeps_write_plan():
     messages = [
         HumanMessage(content="做个方案"),

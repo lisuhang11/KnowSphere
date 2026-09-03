@@ -22,6 +22,7 @@ from utils.tokens import estimate_tokens
 RETRIEVAL_TOOL_NAMES = frozenset(
     {
         "doc_retrieval",
+        "list_chunks",
         "query_knowledge_graph",
         "web_search",
         "web_fetch",

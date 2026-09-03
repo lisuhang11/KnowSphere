@@ -251,7 +251,8 @@ class ChunkRepository:
         with psycopg.connect(self.dsn) as conn:
             rows = conn.execute(
                 """
-                SELECT id, document_id, chunk_index, content, metadata, chunk_type, parent_chunk_id
+                SELECT id, document_id, file_name, chunk_index, content, metadata,
+                       chunk_type, parent_chunk_id, knowledge_base_id
                 FROM chunks
                 WHERE id = ANY(%s) AND owner = %s
                 """,
@@ -261,15 +262,16 @@ class ChunkRepository:
             {
                 "id": r[0],
                 "document_id": r[1],
-                "chunk_index": r[2],
-                "content": r[3],
+                "file_name": r[2] or (meta.get("source") if isinstance(meta, dict) else None),
+                "chunk_index": r[3],
+                "content": r[4],
                 "metadata": meta,
-                "chunk_type": r[5],
-                "parent_chunk_id": r[6],
-                "file_name": meta.get("source") if isinstance(meta, dict) else None,
+                "chunk_type": r[6],
+                "parent_chunk_id": r[7],
+                "knowledge_base_id": r[8],
             }
             for r in rows
-            for meta in [load_jsonb(r[4])]
+            for meta in [load_jsonb(r[5])]
         ]
 
     def list_text_chunk_ids(
@@ -461,16 +463,22 @@ class ChunkRepository:
         page: int = 1,
         page_size: int = 20,
         include_parent_text: bool = False,
+        offset: int | None = None,
     ) -> dict[str, Any]:
         """分页返回某文档的分块（按 chunk_index 升序）。
 
         include_parent_text=False 时只返回可检索子块（chunk_type=text），
         父子分块模式下默认隐藏 parent_text 父块。
+        offset 若给出则按跳过条数分页（Agent 精读）；否则用 page。
         """
         owner = owner or get_current_owner() or settings.default_owner
-        page = max(1, page)
         page_size = max(1, min(page_size, 100))
-        offset = (page - 1) * page_size
+        if offset is not None:
+            skip = max(0, int(offset))
+            page = skip // page_size + 1
+        else:
+            page = max(1, page)
+            skip = (page - 1) * page_size
         type_cond = "" if include_parent_text else " AND chunk_type = 'text'"
         with psycopg.connect(self.dsn) as conn:
             total = conn.execute(
@@ -479,18 +487,20 @@ class ChunkRepository:
             ).fetchone()[0]
             rows = conn.execute(
                 f"""
-                SELECT id, chunk_index, content, metadata, chunk_type, parent_chunk_id, created_at
+                SELECT id, chunk_index, content, metadata, chunk_type, parent_chunk_id,
+                       created_at, knowledge_base_id, file_name
                 FROM chunks
                 WHERE document_id = %s AND owner = %s{type_cond}
                 ORDER BY chunk_index ASC
                 LIMIT %s OFFSET %s
                 """,
-                (document_id, owner, page_size, offset),
+                (document_id, owner, page_size, skip),
             ).fetchall()
         return {
             "total": total,
             "page": page,
             "page_size": page_size,
+            "offset": skip,
             "chunks": [
                 {
                     "id": r[0],
@@ -499,9 +509,11 @@ class ChunkRepository:
                     "metadata": r[3],
                     "chunk_type": r[4],
                     "parent_chunk_id": r[5],
-                    "char_count": len(r[2]),
-                    "token_count": estimate_tokens(r[2]),
+                    "char_count": len(r[2] or ""),
+                    "token_count": estimate_tokens(r[2] or ""),
                     "created_at": r[6].isoformat() if r[6] else None,
+                    "knowledge_base_id": r[7],
+                    "file_name": r[8],
                 }
                 for r in rows
             ],

@@ -9,6 +9,7 @@ from tools.catalog import (
 from tools.creation.generate_pptx import generate_pptx
 from tools.planning.write_plan import write_plan
 from tools.retrieval.doc_retrieval import doc_retrieval
+from tools.retrieval.list_chunks import list_chunks
 from tools.retrieval.query_knowledge_graph import query_knowledge_graph
 from tools.web.fetch import web_fetch
 from tools.web.search import web_search
@@ -16,6 +17,7 @@ from tools.web.search import web_search
 _TOOLS_BY_NAME = {
     write_plan.name: write_plan,
     doc_retrieval.name: doc_retrieval,
+    list_chunks.name: list_chunks,
     query_knowledge_graph.name: query_knowledge_graph,
     web_search.name: web_search,
     web_fetch.name: web_fetch,

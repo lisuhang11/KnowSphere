@@ -195,6 +195,7 @@ class DocumentService:
         page: int = 1,
         page_size: int = 20,
         include_parent_text: bool = False,
+        offset: int | None = None,
     ) -> dict[str, Any]:
         return self.store.list_chunks(
             document_id,
@@ -202,6 +203,7 @@ class DocumentService:
             page=page,
             page_size=page_size,
             include_parent_text=include_parent_text,
+            offset=offset,
         )
 
     def get_chunk(self, chunk_id: int, owner: str | None = None) -> dict[str, Any]:

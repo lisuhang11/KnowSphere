@@ -17,6 +17,7 @@ from schemas import RetrievalResult, Source
 from schemas.graph import NameSpace
 from stores.facade import ChunkStore
 from stores.neo4j_repository import get_graph_repository
+from tools.retrieval.content import SEARCH_CONTENT_MAX, clip_content, snippet_of
 from utils.run_config import chat_model_kwargs_from_config, kb_ids_from_config
 
 logger = logging.getLogger(__name__)
@@ -128,14 +129,16 @@ def query_knowledge_graph(
     chunks = store.get_chunks_by_ids(all_chunk_ids[:30])
     sources: list[Source] = []
     for ch in chunks:
-        snippet = (ch.get("content") or "")[:300]
+        content = clip_content(ch.get("content") or "", SEARCH_CONTENT_MAX)
         sources.append(
             Source(
                 document_id=str(ch.get("document_id") or ""),
                 file_name=str(ch.get("file_name") or (ch.get("metadata") or {}).get("source") or ""),
                 chunk_index=int(ch.get("chunk_index") or 0),
                 score=1.0,
-                snippet=snippet,
+                snippet=snippet_of(content),
+                chunk_id=int(ch["id"]) if ch.get("id") is not None else None,
+                content=content,
             )
         )
 

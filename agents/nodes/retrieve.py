@@ -44,6 +44,10 @@ def retrieve(state: KnowSphereState, config: RunnableConfig) -> dict:
                     chunk_index=s["chunk_index"],
                     score=s.get("score", 0.0),
                     snippet=s.get("snippet", ""),
+                    parent_resolved=bool(s.get("parent_resolved")),
+                    sub_chunk_index=s.get("sub_chunk_index"),
+                    chunk_id=s.get("chunk_id"),
+                    content=s.get("content") or "",
                 )
                 for s in sources
             ]

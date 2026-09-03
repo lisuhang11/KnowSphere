@@ -79,6 +79,7 @@ def _prepare_messages(
     has_web_tool = "web_search" in bound or "web_fetch" in bound
     has_graph_tool = "query_knowledge_graph" in bound
     has_doc = "doc_retrieval" in bound
+    has_list = "list_chunks" in bound
     parts = [system_prompt]
     web_label = "已开启" if web_on and has_web_tool else "未开启"
     if graph_on and has_graph_tool:
@@ -94,6 +95,8 @@ def _prepare_messages(
         seq: list[str] = []
         if has_doc:
             seq.append("库内事实必须先调用 doc_retrieval")
+        if has_list:
+            seq.append("摘要不够再用 list_chunks 按 chunk_id 或 document_id 精读")
         if has_graph_tool:
             seq.append("关系型问题可在检索之后再 query_knowledge_graph（可选，不能替代语义检索）")
         if has_web_tool:
@@ -120,7 +123,8 @@ def _prepare_messages(
     if rewrite:
         parts.append(
             f"\n\n【本轮改写检索词】{rewrite}\n"
-            "调用 doc_retrieval / web_search 时优先使用该检索词；多跳可按中间结果改写。"
+            "调用 doc_retrieval / web_search 时优先使用该检索词；"
+            "多跳可按中间结果改写后再搜；正文不够用 list_chunks 精读。"
         )
     memory_block = (memory_suffix or "").strip()
     if memory_block:

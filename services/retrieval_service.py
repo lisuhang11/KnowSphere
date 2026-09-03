@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from schemas import RetrievalResult, Source
 from stores.facade import ChunkStore
 from stores.rrf import rrf_fuse
+from tools.retrieval.content import SEARCH_CONTENT_MAX, clip_content, snippet_of
 from tools.retrieval.parent_resolve import resolve_parent_chunks
 from tools.retrieval.query_expansion import expand_queries_local
 from tools.retrieval.thinking_format import (
@@ -28,6 +29,15 @@ from tools.retrieval.thinking_format import (
 from utils.run_config import chat_model_kwargs_from_config
 
 logger = logging.getLogger(__name__)
+
+
+def _as_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 _MQ_LLM_KWARGS: dict[str, Any] = {
     "temperature": 0,
@@ -175,9 +185,11 @@ class RetrievalService:
                     file_name=r["file_name"],
                     chunk_index=r["chunk_index"],
                     score=r["score"],
-                    snippet=r["snippet"],
+                    snippet=r.get("snippet") or snippet_of(r.get("content") or ""),
                     parent_resolved=bool(r.get("parent_resolved")),
                     sub_chunk_index=r.get("sub_chunk_index"),
+                    chunk_id=_as_int(r.get("id")),
+                    content=clip_content(r.get("content") or "", SEARCH_CONTENT_MAX),
                 )
                 for r in rows
             ],
