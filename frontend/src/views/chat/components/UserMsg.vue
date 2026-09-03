@@ -2,18 +2,20 @@
 import { computed, ref } from 'vue'
 import PicturePreview from '@/components/PicturePreview.vue'
 import { useChatAttachmentPreviewDrawer } from '@/composables/useChatAttachmentPreviewDrawer'
-import type { ChatAttachmentMeta } from '@/composables/useSessionChat'
+import type { ChatAttachmentMeta, ChatSkillMeta } from '@/composables/useSessionChat'
 import {
   isPreviewableAttachment,
   resolveAttachmentFileType,
 } from '@/utils/attachmentPreview'
 import { formatFileSize, getFileExt } from '@/utils/fileFormat'
+import { SKILL_ICON } from '@/utils/skillMention'
 
 const props = defineProps<{
   sessionId?: string | null
   content?: string
   images?: Array<{ url: string }>
   attachments?: ChatAttachmentMeta[]
+  skills?: ChatSkillMeta[]
 }>()
 
 const attachmentDrawer = useChatAttachmentPreviewDrawer()
@@ -23,6 +25,7 @@ const previewUrl = ref('')
 
 const hasImages = computed(() => Boolean(props.images?.length))
 const hasAttachments = computed(() => Boolean(props.attachments?.length))
+const hasSkills = computed(() => Boolean(props.skills?.length))
 const showText = computed(() => {
   const text = (props.content || '').trim()
   if (!text) return false
@@ -61,6 +64,14 @@ function attachmentCardClass(att: ChatAttachmentMeta) {
 
 <template>
   <div class="user-msg-container">
+    <div v-if="hasSkills" class="user-skills">
+      <span v-for="skill in skills" :key="skill.name" class="user-skill-tag">
+        <span class="user-skill-tag__icon">
+          <t-icon :name="SKILL_ICON" />
+        </span>
+        <span class="user-skill-tag__name">{{ skill.name }}</span>
+      </span>
+    </div>
     <div v-if="hasImages" class="user-images">
       <img
         v-for="(img, i) in images"
@@ -112,6 +123,46 @@ function attachmentCardClass(att: ChatAttachmentMeta) {
   align-items: flex-end;
   gap: 6px;
   width: 100%;
+}
+
+.user-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  max-width: 100%;
+}
+
+.user-skill-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  max-width: 200px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--td-component-stroke);
+  background: var(--td-bg-color-secondarycontainer);
+  box-sizing: border-box;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  color: var(--td-text-color-primary);
+}
+
+.user-skill-tag__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #7c3aed;
+  font-size: 14px;
+}
+
+.user-skill-tag__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .user-msg {

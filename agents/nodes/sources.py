@@ -27,6 +27,7 @@ def collect_sources(state: KnowSphereState) -> dict[str, list[dict]]:
     for msg in messages[start:end]:
         if not isinstance(msg, ToolMessage) or msg.name not in (
             "doc_retrieval",
+            "grep_chunks",
             "list_chunks",
             "query_knowledge_graph",
             "web_search",

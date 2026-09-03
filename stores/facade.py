@@ -59,6 +59,9 @@ class ChunkStore():
     def list_chunks(self, *args, **kwargs):
         return self._chunks.list_chunks(*args, **kwargs)
 
+    def grep_chunks(self, *args, **kwargs):
+        return self._chunks.grep_chunks(*args, **kwargs)
+
     def get_document_chunks_content(self, *args, **kwargs):
         return self._chunks.get_document_chunks_content(*args, **kwargs)
 
@@ -74,6 +77,9 @@ class ChunkStore():
 
     def list_documents(self, *args, **kwargs):
         return self._documents.list_documents(*args, **kwargs)
+
+    def list_document_infos(self, *args, **kwargs):
+        return self._documents.list_document_infos(*args, **kwargs)
 
     def delete_document(self, *args, **kwargs):
         return self._documents.delete_document(*args, **kwargs)

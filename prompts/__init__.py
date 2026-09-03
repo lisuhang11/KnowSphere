@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
+from skills.catalog import SkillInfo
 from tools.catalog import TOOL_SPECS, ordered_tool_names
 
 CITATION_PROTOCOL = """[引用输出协议（必须严格遵守）]
@@ -18,6 +19,7 @@ CITATION_PROTOCOL = """[引用输出协议（必须严格遵守）]
 def build_system_prompt(
     enable_citation: bool = True,
     tool_names: Iterable[str] | None = None,
+    skills: Sequence[SkillInfo] | None = None,
 ) -> str:
     """组装智能推理系统提示词；tool_names 缺省则列出目录中全部工具。"""
     names = ordered_tool_names(tool_names)
@@ -26,9 +28,11 @@ def build_system_prompt(
     ]
     tool_block = "\n".join(tool_lines) if tool_lines else "- （本智能体未绑定工具，直接根据对话作答。）"
     has_doc = "doc_retrieval" in names
+    has_grep = "grep_chunks" in names
     has_list = "list_chunks" in names
+    has_doc_info = "get_document_info" in names
     has_graph = "query_knowledge_graph" in names
-    has_kb = has_doc or has_graph or has_list
+    has_kb = has_doc or has_graph or has_list or has_grep or has_doc_info
     has_web = "web_search" in names or "web_fetch" in names
     has_plan = "write_plan" in names
 
@@ -39,10 +43,20 @@ def build_system_prompt(
         )
         if has_doc:
             rules.append("库内事实必须先调用 doc_retrieval。")
+        if has_grep:
+            rules.append(
+                "已知必须出现的专名、编号、错误码时，用 grep_chunks 做库内正则查找；"
+                "多个词用 | 写进一条。它只返回匹配片段，不能代替语义检索。"
+            )
         if has_list:
             rules.append(
-                "doc_retrieval 返回的正文仍不够时，用 list_chunks："
+                "doc_retrieval 或 grep_chunks 返回的正文仍不够时，用 list_chunks："
                 "chunk_id 读一块，或 document_id 翻页读整篇。"
+            )
+        if has_doc_info:
+            rules.append(
+                "问「库里有哪些文件 / 这份解析完了吗」时用 get_document_info；"
+                "它没有正文。"
             )
         if has_doc:
             rules.append(
@@ -109,7 +123,12 @@ def build_system_prompt(
         f"{tool_block}\n\n"
         "## 行为准则\n" + "\n".join(numbered)
     )
-    return base + ("\n\n" + CITATION_PROTOCOL if enable_citation else "")
+    prompt = base + ("\n\n" + CITATION_PROTOCOL if enable_citation else "")
+    if skills:
+        from skills.prompt import append_skills_prompt
+
+        prompt = append_skills_prompt(prompt, skills)
+    return prompt
 
 
 SYSTEM_PROMPT = build_system_prompt

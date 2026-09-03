@@ -535,3 +535,48 @@ class ChunkRepository:
                 (document_id, owner),
             ).fetchall()
         return [r[0] for r in rows]
+
+    def grep_chunks(
+        self,
+        pattern: str,
+        kb_ids: Sequence[int],
+        owner: str | None = None,
+        fetch_limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """POSIX 正则（~*，忽略大小写）扫可检索子块正文和文件名。
+
+        非法正则抛出 psycopg 错误，由调用方转成对模型的说明。
+        """
+        owner = owner or get_current_owner() or settings.default_owner
+        ids = [int(k) for k in kb_ids if k is not None]
+        if not ids or not (pattern or "").strip():
+            return []
+        cap = max(1, min(int(fetch_limit or 200), 500))
+        with psycopg.connect(self.dsn) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, document_id, file_name, chunk_index, content,
+                       knowledge_base_id, parent_chunk_id
+                FROM chunks
+                WHERE owner = %s
+                  AND knowledge_base_id = ANY(%s)
+                  AND {RETRIEVABLE_CHUNK_WHERE}
+                  AND (content ~* %s OR file_name ~* %s)
+                ORDER BY chunk_index ASC
+                LIMIT %s
+                """,
+                (owner, ids, pattern, pattern, cap),
+            ).fetchall()
+        return [
+            {
+                "id": r[0],
+                "document_id": r[1],
+                "file_name": r[2],
+                "chunk_index": r[3],
+                "content": r[4],
+                "knowledge_base_id": r[5],
+                "parent_chunk_id": r[6],
+            }
+            for r in rows
+        ]
+

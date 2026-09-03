@@ -7,13 +7,16 @@ import {
   updateAgent,
   type AgentInfo,
   type AgentPayload,
+  type SkillSpec,
   type ToolSpec,
 } from '@/api/agents'
+import { SKILL_ICON } from '@/utils/skillMention'
 
 const props = defineProps<{
   visible: boolean
   editing: AgentInfo | null
   catalog: ToolSpec[]
+  skillCatalog: SkillSpec[]
 }>()
 
 const emit = defineEmits<{
@@ -26,14 +29,17 @@ const form = ref<AgentPayload>({
   description: '',
   system_prompt: '',
   tool_names: [],
+  skill_names: [],
   max_iterations: 25,
   is_default: false,
 })
 const saving = ref(false)
 const addOpen = ref(false)
+const addSkillOpen = ref(false)
 
 const isEditing = computed(() => !!props.editing)
 const toolsLocked = computed(() => props.editing?.id === BUILTIN_AGENT_ID)
+const skillsLocked = computed(() => !!props.editing?.is_builtin)
 
 const catalogByName = computed(() => {
   const map = new Map<string, ToolSpec>()
@@ -70,9 +76,26 @@ const availableGroups = computed(() => {
 
 const canAddTool = computed(() => !toolsLocked.value && availableGroups.value.length > 0)
 
+const boundSkills = computed(() => {
+  const wanted = new Set(form.value.skill_names || [])
+  return props.skillCatalog.filter((s) => wanted.has(s.name))
+})
+
+const availableSkills = computed(() => {
+  const bound = new Set(form.value.skill_names || [])
+  return props.skillCatalog.filter((s) => !bound.has(s.name))
+})
+
+const canAddSkill = computed(() => !skillsLocked.value && availableSkills.value.length > 0)
+
 function orderedNames(names: string[]) {
   const wanted = new Set(names)
   return props.catalog.filter((tool) => wanted.has(tool.name)).map((tool) => tool.name)
+}
+
+function orderedSkillNames(names: string[]) {
+  const wanted = new Set(names)
+  return props.skillCatalog.filter((s) => wanted.has(s.name)).map((s) => s.name)
 }
 
 function reset() {
@@ -81,10 +104,12 @@ function reset() {
     description: '',
     system_prompt: '',
     tool_names: [],
+    skill_names: [],
     max_iterations: 25,
     is_default: false,
   }
   addOpen.value = false
+  addSkillOpen.value = false
 }
 
 watch(
@@ -92,6 +117,7 @@ watch(
   ([open, editing]) => {
     if (!open) {
       addOpen.value = false
+      addSkillOpen.value = false
       return
     }
     if (editing) {
@@ -100,6 +126,7 @@ watch(
         description: editing.description,
         system_prompt: editing.system_prompt,
         tool_names: [...(editing.tool_names || [])],
+        skill_names: [...(editing.skill_names || [])],
         max_iterations: editing.max_iterations || 25,
         is_default: editing.is_default,
       }
@@ -111,6 +138,7 @@ watch(
 
 function close() {
   addOpen.value = false
+  addSkillOpen.value = false
   emit('update:visible', false)
 }
 
@@ -128,6 +156,17 @@ function removeTool(name: string) {
     return
   }
   form.value.tool_names = next
+}
+
+function addSkill(name: string) {
+  if (skillsLocked.value) return
+  form.value.skill_names = orderedSkillNames([...(form.value.skill_names || []), name])
+  if (!availableSkills.value.length) addSkillOpen.value = false
+}
+
+function removeSkill(name: string) {
+  if (skillsLocked.value) return
+  form.value.skill_names = (form.value.skill_names || []).filter((item) => item !== name)
 }
 
 async function save() {
@@ -150,6 +189,7 @@ async function save() {
       is_default: form.value.is_default,
     }
     if (!toolsLocked.value) payload.tool_names = form.value.tool_names || []
+    if (!skillsLocked.value) payload.skill_names = form.value.skill_names || []
     if (props.editing) await updateAgent(props.editing.id, payload)
     else await createAgent(payload)
     MessagePlugin.success(isEditing.value ? '智能体已更新' : '智能体已创建')
@@ -225,6 +265,46 @@ async function save() {
         <p v-if="!toolsLocked && !canAddTool && boundTools.length" class="hint">目录中的工具都已绑定。</p>
       </div>
 
+      <div class="field">
+        <div class="field-label-row">
+          <span class="field-label">技能</span>
+          <t-button
+            v-if="!skillsLocked"
+            theme="primary"
+            size="small"
+            :disabled="!canAddSkill"
+            @click="addSkillOpen = true"
+          >
+            <template #icon><t-icon name="add" /></template>
+            添加技能
+          </t-button>
+        </div>
+        <p v-if="skillsLocked" class="hint">内置智能体不启用技能。自定义智能体可勾选仓库内技能；空列表表示关闭。</p>
+        <p v-else class="hint">技能不是工具勾选。绑定后模型会按描述自行匹配；输入框 @ 只是本轮点名。</p>
+
+        <div v-if="boundSkills.length" class="bound-list">
+          <div v-for="skill in boundSkills" :key="skill.name" class="bound-tool bound-tool--skill">
+            <span class="skill-badge" aria-hidden="true">
+              <t-icon :name="SKILL_ICON" size="16px" />
+            </span>
+            <span class="bound-tool__name">{{ skill.name }}</span>
+            <t-button
+              v-if="!skillsLocked"
+              class="bound-tool__remove"
+              theme="danger"
+              variant="text"
+              size="small"
+              @click="removeSkill(skill.name)"
+            >
+              删除
+            </t-button>
+            <span class="bound-tool__desc">{{ skill.description }}</span>
+          </div>
+        </div>
+        <div v-else class="bound-empty">{{ skillsLocked ? '未启用技能。' : '还没有绑定技能，可点「添加技能」。' }}</div>
+        <p v-if="!skillsLocked && !canAddSkill && boundSkills.length" class="hint">目录中的技能都已绑定。</p>
+      </div>
+
       <label class="field">
         <span class="field-label">系统提示词</span>
         <t-textarea
@@ -270,6 +350,34 @@ async function save() {
           <span class="picker-tool__action">添加</span>
         </button>
       </section>
+    </div>
+  </t-dialog>
+
+  <t-dialog
+    v-model:visible="addSkillOpen"
+    header="添加技能"
+    width="520px"
+    attach="body"
+    :z-index="3200"
+    :footer="false"
+    :confirm-on-enter="false"
+  >
+    <p v-if="!availableSkills.length" class="hint">没有可添加的技能。</p>
+    <div v-else class="picker-groups">
+      <button
+        v-for="skill in availableSkills"
+        :key="skill.name"
+        type="button"
+        class="picker-tool picker-tool--skill"
+        @click="addSkill(skill.name)"
+      >
+        <span class="skill-badge" aria-hidden="true">
+          <t-icon :name="SKILL_ICON" size="16px" />
+        </span>
+        <span class="picker-tool__name">{{ skill.name }}</span>
+        <span class="picker-tool__desc">{{ skill.description }}</span>
+        <span class="picker-tool__action">添加</span>
+      </button>
     </div>
   </t-dialog>
 </template>
@@ -434,5 +542,22 @@ async function save() {
   font-weight: 600;
   color: var(--td-brand-color);
   white-space: nowrap;
+}
+
+.skill-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: color-mix(in srgb, #7c3aed 12%, transparent);
+  color: #7c3aed;
+}
+
+.bound-tool--skill,
+.picker-tool--skill {
+  align-items: center;
 }
 </style>

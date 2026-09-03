@@ -4,9 +4,11 @@ import { MessagePlugin, type DropdownOption } from 'tdesign-vue-next'
 import {
   deleteAgent,
   listAgents,
+  listSkills,
   listTools,
   updateAgent,
   type AgentInfo,
+  type SkillSpec,
   type ToolSpec,
 } from '@/api/agents'
 import AgentEditorDrawer from './components/AgentEditorDrawer.vue'
@@ -14,6 +16,7 @@ import AgentEditorDrawer from './components/AgentEditorDrawer.vue'
 const loading = ref(false)
 const agents = ref<AgentInfo[]>([])
 const catalog = ref<ToolSpec[]>([])
+const skillCatalog = ref<SkillSpec[]>([])
 
 const agentDrawer = ref(false)
 const editingAgent = ref<AgentInfo | null>(null)
@@ -23,9 +26,10 @@ const agentCount = computed(() => agents.value.length)
 async function load() {
   loading.value = true
   try {
-    const [a, tools] = await Promise.all([listAgents(), listTools()])
+    const [a, tools, skills] = await Promise.all([listAgents(), listTools(), listSkills()])
     agents.value = a
     catalog.value = tools
+    skillCatalog.value = skills
   } catch (e) {
     MessagePlugin.error((e as Error).message)
   } finally {
@@ -84,7 +88,7 @@ onMounted(() => {
     <div class="section-header">
       <h2>智能体</h2>
       <p class="section-description">
-        配置智能体的名称、提示词和可用工具。「智能推理」自带的工具由系统维护，不能改；其它智能体可在编辑页增删。系统工具目录见
+        配置智能体的名称、提示词、可用工具和技能。「智能推理」自带的工具由系统维护，不能改；其它智能体可在编辑页增删。系统工具目录见
         <router-link to="/tools">工具</router-link>。
       </p>
     </div>
@@ -137,8 +141,12 @@ onMounted(() => {
               </div>
             </div>
             <p v-if="item.description" class="res-card__desc">{{ item.description }}</p>
-            <div v-if="item.tools.length" class="chip-row">
+            <div v-if="item.tools.length || (item.skills && item.skills.length)" class="chip-row">
               <span v-for="tool in item.tools" :key="tool.name" class="tool-chip">{{ tool.display_name }}</span>
+              <span v-for="skill in item.skills || []" :key="'sk-' + skill.name" class="tool-chip tool-chip--skill">
+                <t-icon name="system-code" size="12px" />
+                {{ skill.name }}
+              </span>
             </div>
             <p v-else class="res-card__desc">未绑定工具</p>
           </div>
@@ -154,6 +162,7 @@ onMounted(() => {
       v-model:visible="agentDrawer"
       :editing="editingAgent"
       :catalog="catalog"
+      :skill-catalog="skillCatalog"
       @saved="load"
     />
   </div>
@@ -304,6 +313,12 @@ onMounted(() => {
   font-size: 12px;
   line-height: 22px;
   white-space: nowrap;
+}
+
+.tool-chip--skill {
+  gap: 4px;
+  background: color-mix(in srgb, #7c3aed 12%, transparent);
+  color: #7c3aed;
 }
 
 .res-card--add {

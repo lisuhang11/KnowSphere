@@ -7,14 +7,16 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Iterator, Optional
+from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from config.settings import settings
+from skills.catalog import known_skill_names, ordered_skill_names, skills_to_public
 from stores.common import load_jsonb
 from tools.catalog import (
     BUILTIN_AGENT_ID,
@@ -75,6 +77,7 @@ class AgentStore:
                     description       TEXT NOT NULL DEFAULT '',
                     system_prompt     TEXT NOT NULL DEFAULT '',
                     tool_names        JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    skill_names       JSONB NOT NULL DEFAULT '[]'::jsonb,
                     max_iterations    INT NOT NULL DEFAULT 25,
                     is_builtin        BOOLEAN NOT NULL DEFAULT FALSE,
                     is_default        BOOLEAN NOT NULL DEFAULT FALSE,
@@ -86,6 +89,10 @@ class AgentStore:
             )
             conn.execute(
                 "ALTER TABLE agents ADD COLUMN IF NOT EXISTS tool_names "
+                "JSONB NOT NULL DEFAULT '[]'::jsonb"
+            )
+            conn.execute(
+                "ALTER TABLE agents ADD COLUMN IF NOT EXISTS skill_names "
                 "JSONB NOT NULL DEFAULT '[]'::jsonb"
             )
             conn.execute(
@@ -138,7 +145,7 @@ class AgentStore:
                 conn.execute(
                     """
                     UPDATE agents
-                    SET tool_names = %s, updated_at = now()
+                    SET tool_names = %s, skill_names = '[]'::jsonb, updated_at = now()
                     WHERE id = %s
                     """,
                     (Jsonb(reasoning_names), BUILTIN_AGENT_ID),
@@ -150,10 +157,10 @@ class AgentStore:
                 conn.execute(
                     """
                     INSERT INTO agents (
-                        id, name, description, system_prompt, tool_names,
+                        id, name, description, system_prompt, tool_names, skill_names,
                         max_iterations, is_builtin, is_default
                     )
-                    VALUES (%s, %s, %s, '', %s, %s, TRUE, %s)
+                    VALUES (%s, %s, %s, '', %s, '[]'::jsonb, %s, TRUE, %s)
                     """,
                     (
                         BUILTIN_AGENT_ID,
@@ -177,6 +184,7 @@ class AgentStore:
                             WHEN description IN ('', %s) THEN %s
                             ELSE description
                         END,
+                        skill_names = '[]'::jsonb,
                         updated_at = now()
                     WHERE id = %s
                     """,
@@ -202,10 +210,10 @@ class AgentStore:
                 conn.execute(
                     """
                     INSERT INTO agents (
-                        id, name, description, system_prompt, tool_names,
+                        id, name, description, system_prompt, tool_names, skill_names,
                         max_iterations, is_builtin, is_default
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, TRUE, FALSE)
+                    VALUES (%s, %s, %s, %s, %s, '[]'::jsonb, %s, TRUE, FALSE)
                     """,
                     (
                         BUILTIN_PPT_AGENT_ID,
@@ -245,6 +253,7 @@ class AgentStore:
         tool_names = ordered_tool_names(_as_str_list(row.get("tool_names")))
         if not tool_names:
             tool_names = self._legacy_tool_names(row)
+        skill_names = ordered_skill_names(_as_str_list(row.get("skill_names")))
         created = row.get("created_at")
         updated = row.get("updated_at")
         return {
@@ -254,6 +263,8 @@ class AgentStore:
             "system_prompt": row.get("system_prompt") or "",
             "tool_names": tool_names,
             "tools": tools_to_public(tool_names),
+            "skill_names": skill_names,
+            "skills": skills_to_public(skill_names),
             "max_iterations": int(row.get("max_iterations") or settings.agent_max_steps),
             "is_builtin": bool(row.get("is_builtin")),
             "is_default": bool(row.get("is_default")),
@@ -308,6 +319,15 @@ class AgentStore:
             raise ValueError("请至少选择一个工具")
         return names
 
+    def _validate_skill_names(self, skill_names: list[str] | None) -> list[str]:
+        raw = skill_names or []
+        unknown = [
+            n for n in raw if str(n).strip() and str(n).strip() not in known_skill_names()
+        ]
+        if unknown:
+            raise ValueError(f"未知技能: {', '.join(unknown)}")
+        return ordered_skill_names(raw)
+
     def _clamp_iterations(self, value: int | None) -> int:
         n = int(value if value is not None else settings.agent_max_steps)
         return max(4, min(n, 80))
@@ -317,7 +337,8 @@ class AgentStore:
         name: str,
         description: str = "",
         system_prompt: str = "",
-        tool_names: Optional[list[str]] = None,
+        tool_names: list[str] | None = None,
+        skill_names: list[str] | None = None,
         max_iterations: int | None = None,
         *,
         is_default: bool = False,
@@ -334,30 +355,31 @@ class AgentStore:
             names = list(REASONING_TOOL_NAMES)
         else:
             names = self._validate_tool_names(tool_names)
+        skills = [] if is_builtin else self._validate_skill_names(skill_names)
         iterations = self._clamp_iterations(max_iterations)
-        with self._conn() as conn:
-            with conn.transaction():
-                if is_default:
-                    conn.execute("UPDATE agents SET is_default = FALSE")
-                conn.execute(
-                    """
+        with self._conn() as conn, conn.transaction():
+            if is_default:
+                conn.execute("UPDATE agents SET is_default = FALSE")
+            conn.execute(
+                """
                     INSERT INTO agents (
-                        id, name, description, system_prompt, tool_names,
+                        id, name, description, system_prompt, tool_names, skill_names,
                         max_iterations, is_builtin, is_default
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (
-                        aid,
-                        cleaned_name,
-                        description or "",
-                        system_prompt or "",
-                        Jsonb(names),
-                        iterations,
-                        is_builtin,
-                        is_default,
-                    ),
-                )
+                (
+                    aid,
+                    cleaned_name,
+                    description or "",
+                    system_prompt or "",
+                    Jsonb(names),
+                    Jsonb(skills),
+                    iterations,
+                    is_builtin,
+                    is_default,
+                ),
+            )
         rec = self.get_agent(aid)
         if rec is None:
             raise RuntimeError("创建智能体失败")
@@ -367,13 +389,14 @@ class AgentStore:
         self,
         agent_id: str,
         *,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        system_prompt: Optional[str] = None,
-        tool_names: Optional[list[str]] = None,
-        max_iterations: Optional[int] = None,
-        is_default: Optional[bool] = None,
-        status: Optional[str] = None,
+        name: str | None = None,
+        description: str | None = None,
+        system_prompt: str | None = None,
+        tool_names: list[str] | None = None,
+        skill_names: list[str] | None = None,
+        max_iterations: int | None = None,
+        is_default: bool | None = None,
+        status: str | None = None,
     ) -> dict[str, Any]:
         rec = self.get_agent(agent_id)
         if rec is None:
@@ -400,6 +423,12 @@ class AgentStore:
                 names = self._validate_tool_names(tool_names)
                 sets.append("tool_names = %s")
                 args.append(Jsonb(names))
+        if skill_names is not None:
+            if rec["is_builtin"]:
+                raise ValueError("内置智能体不可绑定技能")
+            skills = self._validate_skill_names(skill_names)
+            sets.append("skill_names = %s")
+            args.append(Jsonb(skills))
         if max_iterations is not None:
             sets.append("max_iterations = %s")
             args.append(self._clamp_iterations(max_iterations))
@@ -417,14 +446,13 @@ class AgentStore:
             return rec
         sets.append("updated_at = now()")
         args.append(agent_id)
-        with self._conn() as conn:
-            with conn.transaction():
-                if is_default:
-                    conn.execute("UPDATE agents SET is_default = FALSE")
-                conn.execute(
-                    f"UPDATE agents SET {', '.join(sets)} WHERE id = %s",
-                    args,
-                )
+        with self._conn() as conn, conn.transaction():
+            if is_default:
+                conn.execute("UPDATE agents SET is_default = FALSE")
+            conn.execute(
+                f"UPDATE agents SET {', '.join(sets)} WHERE id = %s",
+                args,
+            )
         updated = self.get_agent(agent_id)
         if updated is None:
             raise RuntimeError("更新智能体失败")

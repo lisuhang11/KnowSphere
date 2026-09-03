@@ -12,7 +12,12 @@ from models import create_chat_model
 from states import KnowSphereState
 from tools.catalog import get_tool_spec
 from tools.events import emit_thinking
-from utils.agent_runtime import resolve_agent_tool_names, resolve_system_prompt
+from tools.skills import SKILL_RUNTIME_TOOL_NAMES
+from utils.agent_runtime import (
+    resolve_agent_skill_names,
+    resolve_agent_tool_names,
+    resolve_system_prompt,
+)
 from utils.citation import citation_payload_from_source_dicts
 from utils.run_config import (
     chat_model_kwargs_from_config,
@@ -41,12 +46,18 @@ def tools_for_state(
     if state and (state.get("system_prompt_override") or "").strip():
         return []
     allowed = resolve_agent_tool_names(config)
+    skill_enabled = bool(resolve_agent_skill_names(config))
     kb_ids = kb_ids_from_config(config)
     selected: list[Any] = []
     seen: set[str] = set()
     for tool in tool_list:
         name = getattr(tool, "name", None)
         if not name or name in seen:
+            continue
+        if name in SKILL_RUNTIME_TOOL_NAMES:
+            if skill_enabled:
+                seen.add(name)
+                selected.append(tool)
             continue
         if allowed is not None and name not in allowed:
             continue
@@ -79,7 +90,9 @@ def _prepare_messages(
     has_web_tool = "web_search" in bound or "web_fetch" in bound
     has_graph_tool = "query_knowledge_graph" in bound
     has_doc = "doc_retrieval" in bound
+    has_grep = "grep_chunks" in bound
     has_list = "list_chunks" in bound
+    has_doc_info = "get_document_info" in bound
     parts = [system_prompt]
     web_label = "已开启" if web_on and has_web_tool else "未开启"
     if graph_on and has_graph_tool:
@@ -95,8 +108,12 @@ def _prepare_messages(
         seq: list[str] = []
         if has_doc:
             seq.append("库内事实必须先调用 doc_retrieval")
+        if has_grep:
+            seq.append("专名/编号/错误码用 grep_chunks")
         if has_list:
             seq.append("摘要不够再用 list_chunks 按 chunk_id 或 document_id 精读")
+        if has_doc_info:
+            seq.append("文件名和解析状态用 get_document_info（无正文）")
         if has_graph_tool:
             seq.append("关系型问题可在检索之后再 query_knowledge_graph（可选，不能替代语义检索）")
         if has_web_tool:
@@ -123,7 +140,7 @@ def _prepare_messages(
     if rewrite:
         parts.append(
             f"\n\n【本轮改写检索词】{rewrite}\n"
-            "调用 doc_retrieval / web_search 时优先使用该检索词；"
+            "调用 doc_retrieval / grep_chunks / web_search 时优先使用该检索词；"
             "多跳可按中间结果改写后再搜；正文不够用 list_chunks 精读。"
         )
     memory_block = (memory_suffix or "").strip()

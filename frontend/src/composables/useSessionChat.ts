@@ -20,12 +20,22 @@ import {
 } from '@/utils/chatImages'
 import { mergeCitationMeta, uniqueCitationSources } from '@/utils/citationSources'
 import { extractText, uid } from '@/utils/text'
+import {
+  extractPinnedSkillNames,
+  parseMustUseSkillNames,
+  stripMustUseBlock,
+  uniqueSkillNames,
+} from '@/utils/skillMention'
 
 export interface ChatAttachmentMeta {
   id: string
   file_name: string
   file_type?: string
   file_size?: number
+}
+
+export interface ChatSkillMeta {
+  name: string
 }
 
 export interface ChatMsg {
@@ -35,6 +45,7 @@ export interface ChatMsg {
   images?: ChatImageMeta[]
   attachments?: ChatAttachmentMeta[]
   outputs?: ChatAttachmentMeta[]
+  skills?: ChatSkillMeta[]
   thinking?: string
   thinkingDone?: boolean
   citations?: Citation[]
@@ -104,6 +115,32 @@ function extractMessageOutputs(m: LangMessage | Record<string, unknown>): ChatAt
   return extractKwAttachments(m, 'ks_outputs')
 }
 
+function extractKwSkills(m: LangMessage | Record<string, unknown>): ChatSkillMeta[] {
+  const kwargs =
+    ('additional_kwargs' in m ? m.additional_kwargs : undefined) as Record<string, unknown> | undefined
+  const raw = kwargs?.ks_skills
+  if (!Array.isArray(raw)) return []
+  const out: ChatSkillMeta[] = []
+  const seen = new Set<string>()
+  for (const item of raw) {
+    const name =
+      typeof item === 'string'
+        ? item.trim()
+        : item && typeof item === 'object' && typeof (item as Record<string, unknown>).name === 'string'
+          ? String((item as Record<string, unknown>).name).trim()
+          : ''
+    if (!name || seen.has(name)) continue
+    seen.add(name)
+    out.push({ name })
+  }
+  return out
+}
+
+function skillsFromNames(names: string[]): ChatSkillMeta[] | undefined {
+  const unique = uniqueSkillNames(names)
+  return unique.length ? unique.map((name) => ({ name })) : undefined
+}
+
 function pushOutput(ai: ChatMsg, item: ChatAttachmentMeta) {
   if (!item.id) return
   const cur = ai.outputs ? [...ai.outputs] : []
@@ -167,9 +204,20 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
       const images = extractMessageImages(m)
       const attachments = extractMessageAttachments(m)
       const outputs = extractMessageOutputs(m)
+      const skills =
+        m.type === 'human'
+          ? skillsFromNames([
+              ...extractKwSkills(m).map((s) => s.name),
+              ...parseMustUseSkillNames(text),
+            ])
+          : undefined
+      const stripped = stripMustUseBlock(text)
       const displayText =
-        text.split('\n\n[用户上传图片内容]\n')[0]?.split('\n\n[会话附件内容]\n')[0]?.trim() || text
-      if (!displayText && !images.length && !attachments.length && !outputs.length) continue
+        stripped.split('\n\n[用户上传图片内容]\n')[0]?.split('\n\n[会话附件内容]\n')[0]?.trim() ||
+        stripped
+      if (!displayText && !images.length && !attachments.length && !outputs.length && !skills?.length) {
+        continue
+      }
       if (m.type === 'human') {
         list.push({
           id: uid(),
@@ -177,6 +225,7 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
           content: displayText,
           images: images.length ? images : undefined,
           attachments: attachments.length ? attachments : undefined,
+          skills,
         })
       } else if (m.type === 'ai') {
         const citations = extractKwCitations(m)
@@ -208,6 +257,7 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
         attachments.push(entry)
       }
       const images = (p.images || []).filter((i) => i.url)
+      const skills = skillsFromNames((p.skills || []).map((s) => s.name))
       list.push({
         id: uid(),
         role: 'user',
@@ -216,6 +266,7 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
           (attachments.length ? '（附件）' : images.length ? '（图片）' : ''),
         images: images.length ? images : undefined,
         attachments: attachments.length ? attachments : undefined,
+        skills,
       })
     }
     const ai: ChatMsg = { id: uid(), role: 'assistant', content: '' }
@@ -426,8 +477,12 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
             ? '正在解析附件…'
             : name === 'doc_retrieval'
               ? '正在检索知识库…'
+              : name === 'grep_chunks'
+                ? '正在关键词搜索…'
               : name === 'list_chunks'
                 ? '正在精读文档…'
+                : name === 'get_document_info'
+                  ? '正在查看文档信息…'
                 : name === 'query_knowledge_graph'
                 ? '正在查询知识图谱…'
                 : name === 'web_search'
@@ -438,11 +493,19 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
                       ? '正在规划步骤…'
                       : name === 'generate_pptx'
                         ? '正在生成幻灯片…'
-                        : name
-                          ? `正在调用 ${name}…`
-                          : ''
+                        : name === 'read_skill'
+                          ? '正在读取技能…'
+                          : name === 'execute_skill_script'
+                            ? '正在沙箱执行…'
+                            : name
+                              ? `正在调用 ${name}…`
+                              : ''
         const extra = extractText(data.content)
-        if (hint) appendThinking(ai, extra && extra !== hint ? `${hint}\n${extra}` : hint)
+        if (name === 'read_skill' || name === 'execute_skill_script') {
+          if (extra || hint) appendThinking(ai, extra || hint)
+        } else if (hint) {
+          appendThinking(ai, extra && extra !== hint ? `${hint}\n${extra}` : hint)
+        }
       } else if (t === 'tool_result') {
         const name = String(data.tool_name || '')
         const body = extractText(data.content)
@@ -500,6 +563,7 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
     attachmentMetas: ChatAttachmentMeta[] = [],
     agentId?: string | null,
     webSearchEnabled?: boolean,
+    skillNames: string[] = [],
   ) {
     const query = text.trim()
     const hasAttachments = attachmentIds.length > 0
@@ -530,12 +594,14 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
       }
     }
 
+    const pinnedSkills = uniqueSkillNames([...skillNames, ...extractPinnedSkillNames(query)])
     messages.value.push({
       id: uid(),
       role: 'user',
       content: query || (hasAttachments ? '（附件）' : '（图片）'),
       images: userImages,
       attachments: attachmentMetas.length ? attachmentMetas : undefined,
+      skills: skillsFromNames(pinnedSkills),
     })
     await scrollToBottom(scrollEl)
 
@@ -570,6 +636,7 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
           vlmModelId,
           agentId,
           webSearchEnabled,
+          pinnedSkills.length ? pinnedSkills : undefined,
         ),
       () => ai ?? ensureAi(),
       scrollEl,

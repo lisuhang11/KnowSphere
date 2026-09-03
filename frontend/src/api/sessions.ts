@@ -36,6 +36,7 @@ export interface ActiveRun {
     content?: string
     images?: { url: string; caption?: string }[]
     attachments?: { id: string; file_name?: string; file_type?: string; file_size?: number }[]
+    skills?: { name: string }[]
   }
 }
 

@@ -51,6 +51,7 @@ const {
 } = useChatPageResources()
 
 const input = ref('')
+const selectedSkillNames = ref<string[]>([])
 const inputFieldRef = ref<InstanceType<typeof ChatInputField>>()
 
 const currentSession = computed(() => chatStore.currentSession())
@@ -125,6 +126,7 @@ async function doSend(textOverride?: string) {
     readyMetas,
     chatStore.currentAgentId,
     chatStore.currentWebSearchEnabled,
+    selectedSkillNames.value,
   )
   if (!ok) return
 }
@@ -175,6 +177,7 @@ onMounted(() => {
             :content="msg.content"
             :images="msg.images"
             :attachments="msg.attachments"
+            :skills="msg.skills"
           />
           <BotMsg
             v-else
@@ -209,6 +212,7 @@ onMounted(() => {
         v-model:selected-chat-model-id="selectedChatModelId"
         v-model:selected-vlm-model-id="selectedVlmModelId"
         v-model:selected-agent-id="selectedAgentId"
+        v-model:selected-skill-names="selectedSkillNames"
         v-model:web-search-enabled="webSearchEnabled"
         :web-search-available="webSearchAvailable"
         :graph-available="graphAvailable"

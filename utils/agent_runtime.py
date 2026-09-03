@@ -44,28 +44,56 @@ def resolve_agent_tool_names(config: RunnableConfig | None) -> frozenset[str] | 
     return frozenset(rec.get("tool_names") or [])
 
 
+def resolve_agent_skill_names(config: RunnableConfig | None) -> list[str]:
+    """当前智能体绑定的技能名。空列表 = 未启用 Skill。"""
+    from skills.catalog import ordered_skill_names
+    from utils.run_config import _configurable
+
+    cfg = _configurable(config)
+    if "skill_names" in cfg:
+        raw = cfg.get("skill_names")
+        names = raw if isinstance(raw, (list, tuple)) else []
+        return ordered_skill_names([str(n) for n in names])
+    agent_id = agent_id_from_config(config)
+    if not agent_id:
+        return []
+    rec = load_agent(agent_id)
+    if rec is None:
+        return []
+    return ordered_skill_names(rec.get("skill_names") or [])
+
+
 def resolve_system_prompt(
     config: RunnableConfig | None,
     default: str,
     bound_tool_names: Iterable[str] | None = None,
 ) -> str:
-    """自定义 system_prompt 优先；否则按本轮实际绑定的工具生成。"""
+    """自定义 system_prompt 优先；否则按本轮实际绑定的工具生成。有技能时追加 Level 1。"""
     agent_id = agent_id_from_config(config)
     rec = load_agent(agent_id) if agent_id else None
     if rec is not None:
         custom = (rec.get("system_prompt") or "").strip()
         if custom:
-            return custom
-    names: Iterable[str] | None
-    if bound_tool_names is not None:
-        names = bound_tool_names
-    elif rec is not None:
-        names = rec.get("tool_names") or []
-    else:
-        return default
-    from prompts import build_system_prompt
+            base = custom
+        else:
+            names: Iterable[str] | None
+            if bound_tool_names is not None:
+                names = bound_tool_names
+            else:
+                names = rec.get("tool_names") or []
+            from prompts import build_system_prompt
 
-    return build_system_prompt(settings.citation_enabled, tool_names=names)
+            base = build_system_prompt(settings.citation_enabled, tool_names=names)
+    elif bound_tool_names is not None:
+        from prompts import build_system_prompt
+
+        base = build_system_prompt(settings.citation_enabled, tool_names=bound_tool_names)
+    else:
+        base = default
+    from skills.catalog import skill_metadata_for_names
+    from skills.prompt import append_skills_prompt
+
+    return append_skills_prompt(base, skill_metadata_for_names(resolve_agent_skill_names(config)))
 
 
 def resolve_max_iterations(agent_id: str | None) -> int:

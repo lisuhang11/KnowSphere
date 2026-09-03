@@ -20,13 +20,16 @@ from tools.catalog import (
     ordered_tool_names,
     tools_to_public,
 )
+from tools.skills import SKILL_RUNTIME_TOOL_NAMES
 
 
 def test_catalog_covers_runtime_tools():
     names = {t.name for t in get_tools()}
-    assert names == set(CATALOG_TOOL_NAMES)
+    assert set(CATALOG_TOOL_NAMES) <= names
+    assert names - set(CATALOG_TOOL_NAMES) == set(SKILL_RUNTIME_TOOL_NAMES)
     public = tools_to_public()
     assert [t["name"] for t in public] == list(CATALOG_TOOL_NAMES)
+    assert all(t["name"] not in SKILL_RUNTIME_TOOL_NAMES for t in public)
     assert all(t["display_name"] and t["category"] for t in public)
     pptx = next(t for t in public if t["name"] == "generate_pptx")
     assert pptx["category"] == "creation"
@@ -52,6 +55,8 @@ def test_system_prompt_lists_bound_tools_only():
     full = build_system_prompt()
     assert "doc_retrieval" in full
     assert "list_chunks" in full
+    assert "grep_chunks" in full
+    assert "get_document_info" in full
     assert "write_plan" in full
     assert "query_knowledge_graph" in full
     assert "知识库检索之后" in full
@@ -162,11 +167,13 @@ def test_seed_builtin_agent_binds_catalog_tools(pg_available):
     assert "toolkit_ids" not in agent
     assert set(agent["tool_names"]) == set(REASONING_TOOL_NAMES)
     assert "generate_pptx" not in agent["tool_names"]
+    assert agent["skill_names"] == []
     ppt = store.get_agent(BUILTIN_PPT_AGENT_ID)
     assert ppt is not None
     assert ppt["is_builtin"]
     assert not ppt["is_default"]
     assert set(ppt["tool_names"]) == set(PPT_AGENT_TOOL_NAMES)
+    assert ppt["skill_names"] == []
     assert "generate_pptx" in ppt["system_prompt"]
     default = store.get_default_agent()
     assert default is not None
@@ -189,9 +196,12 @@ def test_create_agent_binds_tools_directly(pg_available):
     )
     try:
         assert rec["tool_names"] == ["write_plan", "doc_retrieval"]
+        assert rec["skill_names"] == []
         assert {t["name"] for t in rec["tools"]} == {"write_plan", "doc_retrieval"}
-        updated = store.update_agent(aid, tool_names=["web_search"])
+        updated = store.update_agent(aid, tool_names=["web_search"], skill_names=["pdf-extract"])
         assert updated["tool_names"] == ["web_search"]
+        assert updated["skill_names"] == ["pdf-extract"]
+        assert updated["skills"][0]["name"] == "pdf-extract"
     finally:
         store.delete_agent(aid)
 
@@ -212,6 +222,22 @@ def test_reasoning_agent_tools_are_immutable(pg_available):
     after = store.get_agent(BUILTIN_AGENT_ID)
     assert after is not None
     assert after["tool_names"] == before["tool_names"] == list(REASONING_TOOL_NAMES)
+
+
+def test_builtin_agents_reject_skill_binding(pg_available):
+    if not pg_available:
+        pytest.skip("postgres unavailable")
+
+    from stores.agent_repository import AgentStore
+
+    store = AgentStore()
+    store.init_schema()
+    store.seed_builtins()
+    with pytest.raises(ValueError, match="技能"):
+        store.update_agent(BUILTIN_AGENT_ID, skill_names=["pdf-extract"])
+    with pytest.raises(ValueError, match="技能"):
+        store.update_agent(BUILTIN_PPT_AGENT_ID, skill_names=["pdf-extract"])
+    assert store.get_agent(BUILTIN_AGENT_ID)["skill_names"] == []
 
 
 def test_ppt_agent_tools_can_be_changed(pg_available):

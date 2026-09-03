@@ -71,12 +71,17 @@ packages = [
     "ingestion",
     "models",
     "prompts",
+    "sandbox",
     "schemas",
     "scripts",
+    "skills",
     "states",
     "tools",
     "utils",
 ]
+
+[tool.hatch.build.targets.wheel.force-include]
+"skills/pdf-extract" = "skills/pdf-extract"
 
 [tool.ruff]
 line-length = 100
@@ -89,7 +94,11 @@ target-version = "py311"
 "tools/retrieval/doc_retrieval.py" = ["BLE001"]
 # Redis 闪断时续流读写降级，刻意捕获宽异常
 "services/stream_manager.py" = ["BLE001"]
+# 沙箱附件拷贝 / 镜像探测失败时降级为明确错误
+"sandbox/docker_runner.py" = ["BLE001"]
+# 技能产出落附件失败时跳过单文件，不中断整次执行
+"tools/skills/execute_skill_script.py" = ["BLE001", "S110"]
 # 评测逐题兜底：单题失败跳过不中断整轮
 "evals/run_eval.py" = ["BLE001"]
-# HF_ENDPOINT 需在 import datasets 前设置
-"evals/hotpot.py" = ["E402"]
+# 技能沙箱脚本：尽力抽取，pypdf 缺失时走 stdlib 回退
+"skills/pdf-extract/scripts/extract_text.py" = ["BLE001", "S110"]

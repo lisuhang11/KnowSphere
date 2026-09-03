@@ -6,6 +6,9 @@ from typing import Any
 
 from langchain_core.messages import BaseMessage
 
+from skills.must_use import strip_must_use_block
+
+
 def message_text(content: Any) -> str:
     """从 HumanMessage/AIMessage content 提取纯文本。"""
     if isinstance(content, str):
@@ -26,6 +29,7 @@ def message_text(content: Any) -> str:
 def message_query_text(msg: BaseMessage) -> str:
     """用户可见问题文本（去掉注入块）。"""
     text = message_text(getattr(msg, "content", ""))
+    text = strip_must_use_block(text)
     for marker in ("\n\n[用户上传图片内容]\n", "\n\n[会话附件内容]\n"):
         if marker in text:
             text = text.split(marker, 1)[0]

@@ -23,18 +23,28 @@ def test_tools_for_state_includes_list_chunks_with_kb():
     }
     assert "list_chunks" in names
     assert "doc_retrieval" in names
+    assert "grep_chunks" in names
+    assert "get_document_info" in names
     names_off = {
         t.name for t in tools_for_state({"configurable": {"kb_ids": []}}, get_tools())
     }
     assert "list_chunks" not in names_off
     assert "doc_retrieval" not in names_off
+    assert "grep_chunks" not in names_off
+    assert "get_document_info" not in names_off
 
 
 def test_reasoning_and_ppt_include_list_chunks():
     assert "list_chunks" in REASONING_TOOL_NAMES
     assert "list_chunks" in PPT_AGENT_TOOL_NAMES
-    assert REASONING_TOOL_NAMES.index("list_chunks") == REASONING_TOOL_NAMES.index(
+    assert "grep_chunks" in REASONING_TOOL_NAMES
+    assert "get_document_info" in REASONING_TOOL_NAMES
+    assert "grep_chunks" not in PPT_AGENT_TOOL_NAMES
+    assert REASONING_TOOL_NAMES.index("grep_chunks") == REASONING_TOOL_NAMES.index(
         "doc_retrieval"
+    ) + 1
+    assert REASONING_TOOL_NAMES.index("list_chunks") == REASONING_TOOL_NAMES.index(
+        "grep_chunks"
     ) + 1
 
 

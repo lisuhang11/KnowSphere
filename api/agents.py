@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from skills.catalog import skills_to_public
 from stores.agent_repository import AgentStore
 from tools.catalog import tools_to_public
 
@@ -20,6 +21,7 @@ class AgentCreateRequest(BaseModel):
     description: str = ""
     system_prompt: str = ""
     tool_names: list[str] = Field(default_factory=list)
+    skill_names: list[str] = Field(default_factory=list)
     max_iterations: int | None = None
     is_default: bool = False
 
@@ -29,6 +31,7 @@ class AgentUpdateRequest(BaseModel):
     description: str | None = None
     system_prompt: str | None = None
     tool_names: list[str] | None = None
+    skill_names: list[str] | None = None
     max_iterations: int | None = None
     is_default: bool | None = None
     status: str | None = None
@@ -46,6 +49,12 @@ def list_tools() -> list[dict[str, Any]]:
     return tools_to_public()
 
 
+@router.get("/skills")
+def list_skills() -> list[dict[str, Any]]:
+    """仓库内技能目录（name + description），供智能体勾选。"""
+    return skills_to_public()
+
+
 @router.get("/agents")
 def list_agents() -> list[dict[str, Any]]:
     return _store.list_agents()
@@ -59,6 +68,7 @@ def create_agent(body: AgentCreateRequest) -> dict[str, Any]:
             description=body.description,
             system_prompt=body.system_prompt,
             tool_names=body.tool_names,
+            skill_names=body.skill_names,
             max_iterations=body.max_iterations,
             is_default=body.is_default,
         )
@@ -83,6 +93,7 @@ def update_agent(agent_id: str, body: AgentUpdateRequest) -> dict[str, Any]:
             description=body.description,
             system_prompt=body.system_prompt,
             tool_names=body.tool_names,
+            skill_names=body.skill_names,
             max_iterations=body.max_iterations,
             is_default=body.is_default,
             status=body.status,

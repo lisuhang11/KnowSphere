@@ -77,6 +77,7 @@ export async function streamSessionRun(
   vlmModelId?: string | null,
   agentId?: string | null,
   webSearchEnabled?: boolean,
+  skillNames?: string[],
 ): Promise<void> {
   const body: Record<string, unknown> = {
     message: userText,
@@ -88,6 +89,7 @@ export async function streamSessionRun(
   if (vlmModelId?.trim()) body.vlm_model_id = vlmModelId.trim()
   if (agentId?.trim()) body.agent_id = agentId.trim()
   if (webSearchEnabled !== undefined) body.web_search_enabled = webSearchEnabled
+  if (skillNames?.length) body.skill_names = skillNames
   if (attachmentIds?.length) body.attachment_ids = attachmentIds
   else if (images?.length) body.images = images
 

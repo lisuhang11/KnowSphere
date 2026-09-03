@@ -141,6 +141,11 @@ class Settings(BaseSettings):
     web_fetch_timeout_sec: float = 15
     web_fetch_max_bytes: int = 512_000
 
+    # 技能沙箱（一次性 docker run；无 Docker 时 execute_skill_script 失败，不在宿主机执行）
+    skill_sandbox_image: str = "python:3.12-slim"
+    skill_sandbox_timeout_sec: float = 60
+    skill_sandbox_memory: str = "512m"
+
     # 知识图谱（Neo4j；关闭时抽取/检索全部 no-op）
     neo4j_enable: bool = False
     neo4j_uri: str = "bolt://localhost:7687"

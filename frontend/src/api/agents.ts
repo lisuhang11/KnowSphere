@@ -14,6 +14,11 @@ export interface ToolSpec {
   produces?: 'text' | 'citations' | 'file' | string
 }
 
+export interface SkillSpec {
+  name: string
+  description: string
+}
+
 export interface AgentInfo {
   id: string
   name: string
@@ -21,6 +26,8 @@ export interface AgentInfo {
   system_prompt: string
   tool_names: string[]
   tools: ToolSpec[]
+  skill_names?: string[]
+  skills?: SkillSpec[]
   max_iterations: number
   is_builtin: boolean
   is_default: boolean
@@ -34,6 +41,7 @@ export interface AgentPayload {
   description?: string
   system_prompt?: string
   tool_names?: string[]
+  skill_names?: string[]
   max_iterations?: number
   is_default?: boolean
   status?: string
@@ -44,6 +52,11 @@ export const BUILTIN_AGENT_ID = 'agent-smart-reasoning'
 
 export async function listTools(): Promise<ToolSpec[]> {
   const resp = await request.get<ToolSpec[]>('/tools')
+  return resp.data
+}
+
+export async function listSkills(): Promise<SkillSpec[]> {
+  const resp = await request.get<SkillSpec[]>('/skills')
   return resp.data
 }
 

@@ -44,18 +44,44 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         requires_kb=True,
         produces="citations",
     ),
+    "grep_chunks": ToolSpec(
+        name="grep_chunks",
+        display_name="关键词搜索",
+        description="在知识库分块中按正则精确查找（工号、错误码、产品名）。",
+        category="knowledge",
+        prompt_line=(
+            "- grep_chunks：库内 POSIX 正则（忽略大小写），适合必须出现的专名、编号、错误码。"
+            "多个词用 | 写进一条。只返回匹配附近片段；随后用 list_chunks 精读。"
+            "不能代替 doc_retrieval。"
+        ),
+        requires_kb=True,
+        produces="citations",
+    ),
     "list_chunks": ToolSpec(
         name="list_chunks",
         display_name="精读文档",
         description="按 chunk_id 读一块全文，或按 document_id 分页列出分块正文。",
         category="knowledge",
         prompt_line=(
-            "- list_chunks：doc_retrieval 之后精读。"
+            "- list_chunks：doc_retrieval 或 grep_chunks 之后精读。"
             "摘要不够时用返回的 chunk_id 读一块，或用 document_id 翻页读整篇；"
-            "不能代替语义检索。"
+            "不能代替语义检索或关键词搜索。"
         ),
         requires_kb=True,
         produces="citations",
+    ),
+    "get_document_info": ToolSpec(
+        name="get_document_info",
+        display_name="文档信息",
+        description="查看文档文件名、解析状态、分块数；不含正文。",
+        category="knowledge",
+        prompt_line=(
+            "- get_document_info：文档元数据（文件名、解析状态、分块数），没有正文。"
+            "可传 document_ids，或不传以列出本轮知识库中的文档。"
+            "要读内容请用 list_chunks。"
+        ),
+        requires_kb=True,
+        produces="text",
     ),
     "query_knowledge_graph": ToolSpec(
         name="query_knowledge_graph",
@@ -116,7 +142,9 @@ BUILTIN_PPT_AGENT_ID = "agent-ppt"
 REASONING_TOOL_NAMES: tuple[str, ...] = (
     "write_plan",
     "doc_retrieval",
+    "grep_chunks",
     "list_chunks",
+    "get_document_info",
     "query_knowledge_graph",
     "web_search",
     "web_fetch",
@@ -135,7 +163,7 @@ BUILTIN_PPT_AGENT_PROMPT = """你是 KnowSphere 的 PPT 助手，专门把用户
 
 工作方式：
 1. 先确认主题、受众、页数；用户没说就按 6–10 页、面向内部汇报来做。
-2. 需要知识库中的事实时先调用 doc_retrieval；摘要不够再用 list_chunks 按 chunk_id 或 document_id 精读。禁止编造库内人物、项目、数据。
+2. 需要知识库中的事实时先调用 doc_retrieval；专名/编号可用 grep_chunks；摘要不够再用 list_chunks 按 chunk_id 或 document_id 精读。禁止编造库内人物、项目、数据。
 3. 材料足够后调用 generate_pptx：传入 title 和 slides（每页 title + bullets 要点列表）。
 4. 不要在工具成功返回之前声称已经生成文件。
 5. 用户要改某一页或整体风格时，基于上一轮大纲重新调用 generate_pptx，生成完整新文件。

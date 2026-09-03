@@ -21,6 +21,8 @@ from pydantic import BaseModel, Field
 from api.chat import get_agent, get_checkpointer
 from config.settings import settings
 from services.stream_manager import SessionRun, SessionRunBusy, get_stream_manager
+from skills.catalog import ordered_skill_names
+from skills.must_use import inject_must_use_messages
 from utils.agent_runtime import load_agent, resolve_max_iterations
 from utils.attachment_resolve import (
     build_human_message_with_attachments,
@@ -396,6 +398,10 @@ class SessionStreamRequest(BaseModel):
         default=None,
         description="本轮是否开启联网搜索（输入框开关；管理员 WEB_SEARCH_ENABLED=false 时无效）",
     )
+    skill_names: list[str] | None = Field(
+        default=None,
+        description="本轮 @Skill 点名（须为当前智能体已绑定技能；不收回其它已绑定技能）",
+    )
 
 def _parse_create(
     body: SessionCreateRequest,
@@ -595,14 +601,38 @@ def _spawn_background(coro, name: str) -> asyncio.Task[None]:
     return task
 
 
+def _preview_skills(msg: Any | None) -> list[dict[str, str]]:
+    kwargs = getattr(msg, "additional_kwargs", None) or {}
+    raw = kwargs.get("ks_skills")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw:
+        name = ""
+        if isinstance(item, str):
+            name = item.strip()
+        elif isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append({"name": name})
+    return out
+
+
 def _preview_from_human(msg: Any | None, fallback_text: str) -> dict[str, Any]:
     if msg is None:
         return {"content": fallback_text, "images": [], "attachments": []}
-    return {
+    preview: dict[str, Any] = {
         "content": message_query_text(msg) or fallback_text,
         "images": message_images(msg),
         "attachments": message_attachments(msg),
     }
+    skills = _preview_skills(msg)
+    if skills:
+        preview["skills"] = skills
+    return preview
 
 
 async def _persist_partial_answer(agent: Any, sid_str: str, run: SessionRun) -> None:
@@ -707,6 +737,10 @@ async def _execute_session_run(
                 return
 
         human = input_messages[0] if input_messages else None
+        pinned = (config.get("configurable") or {}).get("pinned_skill_names") or []
+        if pinned:
+            input_messages = inject_must_use_messages(input_messages, pinned)
+            human = input_messages[0] if input_messages else human
         mgr.set_user_preview(sid_str, _preview_from_human(human, query_text))
 
         async for mode, payload in agent.astream(
@@ -997,6 +1031,13 @@ async def stream_session_run(session_id: str, body: SessionStreamRequest) -> Str
         configurable["vlm_model_id"] = vlm_model_id
     if agent_id:
         configurable["agent_id"] = agent_id
+    if attachment_ids:
+        configurable["attachment_ids"] = attachment_ids
+    bound_skills = ordered_skill_names((agent_rec or {}).get("skill_names") or [])
+    pinned = ordered_skill_names(body.skill_names or [])
+    pinned = [n for n in pinned if n in set(bound_skills)]
+    if pinned:
+        configurable["pinned_skill_names"] = pinned
     config = {
         "configurable": configurable,
         "recursion_limit": resolve_max_iterations(agent_id),
@@ -1007,6 +1048,8 @@ async def stream_session_run(session_id: str, body: SessionStreamRequest) -> Str
         "images": [],
         "attachments": [{"id": aid, "file_name": ""} for aid in attachment_ids],
     }
+    if pinned:
+        preview["skills"] = [{"name": n} for n in pinned]
     run = _start_session_run(
         agent=agent,
         sid=sid,

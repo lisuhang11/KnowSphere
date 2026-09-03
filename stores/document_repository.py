@@ -181,6 +181,67 @@ class DocumentRepository:
             for r in rows
         ]
 
+    def list_document_infos(
+        self,
+        kb_ids: Sequence[int],
+        document_ids: Sequence[str] | None = None,
+        owner: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """按知识库范围列出文档元数据（不含正文）。
+
+        chunk_count 只计可检索子块，与 list_chunks 分页一致。
+        document_ids 非空时只返回这些文档（仍受 kb/owner 约束）。
+        """
+        owner = owner or get_current_owner() or settings.default_owner
+        ids = [int(k) for k in kb_ids if k is not None]
+        wanted = [str(d).strip() for d in (document_ids or []) if str(d).strip()]
+        if not ids:
+            return {"total": 0, "documents": []}
+        cap = max(1, min(int(limit or 50), 200))
+        filters = ["doc.knowledge_base_id = ANY(%s)", "doc.owner = %s"]
+        params: list[Any] = [ids, owner]
+        if wanted:
+            filters.append("doc.document_id = ANY(%s)")
+            params.append(wanted)
+        where = " AND ".join(filters)
+        with psycopg.connect(self.dsn) as conn:
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM documents doc WHERE {where}",
+                tuple(params),
+            ).fetchone()[0]
+            rows = conn.execute(
+                f"""
+                SELECT doc.document_id, doc.file_name, doc.status, doc.error_message,
+                       doc.stage, doc.updated_at, doc.knowledge_base_id,
+                       COUNT(ch.id) FILTER (WHERE ch.chunk_type = 'text') AS chunk_count
+                FROM documents doc
+                LEFT JOIN chunks ch
+                    ON ch.document_id = doc.document_id AND ch.owner = doc.owner
+                WHERE {where}
+                GROUP BY doc.document_id
+                ORDER BY doc.updated_at DESC
+                LIMIT %s
+                """,
+                (*params, cap),
+            ).fetchall()
+        return {
+            "total": int(total or 0),
+            "documents": [
+                {
+                    "document_id": r[0],
+                    "file_name": r[1],
+                    "status": r[2],
+                    "error_message": r[3],
+                    "stage": r[4],
+                    "updated_at": r[5].isoformat() if r[5] else None,
+                    "knowledge_base_id": r[6],
+                    "chunk_count": int(r[7] or 0),
+                }
+                for r in rows
+            ],
+        }
+
     def delete_document(self, document_id: str, owner: str | None = None) -> int:
         """删除某文档的全部分块（同一事务内一并清理 documents 行），返回删除条数。"""
         owner = owner or get_current_owner() or settings.default_owner

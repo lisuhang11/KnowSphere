@@ -6,6 +6,7 @@ from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
+
 def _configurable(config: RunnableConfig | None) -> dict[str, Any]:
     if not config:
         return {}
@@ -74,6 +75,38 @@ def agent_id_from_config(config: RunnableConfig | None) -> str | None:
     if not isinstance(raw, str) or not raw.strip():
         return None
     return raw.strip()
+
+
+def attachment_ids_from_config(config: RunnableConfig | None) -> list[str]:
+    configurable = _configurable(config)
+    raw = configurable.get("attachment_ids")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        ident = str(item or "").strip()
+        if not ident or ident in seen:
+            continue
+        seen.add(ident)
+        out.append(ident)
+    return out
+
+
+def pinned_skill_names_from_config(config: RunnableConfig | None) -> list[str]:
+    configurable = _configurable(config)
+    raw = configurable.get("pinned_skill_names")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        name = str(item or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
 
 
 def chat_model_id_from_config(config: RunnableConfig | None) -> str | None:

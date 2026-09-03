@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import type { KnowledgeBase } from '@/api/knowledgeBases'
 import type { ModelInfo } from '@/api/models'
@@ -17,6 +17,7 @@ import {
   type PendingChatAttachment,
 } from '@/utils/chatImages'
 import { formatFileSize, getFileExt } from '@/utils/fileFormat'
+import { SKILL_ICON, mentionQueryAt, uniqueSkillNames } from '@/utils/skillMention'
 import sendIcon from '@/assets/img/sending-aircraft.svg'
 
 const props = defineProps<{
@@ -48,6 +49,7 @@ const emit = defineEmits<{
 }>()
 
 const input = defineModel<string>('input', { default: '' })
+const selectedSkillNames = defineModel<string[]>('selectedSkillNames', { default: () => [] })
 
 const textareaRef = ref<{ $el?: HTMLElement }>()
 const imageInputRef = ref<HTMLInputElement>()
@@ -79,6 +81,139 @@ const selectedAgent = computed(() =>
   props.agents.find((a) => a.id === props.selectedAgentId && a.status !== 'disabled'),
 )
 
+const boundSkills = computed(() => selectedAgent.value?.skills || [])
+const selectedSkillChips = computed(() => {
+  const wanted = new Set(selectedSkillNames.value)
+  return boundSkills.value.filter((s) => wanted.has(s.name))
+})
+const showSkillMention = computed(() => boundSkills.value.length > 0)
+
+const mentionOpen = ref(false)
+const mentionQuery = ref('')
+const mentionStart = ref(-1)
+const mentionIndex = ref(0)
+const mentionByButton = ref(false)
+const rootRef = ref<HTMLElement>()
+
+const filteredSkills = computed(() => {
+  const selected = new Set(selectedSkillNames.value)
+  const q = mentionQuery.value.toLowerCase()
+  return boundSkills.value.filter((s) => {
+    if (selected.has(s.name)) return false
+    if (!q) return true
+    return s.name.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q)
+  })
+})
+
+function textareaEl(): HTMLTextAreaElement | null {
+  return (textareaRef.value?.$el?.querySelector('textarea') as HTMLTextAreaElement | null) || null
+}
+
+function closeMention() {
+  mentionOpen.value = false
+  mentionByButton.value = false
+  mentionQuery.value = ''
+  mentionStart.value = -1
+}
+
+function detectMention() {
+  if (!showSkillMention.value) {
+    closeMention()
+    return
+  }
+  if (mentionByButton.value && mentionOpen.value) {
+    const el = textareaEl()
+    const cursor = el?.selectionStart ?? input.value.length
+    if (cursor !== mentionStart.value) {
+      mentionByButton.value = false
+    } else {
+      return
+    }
+  }
+  const el = textareaEl()
+  const cursor = el?.selectionStart ?? input.value.length
+  const hit = mentionQueryAt(input.value, cursor)
+  if (!hit) {
+    closeMention()
+    return
+  }
+  mentionByButton.value = false
+  mentionStart.value = hit.start
+  mentionQuery.value = hit.query
+  mentionOpen.value = true
+  const max = Math.max(filteredSkills.value.length - 1, 0)
+  if (mentionIndex.value > max) mentionIndex.value = 0
+}
+
+function stripMentionQuery() {
+  if (mentionByButton.value || mentionStart.value < 0) return
+  const el = textareaEl()
+  const cursor = el?.selectionStart ?? input.value.length
+  const before = input.value.slice(0, mentionStart.value)
+  const after = input.value.slice(cursor)
+  input.value = `${before}${after}`
+  void nextTick(() => {
+    const node = textareaEl()
+    if (!node) return
+    const pos = before.length
+    node.focus()
+    node.setSelectionRange(pos, pos)
+    autoResize()
+  })
+}
+
+function pickSkill(name: string) {
+  selectedSkillNames.value = uniqueSkillNames([...selectedSkillNames.value, name])
+  stripMentionQuery()
+  closeMention()
+  void nextTick(() => textareaEl()?.focus())
+}
+
+function removeSkillChip(name: string) {
+  selectedSkillNames.value = selectedSkillNames.value.filter((item) => item !== name)
+}
+
+function openMentionFromButton() {
+  if (!showSkillMention.value || props.streaming) return
+  mentionByButton.value = true
+  mentionQuery.value = ''
+  mentionIndex.value = 0
+  const el = textareaEl()
+  mentionStart.value = el?.selectionStart ?? input.value.length
+  mentionOpen.value = true
+  void nextTick(() => el?.focus())
+}
+
+function onDocumentPointerDown(event: MouseEvent) {
+  if (!mentionOpen.value) return
+  const root = rootRef.value
+  if (root && event.target instanceof Node && root.contains(event.target)) return
+  closeMention()
+}
+
+watch(
+  () => props.selectedAgentId,
+  () => {
+    closeMention()
+  },
+)
+
+watch(
+  boundSkills,
+  (list) => {
+    const allowed = list.map((s) => s.name)
+    selectedSkillNames.value = uniqueSkillNames(selectedSkillNames.value, allowed)
+  },
+  { immediate: true },
+)
+
+onMounted(() => {
+  document.addEventListener('mousedown', onDocumentPointerDown)
+})
+onUnmounted(() => {
+  document.removeEventListener('mousedown', onDocumentPointerDown)
+})
+
 const agentHasWeb = computed(
   () => selectedAgent.value?.tools?.some((t) => t.requires_web) ?? false,
 )
@@ -102,10 +237,11 @@ const showGraphStatus = computed(() => agentHasGraph.value)
 const inputPlaceholder = computed(() => {
   const hasKb = selectedKbCount.value > 0
   const web = showWebToggle.value && webSearchEnabled.value
-  if (hasKb && web) return '可检索知识库，也可联网搜索。Enter 发送'
-  if (hasKb) return '基于已选知识库提问。Enter 发送，Shift + Enter 换行'
-  if (web) return '可联网搜索公开信息。Enter 发送，Shift + Enter 换行'
-  return '请输入问题，Enter 发送，Shift + Enter 换行'
+  const skillHint = boundSkills.value.length ? '输入 @ 可点名技能。' : ''
+  if (hasKb && web) return `${skillHint}可检索知识库，也可联网搜索。Enter 发送`
+  if (hasKb) return `${skillHint}基于已选知识库提问。Enter 发送，Shift + Enter 换行`
+  if (web) return `${skillHint}可联网搜索公开信息。Enter 发送，Shift + Enter 换行`
+  return skillHint ? `${skillHint}Enter 发送，Shift + Enter 换行` : '请输入问题，Enter 发送，Shift + Enter 换行'
 })
 
 const webTooltip = computed(() => {
@@ -145,7 +281,9 @@ const fileAttachments = computed(() =>
   props.pendingAttachments.filter((a) => !a.previewUrl && !a.file.type.startsWith('image/')),
 )
 
-const hasSelectedTags = computed(() => selectedKbs.value.length > 0)
+const hasSelectedTags = computed(
+  () => selectedKbs.value.length > 0 || selectedSkillChips.value.length > 0,
+)
 const selectedKbCount = computed(() => selectedKbs.value.length)
 const vlmReady = computed(() => hasUsableVlm(props.allModels))
 const imageUploadDisabled = computed(
@@ -189,10 +327,44 @@ function triggerFileUpload() {
 
 function onKeydown(_value: string, context: { e: KeyboardEvent }) {
   const e = context.e
+  if (mentionOpen.value && filteredSkills.value.length) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      mentionIndex.value = (mentionIndex.value + 1) % filteredSkills.value.length
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      mentionIndex.value =
+        (mentionIndex.value - 1 + filteredSkills.value.length) % filteredSkills.value.length
+      return
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      const skill = filteredSkills.value[mentionIndex.value]
+      if (skill) pickSkill(skill.name)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeMention()
+      return
+    }
+  }
+  if (e.key === 'Backspace' && !e.isComposing && !input.value && selectedSkillNames.value.length) {
+    e.preventDefault()
+    selectedSkillNames.value = selectedSkillNames.value.slice(0, -1)
+    return
+  }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault()
     emit('send')
   }
+}
+
+function onInput() {
+  detectMention()
+  autoResize()
 }
 
 function autoResize() {
@@ -227,7 +399,7 @@ defineExpose({
       @change="emit('attachmentSelect', $event)"
     />
 
-    <div class="rich-input-container" :class="{ 'has-tags': hasSelectedTags }">
+    <div ref="rootRef" class="rich-input-container" :class="{ 'has-tags': hasSelectedTags }">
       <!-- 图片预览 -->
       <div v-if="imageAttachments.length" class="image-preview-bar">
         <div v-for="item in imageAttachments" :key="item.id" class="image-preview-item">
@@ -266,8 +438,21 @@ defineExpose({
         </div>
       </div>
 
-      <!-- 已选知识库标签（可多选） -->
+      <!-- 已选知识库 / 技能标签 -->
       <div v-if="hasSelectedTags" class="selected-tags-inline">
+        <span
+          v-for="skill in selectedSkillChips"
+          :key="'sk-' + skill.name"
+          class="mention-chip mention-chip--skill"
+        >
+          <span class="mention-chip__icon-wrap mention-chip__icon-wrap--skill">
+            <span class="mention-chip__icon">
+              <t-icon :name="SKILL_ICON" />
+            </span>
+          </span>
+          <span class="mention-chip__name" :title="skill.description || skill.name">{{ skill.name }}</span>
+          <span class="mention-chip__remove" @click.stop="removeSkillChip(skill.name)">×</span>
+        </span>
         <span
           v-for="kb in selectedKbs"
           :key="kb.id"
@@ -292,8 +477,38 @@ defineExpose({
         :placeholder="inputPlaceholder"
         :autosize="true"
         @keydown="onKeydown"
-        @input="autoResize"
+        @input="onInput"
       />
+
+      <div
+        v-if="mentionOpen && showSkillMention"
+        class="skill-mention-menu"
+        role="listbox"
+      >
+        <div class="skill-mention-menu__header">
+          <t-icon :name="SKILL_ICON" size="16px" />
+          <span>技能</span>
+        </div>
+        <p v-if="!filteredSkills.length" class="skill-mention-empty">
+          {{ mentionQuery ? '没有匹配的技能' : '已添加当前智能体的全部技能' }}
+        </p>
+        <button
+          v-for="(skill, i) in filteredSkills"
+          :key="skill.name"
+          type="button"
+          class="skill-mention-item"
+          :class="{ active: i === mentionIndex }"
+          @mousedown.prevent="pickSkill(skill.name)"
+        >
+          <span class="skill-mention-item__icon">
+            <t-icon :name="SKILL_ICON" size="16px" />
+          </span>
+          <span class="skill-mention-item__text">
+            <span class="skill-mention-item__name">{{ skill.name }}</span>
+            <span class="skill-mention-item__desc">{{ skill.description }}</span>
+          </span>
+        </button>
+      </div>
 
       <div class="control-bar">
         <div class="control-left">
@@ -370,6 +585,22 @@ defineExpose({
                 />
               </svg>
               <span v-if="selectedKbCount > 0" class="kb-count">{{ selectedKbCount }}</span>
+            </div>
+          </t-tooltip>
+
+          <t-tooltip
+            v-if="showSkillMention"
+            content="点名技能（也可输入 @）"
+            placement="top"
+            theme="light"
+          >
+            <div
+              class="control-btn skill-btn"
+              :class="{ active: selectedSkillChips.length > 0 || mentionOpen }"
+              @click.stop="openMentionFromButton"
+            >
+              <t-icon :name="SKILL_ICON" size="16px" class="control-icon" />
+              <span v-if="selectedSkillChips.length" class="skill-count">{{ selectedSkillChips.length }}</span>
             </div>
           </t-tooltip>
 
@@ -475,6 +706,102 @@ defineExpose({
   border-color: var(--td-brand-color);
 }
 
+.skill-mention-menu {
+  position: absolute;
+  left: 12px;
+  width: 280px;
+  max-width: calc(100% - 24px);
+  bottom: calc(100% - 8px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 12px;
+  background: var(--td-bg-color-container);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.skill-mention-menu__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--td-text-color-secondary);
+}
+
+.skill-mention-menu__header .t-icon {
+  color: #7c3aed;
+}
+
+.skill-mention-empty {
+  margin: 0;
+  padding: 10px 8px;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+}
+
+.skill-mention-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.skill-mention-item.active,
+.skill-mention-item:hover {
+  background: var(--td-bg-color-secondarycontainer);
+}
+
+.skill-mention-item__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: color-mix(in srgb, #7c3aed 12%, transparent);
+  color: #7c3aed;
+}
+
+.skill-mention-item__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.skill-mention-item__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--td-text-color-primary);
+}
+
+.skill-mention-item__desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--td-text-color-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .selected-tags-inline {
   display: flex;
   flex-wrap: wrap;
@@ -503,6 +830,16 @@ defineExpose({
 
 .mention-chip--kb .mention-chip__icon-wrap {
   color: var(--td-brand-color);
+}
+
+.mention-chip--skill .mention-chip__icon-wrap--skill {
+  color: #7c3aed;
+}
+
+.mention-chip__icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .mention-chip__icon {
@@ -744,6 +1081,7 @@ defineExpose({
 }
 
 .kb-btn,
+.skill-btn,
 .image-upload-btn,
 .attachment-upload-btn,
 .web-btn,
@@ -764,6 +1102,11 @@ defineExpose({
   color: var(--td-brand-color);
 }
 
+.skill-btn.active {
+  background: rgba(124, 58, 237, 0.1);
+  color: #7c3aed;
+}
+
 .kb-count,
 .image-count,
 .attachment-count {
@@ -771,6 +1114,22 @@ defineExpose({
   top: -2px;
   right: -2px;
   background: var(--td-brand-color);
+  color: #fff;
+  font-size: 10px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.skill-count {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  background: #7c3aed;
   color: #fff;
   font-size: 10px;
   width: 14px;
