@@ -5,11 +5,24 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from api import celery_app  # noqa: F401 — 确保 Celery 使用 Redis broker
 from api.tasks import run_evaluation_task
 from config.settings import get_current_owner, settings
-from evals.datasets import list_datasets, save_json_dataset, validate_json_dataset
+from evals.config import default_metric_layers
+from evals.datasets import (
+    delete_json_dataset,
+    ensure_dataset_available,
+    get_dataset_contexts,
+    get_dataset_preview,
+    list_datasets,
+    list_squad_v2_articles,
+    patch_json_dataset,
+    save_json_dataset,
+    sync_squad_v2_dataset,
+    validate_json_dataset,
+)
 from evals.schemas import EvalConfig
 from utils.eval_store import EvalStore
 
@@ -19,7 +32,6 @@ class EvaluationRequest(BaseModel):
     dataset_id: str = "campus_demo"
     suite: Literal["rag_bench", "rag_quality", "intent_bench"] = "rag_bench"
     pipeline_profile: Literal["rag_fixed", "rag_agent", "intent"] = "rag_fixed"
-    corpus_mode: Literal["shared", "isolated"] | None = None
     sample_limit: int | None = Field(default=None, ge=1, le=500)
     kb_template_id: int | None = None
     chat_model_id: str | None = None
@@ -27,22 +39,26 @@ class EvaluationRequest(BaseModel):
     config_overrides: dict[str, Any] = Field(default_factory=dict)
     metrics: list[str] | None = Field(
         default=None,
-        description="指标层：retrieval / generation / ragas / intent；缺省随 suite 选择",
+        description="指标层：retrieval / generation / ragas / intent / squad；缺省随 suite 与数据集选择",
     )
     workers: int = Field(default=4, ge=1, le=16)
 
 class DatasetUploadRequest(BaseModel):
-    id: str | None = None
-    corpus_mode: Literal["shared", "isolated"] = "shared"
-    passages: list[dict[str, Any]] = Field(default_factory=list)
-    items: list[dict[str, Any]]
+    model_config = ConfigDict(extra="allow")
 
-def _default_metrics(suite: str) -> list[str]:
-    if suite == "rag_quality":
-        return ["ragas"]
-    if suite == "intent_bench":
-        return ["intent"]
-    return ["retrieval", "generation"]
+    id: str | None = None
+    description: str | None = None
+    source: str | None = None
+    overwrite: bool = False
+    title: str | None = None
+    paragraphs: list[dict[str, Any]] | None = None
+    passages: list[dict[str, Any]] | None = None
+    items: list[dict[str, Any]] | None = None
+
+
+class DatasetPatchRequest(BaseModel):
+    description: str | None = None
+    source: str | None = None
 
 def _build_config(req: EvaluationRequest) -> EvalConfig:
     owner = get_current_owner() or settings.default_owner
@@ -61,13 +77,12 @@ def _build_config(req: EvaluationRequest) -> EvalConfig:
         dataset_id=req.dataset_id,
         suite=req.suite,
         pipeline_profile=profile,
-        corpus_mode=req.corpus_mode or "shared",
         sample_limit=req.sample_limit,
         kb_template_id=req.kb_template_id,
         chat_model_id=req.chat_model_id,
         rerank_model_id=req.rerank_model_id,
         config_overrides=overrides,
-        metric_layers=req.metrics or _default_metrics(req.suite),
+        metric_layers=req.metrics or default_metric_layers(req.suite, req.dataset_id),
         workers=req.workers,
         owner=owner,
     )
@@ -94,14 +109,16 @@ def create_evaluation(req: EvaluationRequest) -> dict[str, Any]:
         try:
             from evals.datasets import load_dataset
 
-            if req.dataset_id != "hotpot":
+            ensure_dataset_available(req.dataset_id)
+            if req.dataset_id not in ("hotpot", "squad_v2"):
                 ds = load_dataset(req.dataset_id, sample_limit=1)
-                if req.suite == "intent_bench":
-                    if not (ds.items and (ds.items[0].meta or {}).get("intent_gt")):
-                        raise HTTPException(
-                            status_code=400,
-                            detail="intent_bench 需要含 meta.intent_gt 的意图数据集（如 intent_demo）",
-                        )
+                if req.suite == "intent_bench" and not (
+                    ds.items and (ds.items[0].meta or {}).get("intent_gt")
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="intent_bench 需要含 meta.intent_gt 的意图数据集（如 intent_demo）",
+                    )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except HTTPException:
@@ -109,7 +126,19 @@ def create_evaluation(req: EvaluationRequest) -> dict[str, Any]:
     config = _build_config(req)
     store = EvalStore()
     task = store.create_task(config)
-    run_evaluation_task.delay(task["id"])
+    try:
+        run_evaluation_task.delay(task["id"])
+    except Exception as exc:
+        store.delete_task(task["id"])
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "评测任务入队失败，请确认 Redis 与 Celery worker 已启动。"
+                " 启动 Redis: docker compose up -d redis；"
+                " 启动 worker: uv run celery -A api.celery_app.celery worker -B --loglevel=info -Q documents。"
+                f" 原因: {exc}"
+            ),
+        ) from exc
     return {"success": True, "data": task}
 
 @evaluation_router.get("")
@@ -129,14 +158,81 @@ def get_datasets() -> dict[str, Any]:
 def upload_dataset(req: DatasetUploadRequest) -> dict[str, Any]:
     """上传 JSON 评测数据集（保存到 evals/datasets/samples/{id}.json）。"""
     payload = req.model_dump()
+    overwrite = bool(payload.pop("overwrite", False))
     if req.id:
         payload["id"] = req.id
     try:
         validate_json_dataset(payload)
-        saved = save_json_dataset(payload)
+        saved = save_json_dataset(payload, overwrite=overwrite)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"success": True, "data": saved}
+
+@evaluation_router.get("/datasets/{dataset_id}/contexts")
+def get_dataset_contexts_view(
+    dataset_id: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(5, ge=1, le=50),
+    title: str | None = Query(None, description="SQuAD 文章 title 过滤"),
+) -> dict[str, Any]:
+    try:
+        data = get_dataset_contexts(dataset_id, offset=offset, limit=limit, title=title)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"success": True, "data": data}
+
+
+@evaluation_router.get("/datasets/squad_v2/articles")
+def get_squad_v2_articles() -> dict[str, Any]:
+    try:
+        items = list_squad_v2_articles()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"success": True, "data": items}
+
+
+@evaluation_router.post("/datasets/squad_v2/sync")
+def sync_squad_v2(force: bool = Query(False, description="强制重新下载")) -> dict[str, Any]:
+    try:
+        saved = sync_squad_v2_dataset(force=force)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"success": True, "data": saved}
+
+
+@evaluation_router.get("/datasets/{dataset_id}")
+def get_dataset(dataset_id: str) -> dict[str, Any]:
+    try:
+        preview = get_dataset_preview(dataset_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"success": True, "data": preview}
+
+@evaluation_router.patch("/datasets/{dataset_id}")
+def patch_dataset(dataset_id: str, req: DatasetPatchRequest) -> dict[str, Any]:
+    if req.description is None and req.source is None:
+        raise HTTPException(status_code=400, detail="请提供 description 或 source")
+    try:
+        saved = patch_json_dataset(dataset_id, description=req.description, source=req.source)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"success": True, "data": saved}
+
+@evaluation_router.delete("/datasets/{dataset_id}")
+def remove_dataset(dataset_id: str) -> dict[str, Any]:
+    try:
+        delete_json_dataset(dataset_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"success": True, "data": {"id": dataset_id}}
 
 @evaluation_router.get("/{task_id}/samples")
 def get_evaluation_samples(
@@ -150,3 +246,12 @@ def get_evaluation_samples(
     rows = store.list_samples(task_id, limit=limit, offset=offset)
     total = store.count_samples(task_id)
     return {"success": True, "data": {"items": rows, "total": total}}
+
+
+@evaluation_router.delete("/{task_id}")
+def remove_evaluation(task_id: str) -> dict[str, Any]:
+    store = EvalStore()
+    if not store.get_task(task_id):
+        raise HTTPException(status_code=404, detail="任务不存在")
+    store.delete_task(task_id)
+    return {"success": True, "data": {"id": task_id}}

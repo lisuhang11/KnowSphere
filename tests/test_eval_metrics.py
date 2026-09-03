@@ -47,6 +47,7 @@ def test_list_datasets():
     ids = {d["id"] for d in list_datasets()}
     assert "campus_demo" in ids
     assert "hotpot" in ids
+    assert "squad_v2" in ids
 
 def test_validate_json_dataset():
     from evals.datasets import validate_json_dataset

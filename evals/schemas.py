@@ -7,7 +7,6 @@ from typing import Any, Literal
 
 SuiteName = Literal["rag_bench", "rag_quality", "intent_bench"]
 PipelineProfile = Literal["rag_fixed", "rag_agent", "intent"]
-CorpusMode = Literal["shared", "isolated"]
 TaskStatus = Literal["pending", "running", "success", "failed"]
 
 @dataclass
@@ -28,7 +27,6 @@ class QAPair:
 @dataclass
 class EvalDataset:
     id: str
-    corpus_mode: CorpusMode
     passages: list[Passage]
     items: list[QAPair]
 
@@ -38,6 +36,8 @@ class MetricInput:
     retrieval_ids: list[int]
     generated_text: str
     generated_gt: str
+    answers: list[str] = field(default_factory=list)
+    is_impossible: bool = False
 
 @dataclass
 class RetrievalMetrics:
@@ -66,18 +66,29 @@ class IntentMetrics:
 
 
 @dataclass
+class SquadMetrics:
+    """SQuAD 2.0 单题指标。em/f1 为官方口径；span_hit 看 gold span 是否出现在回答中。"""
+
+    em: float = 0.0
+    f1: float = 0.0
+    span_hit: float = 0.0
+    abstained: float = 0.0
+    impossible: float = 0.0
+
+
+@dataclass
 class SampleMetrics:
     retrieval: RetrievalMetrics | None = None
     generation: GenerationMetrics | None = None
     ragas: dict[str, float] | None = None
     intent: IntentMetrics | None = None
+    squad: SquadMetrics | None = None
 
 @dataclass
 class EvalConfig:
     dataset_id: str
     suite: SuiteName = "rag_bench"
     pipeline_profile: PipelineProfile = "rag_fixed"
-    corpus_mode: CorpusMode = "shared"
     sample_limit: int | None = None
     kb_template_id: int | None = None
     chat_model_id: str | None = None
@@ -92,7 +103,6 @@ class EvalConfig:
             "dataset_id": self.dataset_id,
             "suite": self.suite,
             "pipeline_profile": self.pipeline_profile,
-            "corpus_mode": self.corpus_mode,
             "sample_limit": self.sample_limit,
             "kb_template_id": self.kb_template_id,
             "chat_model_id": self.chat_model_id,

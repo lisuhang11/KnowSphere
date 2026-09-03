@@ -237,7 +237,6 @@ def run_evaluation_task(self, task_id: str) -> dict:
         dataset_id=task["dataset_id"],
         suite=snap.get("suite", task["suite"]),
         pipeline_profile=snap.get("pipeline_profile", task["pipeline_profile"]),
-        corpus_mode=snap.get("corpus_mode", "shared"),
         sample_limit=snap.get("sample_limit"),
         kb_template_id=snap.get("kb_template_id"),
         chat_model_id=snap.get("chat_model_id"),

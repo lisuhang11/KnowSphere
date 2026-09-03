@@ -32,10 +32,10 @@ def read_skill(
     config: Annotated[RunnableConfig, InjectedToolArg] = None,
     runtime: Annotated[ToolRuntime | None, InjectedToolArg] = None,
 ) -> str:
-    """读取已绑定技能的说明书或技能包内文件。匹配到技能后先调用本工具再执行脚本。
+    """读取已绑定技能的说明书或技能包内文件。匹配到技能后先调用本工具。
 
     不传 file_path 时返回 SKILL.md 正文，并列出技能内可读取的相对路径。
-    file_path 为技能目录内相对路径，例如 scripts/extract_text.py。
+    只有 Files 里出现的相对路径才能再作为 file_path 读取；没有 scripts/ 就不要传。
     """
     writer = getattr(runtime, "stream_writer", None) if runtime is not None else None
     name = (skill_name or "").strip()
@@ -62,7 +62,16 @@ def read_skill(
     if rel:
         path = resolve_skill_file(name, rel)
         if path is None:
-            msg = f"无法读取 {rel}：路径无效、越界，或不在技能目录内。"
+            available = list_skill_files(name)
+            listing = "、".join(available) if available else "（无）"
+            if any(item.startswith("scripts/") for item in available):
+                hint = f"可读取：{listing}。"
+            else:
+                hint = (
+                    f"可读取：{listing}。本技能没有 scripts/，不要猜测脚本路径；"
+                    "按 SKILL.md 调用已绑定工具（如 generate_pptx）。"
+                )
+            msg = f"无法读取 {rel}：不是技能目录内的文件。{hint}"
             emit_tool_result("read_skill", msg, success=False, writer=writer)
             return msg
         try:
@@ -83,4 +92,10 @@ def read_skill(
     listing = "\n".join(f"- {item}" for item in files) if files else "- （无其它文件）"
     body = _clip(rec.instructions or "（SKILL.md 正文为空）")
     emit_tool_result("read_skill", f"已加载技能 {name}", writer=writer)
-    return f"# {name}\n\n{body}\n\n## Files\n{listing}"
+    extra = ""
+    if not any(item.startswith("scripts/") for item in files):
+        extra = (
+            "\n\n本技能没有 scripts/。不要再 read_skill 其它路径，"
+            "按上文调用已绑定工具（如 generate_pptx）。"
+        )
+    return f"# {name}\n\n{body}\n\n## Files\n{listing}{extra}"

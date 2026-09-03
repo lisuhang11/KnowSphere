@@ -45,11 +45,22 @@ const INTENT_LABELS: Record<string, string> = {
   macro_f1: 'Macro-F1',
 }
 
+const SQUAD_LABELS: Record<string, string> = {
+  em: 'Overall EM',
+  f1: 'Overall F1',
+  span_hit: 'Span Hit',
+  has_ans_em: 'HasAns EM',
+  has_ans_f1: 'HasAns F1',
+  no_ans_acc: 'NoAns Acc',
+  abstain_rate: '拒答率',
+}
+
 const METRIC_ORDER: Record<string, string[]> = {
   retrieval: ['precision', 'recall', 'mrr', 'ndcg3', 'ndcg10', 'map'],
   generation: ['rouge1', 'rouge2', 'rougel', 'bleu1', 'bleu2', 'bleu4'],
   ragas: ['faithfulness', 'answer_relevancy', 'context_precision', 'context_recall'],
   intent: ['accuracy', 'routing_accuracy', 'macro_f1'],
+  squad: ['em', 'f1', 'span_hit', 'has_ans_em', 'has_ans_f1', 'no_ans_acc', 'abstain_rate'],
 }
 
 function metricItems(
@@ -59,7 +70,9 @@ function metricItems(
 ): MetricCardItem[] {
   if (!metrics) return []
   const keys = order.filter((k) => typeof metrics[k] === 'number')
-  const extras = Object.keys(metrics).filter((k) => !order.includes(k) && typeof metrics[k] === 'number')
+  const extras = Object.keys(metrics).filter(
+    (k) => !order.includes(k) && typeof metrics[k] === 'number' && !k.endsWith('_count'),
+  )
   return [...keys, ...extras].map((key) => ({
     key,
     label: labels[key] || key,
@@ -138,11 +151,66 @@ export function buildMetricCardGroups(summary: Record<string, unknown> | null | 
     groups.push({ id: 'intent', title: '意图识别', items: intentItems })
   }
 
+  const sm = summary.squad_metrics as Record<string, number> | undefined
+  const squadItems = metricItems(sm, SQUAD_LABELS, METRIC_ORDER.squad)
+  if (squadItems.length) {
+    groups.push({ id: 'squad', title: 'SQuAD EM/F1', items: squadItems })
+  }
+
   return groups
 }
 
 export function hasMetricCards(summary: Record<string, unknown> | null | undefined): boolean {
   return buildMetricCardGroups(summary).some((g) => g.items.length > 0)
+}
+
+export function highlightMetric(summary: Record<string, unknown> | null | undefined): string {
+  if (!summary) return '—'
+  const squad = summary.squad_metrics as Record<string, number> | undefined
+  if (squad && typeof squad.f1 === 'number') {
+    const parts = [`F1 ${formatMetricValue(squad.f1)}`]
+    if (typeof squad.no_ans_acc === 'number') parts.push(`NoAns ${formatMetricValue(squad.no_ans_acc)}`)
+    return parts.join(' · ')
+  }
+  const ragas = summary.ragas_metrics as Record<string, number> | undefined
+  if (ragas && typeof ragas.faithfulness === 'number') {
+    return `忠实度 ${formatMetricValue(ragas.faithfulness)}`
+  }
+  const intent = summary.intent_metrics as Record<string, number> | undefined
+  if (intent && typeof intent.accuracy === 'number') {
+    return `准确率 ${formatMetricValue(intent.accuracy)}`
+  }
+  const ret = summary.retrieval_metrics as Record<string, number> | undefined
+  if (ret && typeof ret.recall === 'number') {
+    return `召回 ${formatMetricValue(ret.recall)}`
+  }
+  return formatMetricsSummary(summary)
+}
+
+export function taskDurationLabel(task: EvalTask): string {
+  if (!task.started_at || !task.finished_at) return '—'
+  const ms = new Date(task.finished_at).getTime() - new Date(task.started_at).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return '—'
+  if (ms < 1000) return `${ms}ms`
+  const sec = Math.round(ms / 1000)
+  if (sec < 60) return `${sec}s`
+  return `${Math.floor(sec / 60)}m ${sec % 60}s`
+}
+
+export function primaryBarItems(summary: Record<string, unknown> | null | undefined): MetricCardItem[] {
+  return buildMetricCardGroups(summary).flatMap((g) => g.items)
+}
+
+export function squadCountPair(summary: Record<string, unknown> | null | undefined): {
+  hasAns: number
+  noAns: number
+} | null {
+  const squad = summary?.squad_metrics as Record<string, number> | undefined
+  if (!squad) return null
+  const hasAns = squad.has_ans_count
+  const noAns = squad.no_ans_count
+  if (typeof hasAns !== 'number' && typeof noAns !== 'number') return null
+  return { hasAns: hasAns || 0, noAns: noAns || 0 }
 }
 
 export function formatMetricsSummary(summary: Record<string, unknown> | null | undefined): string {

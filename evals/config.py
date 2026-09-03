@@ -7,6 +7,17 @@ from typing import Any
 
 from config.settings import settings
 
+
+def default_metric_layers(suite: str, dataset_id: str = "") -> list[str]:
+    """按 suite / 数据集选择默认指标层。"""
+    if suite == "rag_quality":
+        return ["ragas"]
+    if suite == "intent_bench":
+        return ["intent"]
+    if str(dataset_id).startswith("squad"):
+        return ["retrieval", "squad"]
+    return ["retrieval", "generation"]
+
 # 允许在 config_overrides 中覆盖的 settings 字段
 ALLOWED_OVERRIDE_KEYS = frozenset(
     {

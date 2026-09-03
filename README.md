@@ -96,6 +96,29 @@ python -m evals.run_eval --n 100 --seed 7     # 自定义抽样
 - 网络：国内默认兜底 `HF_ENDPOINT=https://hf-mirror.com`（已设官方源则不覆盖）
 - 注意：HotpotQA 为英文段落直接入库，不覆盖 PDF 解析 / 中文切块链路——该盲区已知并接受
 
+## 评测（SQuAD 2.0）
+
+单文档阅读理解 + 不可答题，补 HotpotQA 测不到的拒答/幻觉。默认指标为 retrieval + 官方 EM/F1（不用 BLEU）。
+
+```bash
+# 从官方 dev-v2.0.json 抽出 Normans 一篇（只需做一次）
+python -m evals.datasets.squad --title Normans --id squad_normans --overwrite
+
+# 冒烟：段落共享灌库 + rag_fixed
+python -m evals.run_bench --dataset squad_normans --profile rag_fixed --workers 4
+
+# 也可用本地 parquet（HuggingFace squad_v2 validation）
+python -m evals.datasets.squad --source /path/to/validation.parquet --title Normans --overwrite
+
+# 全量 validation 抽样（在线加载 HuggingFace squad_v2）
+python -m evals.run_bench --dataset squad_v2 --limit 200 --profile rag_agent
+```
+
+- 数据：每个 Wikipedia 段落作为 passage，`corpus_mode=shared`；`meta.is_impossible` 标记不可答题
+- 指标：Overall EM/F1、HasAns EM/F1、NoAns Acc、Span Hit（gold span 是否出现在自由回答中）、检索 recall
+- 评测 prompt 要求短 span 或原样回复 `unanswerable`（产品中文提示词不动）
+- 也可在前端「评测」页选择 `squad_normans` / `squad_v2` 走 rag_bench
+
 ## 关键设计说明
 
 - **混合检索**：向量余弦 + pg_trgm 词法相似度加权（`HYBRID_LEX_WEIGHT`）。中文场景 pg_trgm 免装分词扩展；数据量大后可换 pg_jieba 或 Qdrant 稀疏向量。

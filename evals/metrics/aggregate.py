@@ -8,13 +8,34 @@ from typing import Any
 from evals.metrics.generation import compute_generation_metrics
 from evals.metrics.intent import aggregate_intent_metrics
 from evals.metrics.retrieval import compute_retrieval_metrics
+from evals.metrics.squad import aggregate_squad_metrics, compute_squad_metrics
 from evals.schemas import (
     GenerationMetrics,
     MetricInput,
+    QAPair,
     RetrievalMetrics,
     SampleMetrics,
     SampleResult,
 )
+
+
+def metric_input_from_item(
+    item: QAPair,
+    *,
+    generated_text: str,
+    retrieval_ids: list[int],
+) -> MetricInput:
+    answers = [str(a) for a in (item.meta.get("answers") or []) if str(a).strip()]
+    if not answers and item.answer:
+        answers = [item.answer]
+    return MetricInput(
+        retrieval_gt=[item.pids],
+        retrieval_ids=retrieval_ids,
+        generated_text=generated_text,
+        generated_gt=item.answer,
+        answers=answers,
+        is_impossible=bool(item.meta.get("is_impossible")),
+    )
 
 
 def compute_sample_metrics(
@@ -28,6 +49,8 @@ def compute_sample_metrics(
         out.retrieval = compute_retrieval_metrics(inp)
     if "generation" in layers:
         out.generation = compute_generation_metrics(inp.generated_gt, inp.generated_text)
+    if "squad" in layers:
+        out.squad = compute_squad_metrics(inp)
     return out
 
 
@@ -64,6 +87,9 @@ def average_metrics(results: list[SampleResult]) -> dict[str, Any]:
             "macro_f1": intent_summary["macro_f1"],
             "per_class": intent_summary["per_class"],
         }
+    squad_summary = aggregate_squad_metrics(results)
+    if squad_summary:
+        summary["squad_metrics"] = squad_summary
     return summary
 
 
@@ -77,4 +103,6 @@ def sample_metrics_to_dict(m: SampleMetrics) -> dict[str, Any]:
         out["ragas"] = dict(m.ragas)
     if m.intent:
         out["intent"] = asdict(m.intent)
+    if m.squad:
+        out["squad"] = asdict(m.squad)
     return out

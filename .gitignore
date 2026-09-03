@@ -7,6 +7,8 @@ __pycache__/
 langgraph/
 data/uploads/*
 !data/uploads/.gitkeep
+evals/datasets/samples/.removed.json
+data/cache/
 
 
 # Build artifacts & runtime caches
@@ -14,6 +16,7 @@ frontend/dist/
 frontend/node_modules/
 node_modules/
 .langgraph_api/
+.cache/
 celerybeat-schedule
 data/celerybeat-schedule*
 frontend/celerybeat-schedule*

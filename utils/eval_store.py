@@ -253,6 +253,14 @@ class EvalStore():
             ).fetchone()
         return int(row[0]) if row else 0
 
+    def delete_task(self, task_id: str) -> bool:
+        ensure_eval_tables()
+        with psycopg.connect(self.dsn) as conn:
+            cur = conn.execute("DELETE FROM ks_evaluation_tasks WHERE id = %s", (task_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
+
 def _row_to_task(row) -> dict[str, Any]:
     return {
         "id": row[0],

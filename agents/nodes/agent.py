@@ -9,6 +9,7 @@ from langchain_core.runnables import RunnableConfig
 
 from agents.nodes.generate import _inject_image_description
 from models import create_chat_model
+from skills.catalog import any_skill_has_scripts
 from states import KnowSphereState
 from tools.catalog import get_tool_spec
 from tools.events import emit_thinking
@@ -46,7 +47,9 @@ def tools_for_state(
     if state and (state.get("system_prompt_override") or "").strip():
         return []
     allowed = resolve_agent_tool_names(config)
-    skill_enabled = bool(resolve_agent_skill_names(config))
+    skill_names = resolve_agent_skill_names(config)
+    skill_enabled = bool(skill_names)
+    offer_execute = skill_enabled and any_skill_has_scripts(skill_names)
     kb_ids = kb_ids_from_config(config)
     selected: list[Any] = []
     seen: set[str] = set()
@@ -55,6 +58,8 @@ def tools_for_state(
         if not name or name in seen:
             continue
         if name in SKILL_RUNTIME_TOOL_NAMES:
+            if name == "execute_skill_script" and not offer_execute:
+                continue
             if skill_enabled:
                 seen.add(name)
                 selected.append(tool)

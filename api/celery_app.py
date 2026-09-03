@@ -19,6 +19,7 @@ celery = Celery(
     backend=settings.redis_url,
     include=["api.tasks"],
 )
+celery.set_default()
 
 celery.conf.update(
     task_default_queue="documents",

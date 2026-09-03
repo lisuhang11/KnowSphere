@@ -72,7 +72,6 @@ def load_hotpot_dataset(
         )
     return EvalDataset(
         id="hotpot",
-        corpus_mode="isolated",
         passages=list(all_passages.values()),
         items=items,
     )

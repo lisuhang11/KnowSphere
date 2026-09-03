@@ -14,7 +14,7 @@ from ragas.metrics import answer_relevancy, context_precision, context_recall, f
 
 from agents.agent import build_agent
 from config.settings import set_current_owner, settings
-from evals.corpus import ingest_isolated_item, ingest_passages
+from evals.corpus import ingest_passages
 from evals.datasets import load_dataset
 from evals.hotpot import cleanup_question, ingest_question, load_hotpot_sample
 from evals.pipelines.agent import EVAL_SYSTEM_PROMPT, _extract
@@ -183,7 +183,6 @@ def run_ragas_eval_dataset(
 ) -> tuple[dict[str, float], list[dict], list[dict]]:
     """JSON/Parquet 数据集 + Agent + RAGAS。"""
     dataset = load_dataset(config.dataset_id, sample_limit=config.sample_limit)
-    corpus_mode = config.corpus_mode or dataset.corpus_mode
     owner = config.owner or "eval"
     task_owner = f"{owner}_{uuid.uuid4().hex[:8]}"
 
@@ -211,28 +210,11 @@ def run_ragas_eval_dataset(
 
     def _run_one(qid: int, item: QAPair) -> tuple[int, dict]:
         set_current_owner(task_owner)
-        iso_kb_id: int | None = None
         try:
-            if corpus_mode == "isolated":
-                iso_kb = store.create_knowledge_base(
-                    name=f"ragas_q{item.qid}",
-                    description=f"RAGAS isolated q{item.qid}",
-                    owner=task_owner,
-                    chunk_size=eval_kb["chunk_size"],
-                    chunk_overlap=eval_kb["chunk_overlap"],
-                    embedding_model_id=eval_kb["embedding_model_id"],
-                    embedding_dim=eval_kb["embedding_dim"],
-                )
-                iso_kb_id = iso_kb["id"]
-                ingest_isolated_item(item, kb_id=iso_kb_id, owner=task_owner, kb_row=iso_kb)
-                target_kb = iso_kb_id
-            else:
-                target_kb = kb_id
-
             result = agent.invoke(
                 {"messages": [{"role": "user", "content": item.question}]},
                 config={
-                    "configurable": {"kb_ids": [target_kb]},
+                    "configurable": {"kb_ids": [kb_id]},
                     "recursion_limit": settings.agent_max_steps,
                 },
             )
@@ -250,16 +232,9 @@ def run_ragas_eval_dataset(
             }
         except Exception as exc:
             return qid, {"qid": qid, "error": str(exc), "user_input": item.question}
-        finally:
-            if iso_kb_id is not None:
-                try:
-                    store.delete_knowledge_base(iso_kb_id, owner=task_owner)
-                except Exception:
-                    pass
 
     try:
-        if corpus_mode == "shared":
-            ingest_passages(dataset.passages, kb_id=kb_id, owner=task_owner, kb_row=eval_kb)
+        ingest_passages(dataset.passages, kb_id=kb_id, owner=task_owner, kb_row=eval_kb)
 
         if on_progress:
             on_progress(0, len(indexed))

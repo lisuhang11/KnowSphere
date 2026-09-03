@@ -10,7 +10,7 @@ from typing import Callable
 
 from config.settings import set_current_owner
 from evals.config import apply_config_overrides
-from evals.corpus import ingest_isolated_item, ingest_passages
+from evals.corpus import ingest_passages
 from evals.datasets import load_dataset
 from evals.metrics.aggregate import average_metrics, sample_metrics_to_dict
 from evals.pipelines.agent import run_rag_agent
@@ -27,11 +27,11 @@ def _make_runner(config: EvalConfig):
 
     if config.pipeline_profile == "rag_agent":
         from agents.agent import build_agent
-        from evals.pipelines.agent import EVAL_SYSTEM_PROMPT
+        from evals.pipelines.agent import eval_system_prompt
         from tools.retrieval.doc_retrieval import doc_retrieval
 
         agent = build_agent(
-            system_prompt=EVAL_SYSTEM_PROMPT,
+            system_prompt=eval_system_prompt(layers),
             tools=[doc_retrieval],
             chat_model_kwargs=kwargs,
         )
@@ -57,7 +57,6 @@ def run_bench(
 ) -> tuple[list[SampleResult], dict]:
     """执行 rag_bench，返回 (逐题结果, 汇总指标)。"""
     dataset = load_dataset(config.dataset_id, sample_limit=config.sample_limit)
-    corpus_mode = config.corpus_mode or dataset.corpus_mode
     owner = config.owner or "eval"
     task_owner = f"{owner}_{uuid.uuid4().hex[:8]}"
 
@@ -84,8 +83,7 @@ def run_bench(
     try:
         with apply_config_overrides(config.config_overrides):
             set_current_owner(task_owner)
-            if corpus_mode == "shared":
-                ingest_passages(dataset.passages, kb_id=kb_id, owner=task_owner, kb_row=eval_kb)
+            ingest_passages(dataset.passages, kb_id=kb_id, owner=task_owner, kb_row=eval_kb)
             runner = _make_runner(config)
             total = len(dataset.items)
             if on_progress:
@@ -95,21 +93,7 @@ def run_bench(
 
             def _one(item):
                 nonlocal done
-                if corpus_mode == "isolated":
-                    iso_kb = store.create_knowledge_base(
-                        name=f"eval_q{item.qid}",
-                        description=f"isolated eval q{item.qid}",
-                        owner=task_owner,
-                        chunk_size=eval_kb["chunk_size"],
-                        chunk_overlap=eval_kb["chunk_overlap"],
-                        embedding_model_id=eval_kb["embedding_model_id"],
-                        embedding_dim=eval_kb["embedding_dim"],
-                    )
-                    ingest_isolated_item(item, kb_id=iso_kb["id"], owner=task_owner, kb_row=iso_kb)
-                    row = runner(item, iso_kb["id"], task_owner)
-                    store.delete_knowledge_base(iso_kb["id"], owner=task_owner)
-                else:
-                    row = runner(item, kb_id, task_owner)
+                row = runner(item, kb_id, task_owner)
                 sample_row = results_to_sample_rows([row])[0]
                 if on_sample:
                     on_sample(sample_row)

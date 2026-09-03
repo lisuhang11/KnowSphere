@@ -128,6 +128,15 @@ def list_skills(*, root: Path | None = None) -> list[SkillInfo]:
     return skills
 
 
+def skill_script_paths(name: str, *, root: Path | None = None) -> list[str]:
+    """技能包 `scripts/` 下的相对路径。没有脚本的技能返回空列表。"""
+    return [p for p in list_skill_files(name, root=root) if p.startswith("scripts/")]
+
+
+def any_skill_has_scripts(names: Iterable[str] | None, *, root: Path | None = None) -> bool:
+    return any(skill_script_paths(str(n).strip(), root=root) for n in (names or []) if str(n).strip())
+
+
 def known_skill_names(*, root: Path | None = None) -> frozenset[str]:
     return frozenset(s.name for s in list_skills(root=root))
 
