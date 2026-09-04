@@ -70,6 +70,16 @@ function stageLabel(s?: string | null): string {
   return STAGE_LABELS[s] ?? s
 }
 
+const isEvalKb = computed(() => {
+  const k = kb.value
+  if (!k) return false
+  return (
+    k.name.startsWith('eval_') ||
+    k.name.startsWith('ragas_') ||
+    (k.description || '').includes('评测临时库')
+  )
+})
+
 async function load() {
   loading.value = true
   try {
@@ -407,7 +417,7 @@ onMounted(load)
           <template #icon><t-icon name="edit" /></template>
           编辑
         </t-button>
-        <t-button theme="primary" @click="fileInputRef?.click()">
+        <t-button v-if="!isEvalKb" theme="primary" @click="fileInputRef?.click()">
           <template #icon><t-icon name="upload" /></template>
           上传文档
         </t-button>
@@ -422,6 +432,10 @@ onMounted(load)
       </div>
     </div>
 
+    <t-alert v-if="isEvalKb" theme="warning" class="eval-banner">
+      评测临时库：语料来自数据集段落，写入分块后即可检索。列表里的「文档」是段落标题，不是你上传的文件；评测结束或中断后会自动删除。
+    </t-alert>
+
     <!-- 文档表格 -->
     <div class="page-card">
       <t-table
@@ -430,7 +444,7 @@ onMounted(load)
         :columns="columns"
         :loading="loading"
         hover
-        empty="暂无文档，点击右上角「上传文档」开始"
+        :empty="isEvalKb ? '评测段落正在写入，或尚未登记到文档列表。刷新后再看；评测结束后本库会删除。' : '暂无文档，点击右上角「上传文档」开始'"
       >
         <template #file_name="{ row }">
           <div class="file-cell">
@@ -601,6 +615,10 @@ onMounted(load)
   overflow-y: auto;
   padding: 20px 28px 16px;
   box-sizing: border-box;
+}
+
+.eval-banner {
+  margin: 0 0 16px;
 }
 
 .page-header {

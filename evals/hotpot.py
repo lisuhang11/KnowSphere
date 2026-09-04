@@ -68,6 +68,13 @@ def ingest_question(item: dict, owner: str) -> tuple[int, int]:
             owner=owner,
             kb_id=kb["id"],
         )
+        store.upsert_document(
+            f"{item['id']}_{idx:02d}",
+            para["title"] or f"passage_{idx}",
+            kb["id"],
+            owner=owner,
+            applied_strategy=kb.get("chunk_strategy"),
+        )
     return kb["id"], total
 
 def cleanup_question(owner: str, kb_id: int | None = None) -> None:

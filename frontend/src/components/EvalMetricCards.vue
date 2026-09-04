@@ -34,9 +34,20 @@ const showCards = computed(() => hasMetricCards(props.summary))
       </div>
     </section>
   </div>
+  <div v-else-if="summary?.ragas_error" class="metric-placeholder ragas-failed">
+    RAGAS 分数还没写出来。打分阶段失败：{{ String(summary.ragas_error).slice(0, 280) }}
+    <span class="hint">忠实度 / 答案相关性 / 上下文精确度 / 上下文召回 会显示在这里。下面逐题里仍是模型回答。</span>
+  </div>
   <div v-else-if="summary?.phase === 'agent'" class="metric-placeholder">Agent 跑题中，完成后展示指标…</div>
   <div v-else-if="summary?.phase === 'ragas'" class="metric-placeholder ragas-active">
     <span class="ragas-pulse" /> RAGAS 批量打分中，请稍候…
+  </div>
+  <div
+    v-else-if="summary?.phase === 'done' && summary?.sample_count && !summary?.retrieval_metrics && !summary?.squad_metrics"
+    class="metric-placeholder ragas-failed"
+  >
+    Agent 已作答，但 RAGAS 分数未写出（打分未完成或评分模型 429）。
+    <span class="hint">正常完成时，这里会显示忠实度、答案相关性、上下文精确度、上下文召回四张卡片。</span>
   </div>
   <pre v-else-if="summary" class="json-fallback">{{ JSON.stringify(summary, null, 2) }}</pre>
   <div v-else class="metric-placeholder">暂无指标</div>
@@ -116,6 +127,20 @@ const showCards = computed(() => hasMetricCards(props.summary))
   background: var(--td-gray-bg-color, #f5f5f5);
   font-size: 13px;
   color: var(--td-text-color-secondary);
+}
+
+.metric-placeholder.ragas-failed {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--td-warning-color, #e37318);
+  background: color-mix(in srgb, var(--td-warning-color-1, #fff1e9) 70%, transparent);
+}
+
+.metric-placeholder .hint {
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .metric-placeholder.ragas-active {

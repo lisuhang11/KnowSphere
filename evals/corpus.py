@@ -48,14 +48,24 @@ def ingest_passages(
             continue
         chunks = splitter.split_text(passage.text) or [passage.text]
         vectors = embeddings.embed_documents(chunks)
+        doc_id = eval_passage_document_id(passage.pid)
+        file_name = passage.title or f"passage_{passage.pid}"
         total += store.insert_batch(
-            document_id=eval_passage_document_id(passage.pid),
-            file_name=passage.title,
+            document_id=doc_id,
+            file_name=file_name,
             chunks=chunks,
             embeddings=vectors,
             owner=owner,
             kb_id=kb_id,
             base_metadata={"eval_passage_id": passage.pid},
+        )
+        # 列表页读 documents 表；只写 chunks 时统计有「N 文档」但列表是空的
+        store.upsert_document(
+            doc_id,
+            file_name,
+            kb_id,
+            owner=owner,
+            applied_strategy=(kb or {}).get("chunk_strategy"),
         )
         if on_progress:
             on_progress(idx + 1, n_passages)

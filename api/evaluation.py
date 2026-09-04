@@ -35,6 +35,8 @@ class EvaluationRequest(BaseModel):
     sample_limit: int | None = Field(default=None, ge=1, le=500)
     kb_template_id: int | None = None
     chat_model_id: str | None = None
+    embedding_model_id: str | None = None
+    ragas_model_id: str | None = None
     rerank_model_id: str | None = None
     config_overrides: dict[str, Any] = Field(default_factory=dict)
     metrics: list[str] | None = Field(
@@ -65,6 +67,8 @@ def _build_config(req: EvaluationRequest) -> EvalConfig:
     overrides = dict(req.config_overrides)
     if req.chat_model_id:
         overrides.setdefault("chat_model", req.chat_model_id)
+    if req.embedding_model_id:
+        overrides.setdefault("embedding_model", req.embedding_model_id)
     if req.rerank_model_id:
         overrides.setdefault("rerank_model", req.rerank_model_id)
     if req.suite == "intent_bench":
@@ -80,6 +84,8 @@ def _build_config(req: EvaluationRequest) -> EvalConfig:
         sample_limit=req.sample_limit,
         kb_template_id=req.kb_template_id,
         chat_model_id=req.chat_model_id,
+        embedding_model_id=req.embedding_model_id,
+        ragas_model_id=req.ragas_model_id,
         rerank_model_id=req.rerank_model_id,
         config_overrides=overrides,
         metric_layers=req.metrics or default_metric_layers(req.suite, req.dataset_id),

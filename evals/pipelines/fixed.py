@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from evals.corpus import map_retrieval_ids
 from evals.metrics.aggregate import compute_sample_metrics, metric_input_from_item
+from evals.retry import call_with_tpm_retry
 from evals.schemas import QAPair, SampleResult
 from models import create_chat_model
 from prompts.rag_system import build_rag_system_prompt, format_rag_user_message
@@ -25,7 +26,9 @@ def run_rag_fixed(
     t0 = time.perf_counter()
     config = {"configurable": {"kb_ids": [kb_id]}}
     try:
-        retrieval = doc_retrieval.invoke({"query": item.question}, config=config)
+        retrieval = call_with_tpm_retry(
+            lambda: doc_retrieval.invoke({"query": item.question}, config=config)
+        )
         sources = retrieval.get("sources") or []
         retrieval_ids = map_retrieval_ids(sources, item)
         context = "\n\n".join(
@@ -36,7 +39,7 @@ def run_rag_fixed(
             SystemMessage(content=build_rag_system_prompt(enable_citation=False)),
             HumanMessage(content=format_rag_user_message(item.question, context)),
         ]
-        response = llm.invoke(messages)
+        response = call_with_tpm_retry(lambda: llm.invoke(messages))
         text = response.content if isinstance(response.content, str) else str(response.content)
         metrics = compute_sample_metrics(
             metric_input_from_item(item, generated_text=text, retrieval_ids=retrieval_ids),

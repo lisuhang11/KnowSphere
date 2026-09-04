@@ -1,4 +1,4 @@
-import type { EvalTask } from '@/api/evaluation'
+import type { EvalSample, EvalTask } from '@/api/evaluation'
 
 export type EvalPhase = 'pending' | 'loading' | 'ingest' | 'eval' | 'agent' | 'ragas' | 'done'
 
@@ -178,8 +178,9 @@ export function progressLabel(task: EvalTask): string {
     return total > 0 ? `灌库 ${done}/${total} 段` : '灌库中…'
   }
   if (isRagasScoring(task)) {
-    const n = task.metric_summary?.ragas_total ?? task.total
-    return n ? `RAGAS 打分中（${n} 题）` : 'RAGAS 打分中'
+    const done = Number(task.metric_summary?.ragas_finished ?? 0)
+    const total = Number(task.metric_summary?.ragas_total ?? 0)
+    return total > 0 ? `RAGAS 打分 ${done}/${total}` : 'RAGAS 打分中'
   }
   if (phase === 'agent' && task.suite === 'rag_quality') {
     return `Agent ${task.finished}/${task.total || '?'}`
@@ -198,7 +199,12 @@ export function progressPercentage(task: EvalTask): number {
     if (!total) return 0
     return Math.min(99, Math.round((done / total) * 100))
   }
-  if (isRagasScoring(task)) return 100
+  if (isRagasScoring(task)) {
+    const done = Number(task.metric_summary?.ragas_finished ?? 0)
+    const total = Number(task.metric_summary?.ragas_total ?? 0)
+    if (!total) return 99
+    return Math.min(99, Math.round((done / total) * 100))
+  }
   if (!task.total) return 0
   return Math.min(100, Math.round((task.finished / task.total) * 100))
 }
@@ -303,6 +309,9 @@ export function highlightMetric(summary: Record<string, unknown> | null | undefi
     return '灌库中…'
   }
   if (phase === 'ragas') return 'RAGAS 打分中…'
+  if (typeof summary.ragas_error === 'string' && summary.ragas_error) {
+    return 'RAGAS 打分失败'
+  }
   if (phase === 'agent' && !summary.ragas_metrics && !summary.squad_metrics) {
     return 'Agent 跑题中…'
   }
@@ -371,4 +380,336 @@ export function formatMetricsSummary(summary: Record<string, unknown> | null | u
   return groups
     .flatMap((g) => g.items.slice(0, 3).map((i) => `${i.label} ${formatMetricValue(i.value)}`))
     .join(' · ')
+}
+
+export type SampleVerdictKind =
+  | 'correct'
+  | 'wrong_answer'
+  | 'false_abstain'
+  | 'false_answer'
+  | 'intent_wrong'
+  | 'retrieval_miss'
+  | 'run_error'
+  | 'unscored'
+
+export type SampleFilter =
+  | 'issues'
+  | 'all'
+  | 'false_abstain'
+  | 'wrong_answer'
+  | 'false_answer'
+  | 'intent_wrong'
+  | 'retrieval_miss'
+  | 'run_error'
+  | 'unscored'
+  | 'correct'
+
+export interface SampleVerdict {
+  kind: SampleVerdictKind
+  ok: boolean
+  label: string
+  theme: 'success' | 'danger' | 'warning' | 'default'
+  reason: string
+}
+
+export interface IssueStats {
+  total: number
+  ok: number
+  wrong: number
+  errors: number
+  unscored: number
+}
+
+const VERDICT_RANK: Record<SampleVerdictKind, number> = {
+  run_error: 0,
+  false_abstain: 1,
+  wrong_answer: 2,
+  false_answer: 3,
+  intent_wrong: 4,
+  retrieval_miss: 5,
+  unscored: 8,
+  correct: 9,
+}
+
+function hasNumericScores(metrics: Record<string, unknown> | undefined): boolean {
+  if (!metrics) return false
+  return Object.values(metrics).some((v) => typeof v === 'number' && Number.isFinite(v))
+}
+
+function metricRecord(metrics: Record<string, unknown> | null | undefined, key: string) {
+  const value = metrics?.[key]
+  if (value && typeof value === 'object') return value as Record<string, unknown>
+  return undefined
+}
+
+export function retrievalHit(row: EvalSample): boolean | null {
+  const gt = row.retrieval_gt || []
+  const ids = row.retrieval_ids || []
+  if (!gt.length) return null
+  return gt.some((id) => ids.includes(id))
+}
+
+function retrievalReason(row: EvalSample): string {
+  const hit = retrievalHit(row)
+  const gt = (row.retrieval_gt || []).join(', ')
+  if (hit === true) return `检索已命中应召回段落${gt ? ` ${gt}` : ''}。`
+  if (hit === false) return `检索未命中应召回段落${gt ? ` ${gt}` : ''}。`
+  return ''
+}
+
+export function classifySample(row: EvalSample): SampleVerdict {
+  if (row.error) {
+    return {
+      kind: 'run_error',
+      ok: false,
+      label: '运行出错',
+      theme: 'danger',
+      reason: row.error,
+    }
+  }
+
+  const squad = metricRecord(row.metrics, 'squad')
+  const intent = metricRecord(row.metrics, 'intent')
+  const ragas = metricRecord(row.metrics, 'ragas')
+
+  if (ragas && !squad && !intent) {
+    if (hasNumericScores(ragas)) {
+      const faith = ragas.faithfulness
+      const rel = ragas.answer_relevancy
+      const parts = [
+        typeof faith === 'number' ? `忠实度 ${Number(faith).toFixed(3)}` : '',
+        typeof rel === 'number' ? `相关性 ${Number(rel).toFixed(3)}` : '',
+      ].filter(Boolean)
+      return {
+        kind: 'correct',
+        ok: true,
+        label: '已打分',
+        theme: 'success',
+        reason: parts.join(' · ') || 'RAGAS 分数已写出。',
+      }
+    }
+    return {
+      kind: 'unscored',
+      ok: false,
+      label: '未打分',
+      theme: 'warning',
+      reason: 'Agent 已作答，但 RAGAS 分数还没写出（打分未完成或评分模型 429）。',
+    }
+  }
+
+  if (intent && !squad) {
+    return classifyIntent(row, intent)
+  }
+
+  if (squad) {
+    const impossible = Number(squad.impossible || 0) >= 1
+    const abstained = Number(squad.abstained || 0) >= 1
+    const em = Number(squad.em || 0)
+    const hitNote = retrievalReason(row)
+
+    if (impossible) {
+      if (em >= 1 || abstained) {
+        return {
+          kind: 'correct',
+          ok: true,
+          label: '正确拒答',
+          theme: 'success',
+          reason: '这是不可答题，系统拒绝作答，判为正确。',
+        }
+      }
+      return {
+        kind: 'false_answer',
+        ok: false,
+        label: '不该答却答了',
+        theme: 'danger',
+        reason: `这是不可答题，系统却给出了答案。${hitNote}`.trim(),
+      }
+    }
+
+    if (abstained) {
+      return {
+        kind: 'false_abstain',
+        ok: false,
+        label: '该答却拒答',
+        theme: 'warning',
+        reason: `题目有标准答案，但系统输出了拒答。${hitNote}`.trim(),
+      }
+    }
+
+    if (em >= 1) {
+      return {
+        kind: 'correct',
+        ok: true,
+        label: '答对',
+        theme: 'success',
+        reason: hitNote || '答案与正确答案一致。',
+      }
+    }
+
+    const f1 = Number(squad.f1 || 0)
+    if (f1 > 0) {
+      return {
+        kind: 'wrong_answer',
+        ok: false,
+        label: '部分匹配',
+        theme: 'warning',
+        reason: `尚未完全匹配（F1 ${f1.toFixed(3)}）。${hitNote}`.trim(),
+      }
+    }
+
+    return {
+      kind: 'wrong_answer',
+      ok: false,
+      label: '答案不对',
+      theme: 'danger',
+      reason: `系统答案与正确答案不一致。${hitNote}`.trim(),
+    }
+  }
+
+  if (intent) {
+    return classifyIntent(row, intent)
+  }
+
+  if (retrievalHit(row) === false) {
+    return {
+      kind: 'retrieval_miss',
+      ok: false,
+      label: '检索未中',
+      theme: 'warning',
+      reason: retrievalReason(row) || '应召回段落未出现在系统召回中。',
+    }
+  }
+
+  return {
+    kind: 'correct',
+    ok: true,
+    label: '已完成',
+    theme: 'success',
+    reason: retrievalHit(row) === true ? retrievalReason(row) : '本题没有可判定的对错标签。',
+  }
+}
+
+function classifyIntent(row: EvalSample, intent: Record<string, unknown>): SampleVerdict {
+  const ok = intent.correct === 1 || intent.correct === 1.0
+  const gt = String(intent.intent_gt ?? '')
+  const pred = String(intent.pred_intent ?? row.response ?? '')
+  if (ok) {
+    return {
+      kind: 'correct',
+      ok: true,
+      label: '意图正确',
+      theme: 'success',
+      reason: gt && pred ? `${gt} → ${pred}` : '意图识别正确。',
+    }
+  }
+  return {
+    kind: 'intent_wrong',
+    ok: false,
+    label: '意图判错',
+    theme: 'danger',
+    reason: gt ? `应为 ${gt}，判成 ${pred || '（空）'}。` : '意图识别与标注不一致。',
+  }
+}
+
+export function sampleFilterMatch(row: EvalSample, filter: SampleFilter): boolean {
+  const verdict = classifySample(row)
+  if (filter === 'all') return true
+  if (filter === 'issues') return !verdict.ok && verdict.kind !== 'unscored'
+  if (filter === 'correct') return verdict.ok
+  if (filter === 'retrieval_miss') return retrievalHit(row) === false
+  return verdict.kind === filter
+}
+
+export function sortSamplesByIssue(rows: EvalSample[]): EvalSample[] {
+  return [...rows].sort((a, b) => {
+    const rank = VERDICT_RANK[classifySample(a).kind] - VERDICT_RANK[classifySample(b).kind]
+    if (rank !== 0) return rank
+    return a.qid - b.qid
+  })
+}
+
+export function formatGoldLabel(row: EvalSample): string {
+  const squad = metricRecord(row.metrics, 'squad')
+  const empty = !(row.reference || '').trim()
+  if (empty && Number(squad?.impossible || 0) >= 1) return '（不可答题，无标准答案）'
+  return empty ? '（空）' : String(row.reference)
+}
+
+export function formatPredLabel(row: EvalSample): string {
+  if (row.error) return row.error
+  const text = (row.response || '').trim()
+  return text || '（空）'
+}
+
+export function estimateIssueStats(
+  summary: Record<string, unknown> | null | undefined,
+  fallbackTotal = 0,
+): IssueStats {
+  const empty = { total: fallbackTotal, ok: 0, wrong: 0, errors: 0, unscored: 0 }
+  if (!summary) return empty
+  const errors = Number(summary.error_count || 0)
+  const sampleCount = Number(summary.sample_count || 0)
+  const squad = summary.squad_metrics as Record<string, number> | undefined
+  if (squad && (typeof squad.has_ans_count === 'number' || typeof squad.no_ans_count === 'number')) {
+    const hasAns = Number(squad.has_ans_count || 0)
+    const noAns = Number(squad.no_ans_count || 0)
+    const wrongHas = Math.round(hasAns * (1 - Number(squad.has_ans_em || 0)))
+    const wrongNo = Math.round(noAns * (1 - Number(squad.no_ans_acc || 0)))
+    const wrong = Math.max(0, wrongHas + wrongNo)
+    const scored = hasAns + noAns
+    return {
+      total: scored + errors || fallbackTotal,
+      ok: Math.max(0, scored - wrong),
+      wrong,
+      errors,
+      unscored: 0,
+    }
+  }
+  const intent = summary.intent_metrics as Record<string, number> | undefined
+  if (intent && typeof intent.accuracy === 'number' && sampleCount) {
+    const ok = Math.round(sampleCount * intent.accuracy)
+    return {
+      total: sampleCount + errors || fallbackTotal,
+      ok,
+      wrong: Math.max(0, sampleCount - ok),
+      errors,
+      unscored: 0,
+    }
+  }
+  const ragas = summary.ragas_metrics as Record<string, number> | undefined
+  const ragasScored = ragas && typeof ragas.faithfulness === 'number'
+  if (!ragasScored && (summary.ragas_error || ragas)) {
+    return {
+      total: sampleCount + errors || fallbackTotal,
+      ok: 0,
+      wrong: 0,
+      errors,
+      unscored: sampleCount,
+    }
+  }
+  return {
+    total: sampleCount + errors || fallbackTotal,
+    ok: sampleCount,
+    wrong: 0,
+    errors,
+    unscored: 0,
+  }
+}
+
+export function taskIssueStats(task: EvalTask, samples?: EvalSample[]): IssueStats {
+  if (samples?.length) {
+    let ok = 0
+    let wrong = 0
+    let errors = 0
+    let unscored = 0
+    for (const row of samples) {
+      const verdict = classifySample(row)
+      if (verdict.kind === 'run_error') errors += 1
+      else if (verdict.kind === 'unscored') unscored += 1
+      else if (verdict.ok) ok += 1
+      else wrong += 1
+    }
+    return { total: samples.length, ok, wrong, errors, unscored }
+  }
+  return estimateIssueStats(task.metric_summary, task.finished || task.total || 0)
 }

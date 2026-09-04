@@ -9,6 +9,7 @@ from agents.agent import build_agent
 from config.settings import settings
 from evals.corpus import map_retrieval_ids
 from evals.metrics.aggregate import compute_sample_metrics, metric_input_from_item
+from evals.retry import call_with_tpm_retry
 from evals.schemas import QAPair, SampleResult
 from prompts import build_system_prompt
 from tools.retrieval.doc_retrieval import doc_retrieval
@@ -48,12 +49,18 @@ def run_rag_agent(
             tools=[doc_retrieval],
             chat_model_kwargs=_kwargs,
         )
-        result = graph.invoke(
-            {"messages": [{"role": "user", "content": item.question}]},
-            config={
-                "configurable": {"kb_ids": [kb_id]},
-                "recursion_limit": settings.agent_max_steps,
-            },
+        invoke_cfg = {
+            "configurable": {"kb_ids": [kb_id]},
+            "recursion_limit": settings.agent_max_steps,
+        }
+        model_id = (_kwargs.get("model") if isinstance(_kwargs.get("model"), str) else None) or None
+        if model_id:
+            invoke_cfg["configurable"]["chat_model_id"] = model_id
+        result = call_with_tpm_retry(
+            lambda: graph.invoke(
+                {"messages": [{"role": "user", "content": item.question}]},
+                config=invoke_cfg,
+            )
         )
         answer, sources = _extract(result)
         retrieval_ids = map_retrieval_ids(sources, item)

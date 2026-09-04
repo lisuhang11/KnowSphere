@@ -24,7 +24,7 @@ _PREFIX_B64 = "b64:"
 def _master_key_bytes(key: Optional[str] = None) -> bytes:
     """任意长度密钥 -> 固定 32 字节（sha256）。"""
     raw = key if key is not None else settings.model_master_key
-    return hashlib.sha256(raw.encode("utf-8")).digest
+    return hashlib.sha256(raw.encode("utf-8")).digest()
 
 def _is_degraded() -> bool:
     """未显式配置 MASTER_KEY 时为降级模式（可逆 base64）。"""

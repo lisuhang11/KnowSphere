@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage
 
 from agents.nodes.query_understand import query_understand
 from evals.metrics.intent import compute_intent_metrics
+from evals.retry import call_with_tpm_retry
 from evals.schemas import QAPair, SampleMetrics, SampleResult
 from schemas.query import needs_retrieval
 
@@ -18,7 +19,7 @@ def _meta_bool(meta: dict[str, Any], key: str, default: bool = False) -> bool:
     return bool(val)
 
 
-def run_intent_item(item: QAPair) -> SampleResult:
+def run_intent_item(item: QAPair, *, chat_model_id: str | None = None) -> SampleResult:
     """对单题调用 query_understand，产出意图指标。"""
     t0 = time.perf_counter()
     meta = dict(item.meta or {})
@@ -49,7 +50,12 @@ def run_intent_item(item: QAPair) -> SampleResult:
     }
 
     try:
-        out = query_understand(state, {})
+        out = call_with_tpm_retry(
+            lambda: query_understand(
+                state,
+                {"configurable": {"chat_model_id": chat_model_id}} if chat_model_id else {},
+            )
+        )
         pred = str(out.get("intent") or "").strip()
         rewrite = str(out.get("rewrite_query") or item.question).strip()
         intent_metrics = compute_intent_metrics(

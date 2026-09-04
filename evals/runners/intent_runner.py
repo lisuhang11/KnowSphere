@@ -51,7 +51,7 @@ def run_intent_bench(
             nonlocal done
             check_stop(should_stop)
             set_current_owner(owner)
-            row = run_intent_item(item)
+            row = run_intent_item(item, chat_model_id=config.chat_model_id)
             sample_row = results_to_sample_rows([row])[0]
             if on_sample:
                 on_sample(sample_row)

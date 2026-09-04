@@ -242,6 +242,8 @@ def run_evaluation_task(self, task_id: str) -> dict:
         sample_limit=snap.get("sample_limit"),
         kb_template_id=snap.get("kb_template_id"),
         chat_model_id=snap.get("chat_model_id"),
+        embedding_model_id=snap.get("embedding_model_id"),
+        ragas_model_id=snap.get("ragas_model_id"),
         rerank_model_id=snap.get("rerank_model_id"),
         config_overrides=snap.get("config_overrides") or {},
         metric_layers=snap.get("metric_layers") or ["retrieval", "generation"],
@@ -363,6 +365,23 @@ def run_evaluation_task(self, task_id: str) -> dict:
                         only_if_active=True,
                     )
                     return
+                if phase == "ragas":
+                    store.update_task(
+                        task_id,
+                        finished=int(finished or 0),
+                        total=count,
+                        metric_summary={
+                            "phase": "ragas",
+                            "ragas_finished": int(finished or 0),
+                            "ragas_total": count,
+                            "agent_finished": prev.get("agent_finished"),
+                            "agent_total": prev.get("agent_total"),
+                            "ingest_finished": prev.get("ingest_finished"),
+                            "ingest_total": prev.get("ingest_total"),
+                        },
+                        only_if_active=True,
+                    )
+                    return
                 store.update_task(
                     task_id,
                     finished=total,
@@ -382,6 +401,9 @@ def run_evaluation_task(self, task_id: str) -> dict:
                 summary, _detail, samples = run_ragas_eval(
                     n=limit,
                     workers=config.workers,
+                    chat_model_id=config.chat_model_id,
+                    embedding_model_id=config.embedding_model_id,
+                    ragas_model_id=config.ragas_model_id,
                     on_progress=_prog,
                     on_sample=_on_sample,
                     on_phase=_phase,
@@ -400,6 +422,9 @@ def run_evaluation_task(self, task_id: str) -> dict:
                 )
             for row in samples:
                 store.upsert_sample(task_id, row)
+            ragas_error = None
+            if not summary:
+                ragas_error = "RAGAS 未写出有效分数（评分模型可能 429/TPM 限流，或返回了空分）"
             store.update_task(
                 task_id,
                 status="success",
@@ -409,6 +434,7 @@ def run_evaluation_task(self, task_id: str) -> dict:
                     "partial": False,
                     "planned_total": len(samples),
                     "ragas_metrics": summary,
+                    "ragas_error": ragas_error,
                     "sample_count": len(samples),
                     "agent_finished": len(samples),
                     "agent_total": len(samples),
@@ -477,6 +503,16 @@ def run_evaluation_task(self, task_id: str) -> dict:
                 )
                 return {"task_id": task_id, "status": "cancelled"}
         logger.exception("evaluation task %s failed", task_id)
+        try:
+            finalized = finalize_task_results(task_id, partial=True)
+            summary = dict(finalized.get("metric_summary") or {})
+            summary["run_error"] = str(exc)[:800]
+            if config.suite == "rag_quality":
+                summary["ragas_error"] = str(exc)[:800]
+            store.update_task(task_id, metric_summary=summary, only_if_active=False)
+            return {"task_id": task_id, "status": "success", "summary": summary, "error": str(exc)}
+        except (NoEvalSamples, FileNotFoundError):
+            pass
         store.update_task(
             task_id,
             status="failed",

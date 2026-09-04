@@ -97,6 +97,8 @@ class EvalConfig:
     metric_layers: list[str] = field(default_factory=lambda: ["retrieval", "generation"])
     workers: int = 4
     owner: str = "eval"
+    embedding_model_id: str | None = None
+    ragas_model_id: str | None = None
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -106,6 +108,8 @@ class EvalConfig:
             "sample_limit": self.sample_limit,
             "kb_template_id": self.kb_template_id,
             "chat_model_id": self.chat_model_id,
+            "embedding_model_id": self.embedding_model_id,
+            "ragas_model_id": self.ragas_model_id,
             "rerank_model_id": self.rerank_model_id,
             "config_overrides": self.config_overrides,
             "metric_layers": self.metric_layers,

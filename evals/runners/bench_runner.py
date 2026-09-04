@@ -10,7 +10,7 @@ from typing import Callable
 
 from config.settings import set_current_owner
 from evals.cancel import EvalCancelled, check_stop
-from evals.config import apply_config_overrides
+from evals.config import apply_config_overrides, eval_chat_model_kwargs
 from evals.corpus import ingest_passages
 from evals.datasets import load_dataset
 from evals.metrics.aggregate import average_metrics, sample_metrics_to_dict
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 def _make_runner(config: EvalConfig):
     layers = config.metric_layers
-    kwargs = {"temperature": 0, "extra_body": {"enable_thinking": False}}
+    kwargs = eval_chat_model_kwargs(config)
 
     if config.pipeline_profile == "rag_agent":
         from agents.agent import build_agent
@@ -39,7 +39,13 @@ def _make_runner(config: EvalConfig):
 
         def _run(item, kb_id: int, owner: str) -> SampleResult:
             set_current_owner(owner)
-            return run_rag_agent(item, kb_id=kb_id, agent=agent, metric_layers=layers)
+            return run_rag_agent(
+                item,
+                kb_id=kb_id,
+                agent=agent,
+                metric_layers=layers,
+                chat_model_kwargs=kwargs,
+            )
 
         return _run
 

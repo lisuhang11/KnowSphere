@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import math
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,18 +15,21 @@ from ragas.llms import LangchainLLMWrapper
 from ragas.metrics import answer_relevancy, context_precision, context_recall, faithfulness
 
 from agents.agent import build_agent
-from config.settings import set_current_owner, settings
+from config.settings import set_current_owner
 from evals.cancel import EvalCancelled, check_stop
+from evals.config import eval_chat_model_kwargs, eval_embedding_kwargs, eval_invoke_config
 from evals.corpus import ingest_passages
 from evals.datasets import load_dataset
 from evals.hotpot import cleanup_question, ingest_question, load_hotpot_sample
 from evals.pipelines.agent import EVAL_SYSTEM_PROMPT, _extract
+from evals.retry import call_with_tpm_retry
 from evals.schemas import EvalConfig, QAPair
 from models import create_chat_model, create_embeddings
 from tools.retrieval.doc_retrieval import doc_retrieval
 from utils.vector_store import ChunkStore
 
-_LLM_KWARGS = {"temperature": 0, "extra_body": {"enable_thinking": False}}
+logger = logging.getLogger(__name__)
+
 _METRICS = [faithfulness, answer_relevancy, context_precision, context_recall]
 _METRIC_KEYS = {m.name for m in _METRICS}
 
@@ -54,36 +59,111 @@ def _to_sample_row(
     }
 
 
+def scorable_ragas_rows(rows: list[dict]) -> list[dict]:
+    """只保留 Agent 跑通且有回答的题；运行出错 / 空答不进 RAGAS。"""
+    out: list[dict] = []
+    for row in rows:
+        if row.get("error"):
+            continue
+        question = str(row.get("user_input") or "").strip()
+        answer = str(row.get("response") or "").strip()
+        if not question or not answer:
+            continue
+        payload = dict(row)
+        ctx = payload.get("retrieved_contexts")
+        if not isinstance(ctx, list):
+            payload["retrieved_contexts"] = []
+        payload["reference"] = str(payload.get("reference") or "")
+        out.append(payload)
+    return out
+
+
+def _finite_scores(record: dict) -> dict[str, float]:
+    scores: dict[str, float] = {}
+    for key in _METRIC_KEYS:
+        if key not in record:
+            continue
+        try:
+            val = float(record[key])
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(val):
+            scores[key] = val
+    return scores
+
+
+def _summarize_ragas(ragas_by_qid: dict[int, dict[str, float]]) -> dict[str, float]:
+    scored = [s for s in ragas_by_qid.values() if s]
+    if not scored:
+        return {}
+    keys = sorted({k for row in scored for k in row})
+    return {
+        key: round(sum(row[key] for row in scored if key in row) / max(1, sum(1 for row in scored if key in row)), 4)
+        for key in keys
+    }
+
+
 def _run_ragas_batch(
     rows: list[dict],
     *,
     on_phase: Callable[[str, int, int | None], None] | None = None,
+    on_scored: Callable[[int, dict[str, float]], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    ragas_model_id: str | None = None,
+    embedding_model_id: str | None = None,
 ) -> tuple[dict[str, float], list[dict], dict[int, dict[str, float]]]:
-    if not rows:
+    scorable = scorable_ragas_rows(rows)
+    skipped = len(rows) - len(scorable)
+    if skipped:
+        logger.info("RAGAS 跳过 %s 道失败/空答，仅对 %s 道成功题打分", skipped, len(scorable))
+    if not scorable:
         raise RuntimeError("没有任何题目跑通，请检查 PG/SiliconFlow 配置")
 
     if on_phase:
-        on_phase("ragas", len(rows), None)
+        on_phase("ragas", len(scorable), 0)
 
-    run_config = RunConfig(timeout=480, max_retries=10, max_wait=120, max_workers=4)
-    result = evaluate(
-        EvaluationDataset.from_list(rows),
-        metrics=_METRICS,
-        llm=LangchainLLMWrapper(create_chat_model(**_LLM_KWARGS), run_config=run_config),
-        embeddings=LangchainEmbeddingsWrapper(create_embeddings()),
-        run_config=run_config,
-    )
-    df = result.to_pandas()
-    metric_cols = [c for c in df.columns if c in _METRIC_KEYS]
-    summary = df[metric_cols].mean().round(4).to_dict()
-    detail = df.to_dict(orient="records")
+    # 逐题打分：整批 evaluate 遇 429 会一张分都没有
+    run_config = RunConfig(timeout=180, max_retries=2, max_wait=40, max_workers=1)
+    llm = create_chat_model(**eval_chat_model_kwargs(chat_model_id=ragas_model_id))
+    embeddings = create_embeddings(**eval_embedding_kwargs(embedding_model_id=embedding_model_id))
+    wrapped_llm = LangchainLLMWrapper(llm, run_config=run_config)
+    wrapped_emb = LangchainEmbeddingsWrapper(embeddings)
 
     ragas_by_qid: dict[int, dict[str, float]] = {}
-    for i, record in enumerate(detail):
-        qid = rows[i].get("qid", i)
-        ragas_by_qid[qid] = {k: float(record[k]) for k in metric_cols if k in record}
+    detail: list[dict] = []
+    for index, row in enumerate(scorable):
+        check_stop(should_stop)
+        qid = int(row.get("qid", index))
 
-    return summary, detail, ragas_by_qid
+        def _eval_one(payload: dict = row) -> dict:
+            result = evaluate(
+                EvaluationDataset.from_list([payload]),
+                metrics=_METRICS,
+                llm=wrapped_llm,
+                embeddings=wrapped_emb,
+                run_config=run_config,
+            )
+            records = result.to_pandas().to_dict(orient="records")
+            return records[0] if records else {}
+
+        try:
+            record = call_with_tpm_retry(_eval_one)
+        except EvalCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("RAGAS 跳过 qid=%s：%s", qid, exc)
+            if on_phase:
+                on_phase("ragas", len(scorable), index + 1)
+            continue
+        scores = _finite_scores(record)
+        ragas_by_qid[qid] = scores
+        detail.append(record)
+        if on_scored and scores:
+            on_scored(qid, scores)
+        if on_phase:
+            on_phase("ragas", len(scorable), index + 1)
+
+    return _summarize_ragas(ragas_by_qid), detail, ragas_by_qid
 
 
 def run_ragas_eval(
@@ -92,6 +172,9 @@ def run_ragas_eval(
     seed: int = 42,
     split: str = "validation",
     workers: int = 4,
+    chat_model_id: str | None = None,
+    embedding_model_id: str | None = None,
+    ragas_model_id: str | None = None,
     on_progress: Callable[[int, int], None] | None = None,
     on_sample: Callable[[dict], None] | None = None,
     on_phase: Callable[[str, int, int | None], None] | None = None,
@@ -104,7 +187,7 @@ def run_ragas_eval(
     agent = build_agent(
         system_prompt=EVAL_SYSTEM_PROMPT,
         tools=[doc_retrieval],
-        chat_model_kwargs=_LLM_KWARGS,
+        chat_model_kwargs=eval_chat_model_kwargs(chat_model_id=chat_model_id),
     )
 
     rows: list[dict] = []
@@ -119,12 +202,11 @@ def run_ragas_eval(
         kb_id: int | None = None
         try:
             kb_id, n_chunks = ingest_question(item, owner)
-            result = agent.invoke(
-                {"messages": [{"role": "user", "content": item["question"]}]},
-                config={
-                    "configurable": {"kb_ids": [kb_id]},
-                    "recursion_limit": settings.agent_max_steps,
-                },
+            result = call_with_tpm_retry(
+                lambda: agent.invoke(
+                    {"messages": [{"role": "user", "content": item["question"]}]},
+                    config=eval_invoke_config(kb_id, chat_model_id=chat_model_id),
+                )
             )
             answer, sources = _extract(result)
             contexts = [
@@ -173,7 +255,16 @@ def run_ragas_eval(
         samples = [_to_sample_row(qid, item, row_by_qid.get(qid, {})) for qid, item in indexed]
         raise RuntimeError("没有任何题目跑通，请检查 PG/SiliconFlow 配置")
 
-    summary, detail, ragas_by_qid = _run_ragas_batch(rows, on_phase=on_phase)
+    item_by_qid = dict(indexed)
+    summary, detail, ragas_by_qid = _run_ragas_batch(
+        rows,
+        on_phase=on_phase,
+        on_scored=lambda qid, scores: on_sample
+        and on_sample(_to_sample_row(qid, item_by_qid.get(qid, {}), row_by_qid.get(qid, {}), scores)),
+        should_stop=should_stop,
+        ragas_model_id=ragas_model_id,
+        embedding_model_id=embedding_model_id,
+    )
 
     samples = []
     for qid, item in indexed:
@@ -214,7 +305,7 @@ def run_ragas_eval_dataset(
     agent = build_agent(
         system_prompt=EVAL_SYSTEM_PROMPT,
         tools=[doc_retrieval],
-        chat_model_kwargs=_LLM_KWARGS,
+        chat_model_kwargs=eval_chat_model_kwargs(config),
     )
 
     indexed = list(enumerate(dataset.items))
@@ -227,12 +318,11 @@ def run_ragas_eval_dataset(
         check_stop(should_stop)
         set_current_owner(owner)
         try:
-            result = agent.invoke(
-                {"messages": [{"role": "user", "content": item.question}]},
-                config={
-                    "configurable": {"kb_ids": [kb_id]},
-                    "recursion_limit": settings.agent_max_steps,
-                },
+            result = call_with_tpm_retry(
+                lambda: agent.invoke(
+                    {"messages": [{"role": "user", "content": item.question}]},
+                    config=eval_invoke_config(kb_id, config),
+                )
             )
             answer, sources = _extract(result)
             contexts = [
@@ -314,7 +404,16 @@ def run_ragas_eval_dataset(
         samples = [_to_sample_row(qid, item, row_by_qid.get(qid, {})) for qid, item in indexed]
         raise RuntimeError("没有任何题目跑通，请检查 PG/SiliconFlow 配置")
 
-    summary, detail, ragas_by_qid = _run_ragas_batch(rows, on_phase=on_phase)
+    item_by_qid = dict(indexed)
+    summary, detail, ragas_by_qid = _run_ragas_batch(
+        rows,
+        on_phase=on_phase,
+        on_scored=lambda qid, scores: on_sample
+        and on_sample(_to_sample_row(qid, item_by_qid.get(qid, {}), row_by_qid.get(qid, {}), scores)),
+        should_stop=should_stop,
+        ragas_model_id=config.ragas_model_id,
+        embedding_model_id=config.embedding_model_id,
+    )
 
     samples = []
     for qid, item in indexed:

@@ -27,10 +27,16 @@ import {
 } from '@/api/evaluation'
 import EvalMetricBars from '@/components/EvalMetricBars.vue'
 import EvalMetricCards from '@/components/EvalMetricCards.vue'
+import ModelSelector from '@/components/ModelSelector.vue'
+import { listModels, type ModelInfo } from '@/api/models'
+import { selectInitialModelId, modelDisplayName } from '@/utils/modelDefaults'
 import {
+  classifySample,
   elapsedLabel,
   etaLabel,
+  formatGoldLabel,
   formatMetricValue,
+  formatPredLabel,
   highlightMetric,
   isActiveTask,
   hasEvalResult,
@@ -39,8 +45,14 @@ import {
   progressLabel,
   progressPercentage,
   progressStatus,
+  retrievalHit,
+  sampleFilterMatch,
+  sortSamplesByIssue,
   taskDurationLabel,
+  taskIssueStats,
   taskPhase,
+  type SampleFilter,
+  type SampleVerdict,
 } from '@/utils/evalMetrics'
 
 const loading = ref(false)
@@ -74,7 +86,9 @@ const form = ref<CreateEvalPayload>({
   pipeline_profile: 'rag_fixed',
   sample_limit: undefined,
   workers: 2,
+  ragas_model_id: undefined,
 })
+const evalModels = ref<ModelInfo[]>([])
 
 const uploadOverwrite = ref(false)
 const uploadExample = `{
@@ -95,7 +109,7 @@ const uploadExample = `{
 }`
 
 const editForm = ref({ id: '', description: '', source: '' })
-const sampleFilter = ref<'all' | 'hasans' | 'noans' | 'hit' | 'miss' | 'error'>('all')
+const sampleFilter = ref<SampleFilter>('issues')
 const samplePage = ref(1)
 const samplePageSize = ref(20)
 const expandedQids = ref<(string | number)[]>([])
@@ -152,11 +166,13 @@ const createDatasetHint = computed(() => {
   if (form.value.dataset_id.startsWith('squad')) {
     return 'SQuAD 2.0 使用 EM/F1 与不可答题拒答率。抽样按段落整抽：抽中一段正文则保留该段全部问答，不会从同一段里拆一半题；实际题数可能略多于或略少于填写值。'
   }
-  if (form.value.suite !== 'rag_quality') return ''
-  if (form.value.dataset_id === 'hotpot') {
-    return 'RAGAS 将在线加载 HotpotQA（需网络）。建议抽样 10–50 题。'
+  if (form.value.suite === 'rag_quality') {
+    if (form.value.dataset_id === 'hotpot') {
+      return 'RAGAS 将在线加载 HotpotQA（需网络）。建议抽样 10–50 题。答题用系统默认对话模型；RAGAS 打分用下面单独选的模型。'
+    }
+    return 'RAGAS 将对所选 JSON 数据集跑 Agent 检索并打分。答题用系统默认对话模型；RAGAS 打分用下面单独选的模型。'
   }
-  return 'RAGAS 将对所选 JSON 数据集跑 Agent 检索并打分（faithfulness / relevancy 等）。'
+  return ''
 })
 
 const filteredDatasets = computed(() => {
@@ -168,8 +184,9 @@ const filteredDatasets = computed(() => {
 })
 
 const detailSampleCount = computed(() => {
+  if (sampleTotal.value) return sampleTotal.value
   const n = detailTask.value?.metric_summary?.sample_count
-  return typeof n === 'number' ? n : sampleTotal.value || detailSamples.value.length || null
+  return typeof n === 'number' ? n : detailSamples.value.length || null
 })
 
 const historyTasks = computed(() => {
@@ -178,33 +195,101 @@ const historyTasks = computed(() => {
   return tasks.value.filter((t) => t.dataset_id === ds && hasEvalResult(t)).slice(0, 8)
 })
 
-function retrievalHit(row: EvalSample): boolean | null {
-  const gt = row.retrieval_gt || []
-  const ids = row.retrieval_ids || []
-  if (!gt.length) return null
-  return gt.some((id) => ids.includes(id))
+function sampleVerdict(row: EvalSample): SampleVerdict {
+  return classifySample(row)
 }
 
-function squadFlags(row: EvalSample) {
-  const squad = row.metrics?.squad as Record<string, number> | undefined
-  return {
-    impossible: squad?.impossible === 1,
-    abstained: squad?.abstained === 1,
-  }
+function isIntentSample(row: EvalSample) {
+  return Boolean(row.metrics?.intent)
 }
+
+function hasRetrieval(row: EvalSample) {
+  return Boolean((row.retrieval_ids && row.retrieval_ids.length) || (row.retrieval_gt && row.retrieval_gt.length))
+}
+
+function issueStats(task: EvalTask) {
+  return taskIssueStats(task)
+}
+
+function resultIssueCount(task: EvalTask) {
+  const stats = issueStats(task)
+  return stats.wrong + stats.errors
+}
+
+function resultIssueLine(task: EvalTask) {
+  const stats = issueStats(task)
+  const issues = stats.wrong + stats.errors
+  const total = stats.total || task.finished || '?'
+  if (issues > 0 && stats.unscored) return `出错 ${stats.errors} · 未打分 ${stats.unscored} / 共 ${total}`
+  if (issues > 0) return `答错 ${issues} 题 · 答对 ${stats.ok} / 共 ${total}`
+  if (stats.unscored) return `未打分 ${stats.unscored} / 共 ${total}`
+  if (stats.total) return `全部答对 · ${stats.total} 题`
+  return '暂无逐题统计'
+}
+
+const detailIssueStats = computed(() => {
+  if (!detailTask.value) return { total: 0, ok: 0, wrong: 0, errors: 0, unscored: 0 }
+  return taskIssueStats(detailTask.value, detailSamples.value)
+})
+
+const verdictChips = computed(() => {
+  const rows = detailSamples.value
+  const count = (filter: SampleFilter) => rows.filter((row) => sampleFilterMatch(row, filter)).length
+  const chips: Array<{ value: SampleFilter; label: string; count: number; tone: string }> = [
+    { value: 'issues', label: '答错', count: count('issues'), tone: 'danger' },
+    { value: 'false_abstain', label: '该答却拒答', count: count('false_abstain'), tone: 'warning' },
+    { value: 'wrong_answer', label: '答案不对', count: count('wrong_answer'), tone: 'danger' },
+    { value: 'false_answer', label: '不该答却答了', count: count('false_answer'), tone: 'danger' },
+    { value: 'intent_wrong', label: '意图判错', count: count('intent_wrong'), tone: 'danger' },
+    { value: 'retrieval_miss', label: '检索未中', count: count('retrieval_miss'), tone: 'warning' },
+    { value: 'run_error', label: '运行出错', count: count('run_error'), tone: 'danger' },
+    { value: 'unscored', label: '未打分', count: count('unscored'), tone: 'warning' },
+    { value: 'correct', label: '答对', count: count('correct'), tone: 'success' },
+    { value: 'all', label: '全部', count: rows.length, tone: 'default' },
+  ]
+  return chips.filter((chip) => chip.value === 'issues' || chip.value === 'all' || chip.value === 'correct' || chip.count > 0)
+})
+
+const detailHeader = computed(() => {
+  const task = detailTask.value
+  if (!task) return '任务详情'
+  const stats = detailIssueStats.value
+  const issues = stats.wrong + stats.errors
+  if (issues > 0 && stats.unscored) return `${task.dataset_id} · 出错 ${stats.errors} · 未打分 ${stats.unscored}`
+  if (issues > 0) return `${task.dataset_id} · 答错 ${issues} 题`
+  if (stats.unscored) return `${task.dataset_id} · 未打分 ${stats.unscored} 题`
+  if (stats.total) return `${task.dataset_id} · 全部答对`
+  return task.dataset_id || task.id
+})
 
 const filteredSamples = computed(() => {
-  return detailSamples.value.filter((row) => {
-    if (sampleFilter.value === 'all') return true
-    if (sampleFilter.value === 'error') return Boolean(row.error)
-    if (sampleFilter.value === 'hasans') return !squadFlags(row).impossible
-    if (sampleFilter.value === 'noans') return squadFlags(row).impossible
-    const hit = retrievalHit(row)
-    if (sampleFilter.value === 'hit') return hit === true
-    if (sampleFilter.value === 'miss') return hit === false
-    return true
-  })
+  const rows = detailSamples.value.filter((row) => sampleFilterMatch(row, sampleFilter.value))
+  return sortSamplesByIssue(rows)
 })
+
+function sampleRowClassName({ row }: { row: EvalSample }) {
+  return sampleVerdict(row).ok ? '' : 'sample-row-issue'
+}
+
+function setSampleFilter(filter: SampleFilter) {
+  sampleFilter.value = filter
+}
+
+const sampleEmptyText = computed(() => {
+  if (sampleFilter.value === 'issues' && sampleTotal.value) {
+    return '这批题里没有答错的。可点「全部」查看逐题明细。'
+  }
+  return '暂无逐题明细'
+})
+
+const sampleColumns = [
+  { colKey: 'qid', title: '#', width: 48 },
+  { colKey: 'verdict', title: '判定', width: 132 },
+  { colKey: 'question', title: '问题', minWidth: 140, ellipsis: true },
+  { colKey: 'answers', title: '正确答案 / 系统答案', minWidth: 180 },
+  { colKey: 'latency', title: '耗时', width: 80 },
+  { colKey: 'sampleMetrics', title: '指标', width: 180 },
+]
 
 const pagedSamples = computed(() => {
   const start = (samplePage.value - 1) * samplePageSize.value
@@ -248,6 +333,13 @@ function evalKbName(t: EvalTask): string {
   return typeof name === 'string' ? name : ''
 }
 
+function snapshotModelLabel(task: EvalTask, key: 'chat_model_id' | 'embedding_model_id' | 'ragas_model_id') {
+  const id = task.config_snapshot?.[key]
+  if (typeof id !== 'string' || !id.trim()) return '系统默认'
+  const rec = evalModels.value.find((m) => m.id === id)
+  return rec ? modelDisplayName(rec) : id
+}
+
 function formatSampleMetrics(metrics: Record<string, unknown> | null | undefined): string {
   if (!metrics) return '—'
   const rag = metrics.ragas as Record<string, number> | undefined
@@ -276,6 +368,8 @@ function formatSampleMetrics(metrics: Record<string, unknown> | null | undefined
         .map(([k, v]) => `${k.slice(0, 4)} ${formatMetricValue(v)}`)
         .join(' '),
     )
+  } else if (metrics.ragas && typeof metrics.ragas === 'object') {
+    parts.push('RAGAS 未打分')
   }
   return parts.join(' · ') || JSON.stringify(metrics).slice(0, 60)
 }
@@ -293,6 +387,9 @@ watch(
       form.value.pipeline_profile = 'intent'
     } else if (form.value.pipeline_profile === 'intent') {
       form.value.pipeline_profile = 'rag_fixed'
+    }
+    if (suite === 'rag_quality') {
+      form.value.workers = 1
     }
   },
 )
@@ -323,6 +420,17 @@ async function loadDatasets() {
   }
 }
 
+async function loadEvalModels() {
+  try {
+    evalModels.value = await listModels()
+    if (!form.value.ragas_model_id) {
+      form.value.ragas_model_id = selectInitialModelId(evalModels.value, 'KnowledgeQA') || undefined
+    }
+  } catch {
+    evalModels.value = []
+  }
+}
+
 async function submitCreate() {
   try {
     const payload: CreateEvalPayload = {
@@ -337,6 +445,11 @@ async function submitCreate() {
     if (payload.suite === 'rag_quality' && !payload.sample_limit) {
       payload.sample_limit = 10
     }
+    if (payload.suite !== 'rag_quality' || !payload.ragas_model_id) {
+      delete payload.ragas_model_id
+    }
+    delete payload.chat_model_id
+    delete payload.embedding_model_id
     await createEvalTask(payload)
     MessagePlugin.success('评测任务已创建，请确保 Celery worker 已启动')
     createVisible.value = false
@@ -642,7 +755,7 @@ function confirmProduceResult(row: EvalTask) {
 async function onRowClick(ctx: { row: EvalTask }) {
   const id = ctx.row.id
   detailVisible.value = true
-  sampleFilter.value = 'all'
+  sampleFilter.value = 'issues'
   samplePage.value = 1
   expandedQids.value = []
   detailTask.value = ctx.row
@@ -717,7 +830,7 @@ watch(activeTab, (tab) => {
 })
 
 onMounted(async () => {
-  await Promise.all([loadTasks(), loadDatasets()])
+  await Promise.all([loadTasks(), loadDatasets(), loadEvalModels()])
   startPolling()
   if (hasRunning.value) startClock()
 })
@@ -849,13 +962,17 @@ onUnmounted(() => {
 
       <t-tab-panel value="results" :label="resultTasks.length ? `评测结果 (${resultTasks.length})` : '评测结果'">
         <t-alert theme="info" class="tip">
-          跑完、中断或手动「产出结果」后会出现在这里。点卡片可看指标和逐题明细。
+          跑完、中断或手动「产出结果」后会出现在这里。卡片会先标出答错题数；点进去默认只看出错的题目。
         </t-alert>
         <div v-if="resultTasks.length" class="result-list">
           <article
             v-for="t in resultTasks"
             :key="t.id"
             class="result-card"
+            :class="{
+              'result-card--issues': resultIssueCount(t) > 0,
+              'result-card--failed': t.status === 'failed',
+            }"
             @click="onRowClick({ row: t })"
           >
             <div class="live-card-top">
@@ -871,6 +988,10 @@ onUnmounted(() => {
                 <span v-if="t.finished || t.total">{{ t.finished }}/{{ t.total || '?' }} 题</span>
               </div>
             </div>
+            <p class="result-card-verdict" :class="{ 'has-issues': resultIssueCount(t) > 0 }">
+              {{ resultIssueLine(t) }}
+            </p>
+            <p v-if="t.status === 'failed' && t.err_msg" class="result-card-error">{{ t.err_msg }}</p>
             <p class="live-card-metrics">{{ highlightMetric(t.metric_summary) }}</p>
             <p class="result-card-id mono">{{ t.id }}</p>
             <div class="live-card-actions" @click.stop>
@@ -920,11 +1041,26 @@ onUnmounted(() => {
             <t-radio value="rag_agent">rag_agent</t-radio>
           </t-radio-group>
         </t-form-item>
+        <t-form-item v-if="form.suite === 'rag_quality'" label="RAGAS 评分模型">
+          <ModelSelector
+            v-model:selected-model-id="form.ragas_model_id"
+            model-type="KnowledgeQA"
+            :all-models="evalModels"
+            placeholder="用于忠实度、相关性等打分"
+          />
+        </t-form-item>
         <t-form-item :label="form.dataset_id.startsWith('squad') ? '抽样题数（按段）' : '抽样题数'">
           <t-input-number v-model="form.sample_limit" :min="1" :max="500" placeholder="全部" theme="normal" />
         </t-form-item>
         <t-form-item label="并行度">
           <t-input-number v-model="form.workers" :min="1" :max="8" theme="normal" />
+          <p class="muted form-hint">
+            {{
+              form.suite === 'rag_quality'
+                ? 'RAGAS 每题会多次调用模型，并行度建议 1。遇到 429/TPM 会自动等 30–90 秒后重试。'
+                : '遇到供应商 429/TPM 限额时请降到 1；评测会自动等待后重试。'
+            }}
+          </p>
         </t-form-item>
       </t-form>
     </t-dialog>
@@ -1050,7 +1186,7 @@ onUnmounted(() => {
       </template>
     </t-drawer>
 
-    <t-drawer v-model:visible="detailVisible" size="large" :header="detailTask?.id || '任务详情'">
+    <t-drawer v-model:visible="detailVisible" size="large" :header="detailHeader">
       <template v-if="detailTask">
         <div v-if="isActiveTask(detailTask)" class="detail-live">
           <div class="detail-live-head">
@@ -1101,6 +1237,10 @@ onUnmounted(() => {
           <t-descriptions-item label="数据集">{{ detailTask.dataset_id }}</t-descriptions-item>
           <t-descriptions-item label="套件">{{ suiteLabel(detailTask.suite) }}</t-descriptions-item>
           <t-descriptions-item label="Pipeline">{{ detailTask.pipeline_profile }}</t-descriptions-item>
+          <t-descriptions-item label="对话模型">系统默认</t-descriptions-item>
+          <t-descriptions-item v-if="detailTask.suite === 'rag_quality'" label="RAGAS 评分模型">
+            {{ snapshotModelLabel(detailTask, 'ragas_model_id') }}
+          </t-descriptions-item>
           <t-descriptions-item label="状态">
             <t-tag :theme="statusTheme(detailTask.status, isPartialResult(detailTask))">
               {{ statusLabel(detailTask.status, isPartialResult(detailTask)) }}
@@ -1133,6 +1273,96 @@ onUnmounted(() => {
           <span class="muted">按已完成的题目汇总 EM/F1 等指标，生成可对比的评测结果。</span>
         </div>
 
+        <div class="verdict-summary">
+          <div class="verdict-summary-head">
+            <h3 class="section-title verdict-title">判定汇总</h3>
+            <span class="muted">
+              答对 {{ detailIssueStats.ok }}
+              · 答错 {{ detailIssueStats.wrong + detailIssueStats.errors }}
+              <template v-if="detailIssueStats.unscored"> · 未打分 {{ detailIssueStats.unscored }}</template>
+              · 共 {{ detailIssueStats.total || sampleTotal }} 题
+            </span>
+          </div>
+          <div class="verdict-chips">
+            <button
+              v-for="chip in verdictChips"
+              :key="chip.value"
+              type="button"
+              class="verdict-chip"
+              :class="[`verdict-chip--${chip.tone}`, { active: sampleFilter === chip.value }]"
+              @click="setSampleFilter(chip.value)"
+            >
+              {{ chip.label }}
+              <strong>{{ chip.count }}</strong>
+            </button>
+          </div>
+        </div>
+
+        <h3 class="section-title">
+          逐题明细
+          <span class="muted">（{{ filteredSamples.length }} / {{ sampleTotal }}）</span>
+        </h3>
+        <t-table
+          :data="pagedSamples"
+          :columns="sampleColumns"
+          row-key="qid"
+          size="small"
+          max-height="480"
+          :expanded-row-keys="expandedQids"
+          :row-class-name="sampleRowClassName"
+          :empty="sampleEmptyText"
+          @expand-change="onExpandChange"
+        >
+          <template #verdict="{ row }">
+            <t-tag :theme="sampleVerdict(row).theme" size="small" variant="light">
+              {{ sampleVerdict(row).label }}
+            </t-tag>
+          </template>
+          <template #answers="{ row }">
+            <span class="clip">{{ formatGoldLabel(row) }} → {{ formatPredLabel(row) }}</span>
+          </template>
+          <template #latency="{ row }">
+            {{ row.latency_ms != null ? `${row.latency_ms}ms` : '—' }}
+          </template>
+          <template #sampleMetrics="{ row }">
+            <span class="mono clip">{{ formatSampleMetrics(row.metrics) }}</span>
+          </template>
+          <template #expanded-row="{ row }">
+            <div class="expand-block">
+              <p class="expand-verdict">
+                <t-tag :theme="sampleVerdict(row).theme" size="small" variant="light">
+                  {{ sampleVerdict(row).label }}
+                </t-tag>
+                {{ sampleVerdict(row).reason }}
+              </p>
+              <p class="expand-question"><strong>问题：</strong>{{ row.question || '—' }}</p>
+              <p>
+                <strong>{{ isIntentSample(row) ? '标注意图：' : '正确答案：' }}</strong>
+                {{ formatGoldLabel(row) }}
+              </p>
+              <p>
+                <strong>{{ isIntentSample(row) ? '识别结果：' : '系统答案：' }}</strong>
+                {{ formatPredLabel(row) }}
+              </p>
+              <p v-if="hasRetrieval(row)">
+                <strong>检索：</strong>
+                系统召回 {{ (row.retrieval_ids || []).join(', ') || '—' }}
+                / 应命中 {{ (row.retrieval_gt || []).join(', ') || '—' }}
+                <span v-if="retrievalHit(row) === true" class="hit-ok"> · 已命中</span>
+                <span v-else-if="retrievalHit(row) === false" class="hit-miss"> · 未命中</span>
+              </p>
+            </div>
+          </template>
+        </t-table>
+        <t-pagination
+          v-if="filteredSamples.length > samplePageSize"
+          v-model:current="samplePage"
+          :total="filteredSamples.length"
+          :page-size="samplePageSize"
+          size="small"
+          class="sample-pager"
+        />
+
         <h3 class="section-title">汇总指标</h3>
         <EvalMetricCards :summary="detailTask.metric_summary" :sample-count="detailSampleCount" />
         <h3 class="section-title">指标条形图</h3>
@@ -1155,70 +1385,6 @@ onUnmounted(() => {
             </t-table-column>
           </t-table>
         </template>
-
-        <h3 class="section-title">逐题明细（{{ filteredSamples.length }} / {{ sampleTotal }}）</h3>
-        <t-radio-group v-model="sampleFilter" variant="default-filled" size="small" class="sample-filter">
-          <t-radio-button value="all">全部</t-radio-button>
-          <t-radio-button value="hasans">可答</t-radio-button>
-          <t-radio-button value="noans">不可答</t-radio-button>
-          <t-radio-button value="hit">检索命中</t-radio-button>
-          <t-radio-button value="miss">检索未中</t-radio-button>
-          <t-radio-button value="error">出错</t-radio-button>
-        </t-radio-group>
-        <t-table
-          :data="pagedSamples"
-          row-key="qid"
-          size="small"
-          max-height="420"
-          :expanded-row-keys="expandedQids"
-          @expand-change="onExpandChange"
-        >
-          <t-table-column title="#" col-key="qid" width="48" />
-          <t-table-column title="问题" col-key="question" min-width="140" />
-          <t-table-column title="标记" width="120">
-            <template #default="{ row }">
-              <t-tag v-if="row.error" size="small" theme="danger" variant="light">错</t-tag>
-              <t-tag v-else-if="squadFlags(row).impossible" size="small" variant="light">NoAns</t-tag>
-              <t-tag v-if="squadFlags(row).abstained" size="small" theme="warning" variant="light">拒答</t-tag>
-              <t-tag v-if="retrievalHit(row) === true" size="small" theme="success" variant="light">命中</t-tag>
-              <t-tag v-else-if="retrievalHit(row) === false" size="small" theme="danger" variant="light">未中</t-tag>
-            </template>
-          </t-table-column>
-          <t-table-column title="正确答案 / 系统答案" col-key="response" min-width="180">
-            <template #default="{ row }">
-              <span class="clip">{{ row.reference || '—' }} → {{ row.response || row.error || '—' }}</span>
-            </template>
-          </t-table-column>
-          <t-table-column title="耗时" col-key="latency_ms" width="72">
-            <template #default="{ row }">
-              {{ row.latency_ms != null ? `${row.latency_ms}ms` : '—' }}
-            </template>
-          </t-table-column>
-          <t-table-column title="指标" col-key="metrics" width="180">
-            <template #default="{ row }">
-              <span class="mono clip">{{ formatSampleMetrics(row.metrics) }}</span>
-            </template>
-          </t-table-column>
-          <template #expanded-row="{ row }">
-            <div class="expand-block">
-              <p><strong>正确答案：</strong>{{ row.reference || '（空）' }}</p>
-              <p><strong>系统答案：</strong>{{ row.response || row.error || '—' }}</p>
-              <p>
-                <strong>检索：</strong>
-                系统召回 {{ (row.retrieval_ids || []).join(', ') || '—' }}
-                / 应命中 {{ (row.retrieval_gt || []).join(', ') || '—' }}
-              </p>
-            </div>
-          </template>
-        </t-table>
-        <t-pagination
-          v-if="filteredSamples.length > samplePageSize"
-          v-model:current="samplePage"
-          :total="filteredSamples.length"
-          :page-size="samplePageSize"
-          size="small"
-          class="sample-pager"
-        />
       </template>
     </t-drawer>
   </div>
@@ -1341,6 +1507,11 @@ onUnmounted(() => {
   font-size: 15px;
 }
 
+.section-title .muted {
+  font-weight: 400;
+  font-size: 13px;
+}
+
 .progress-cell {
   display: flex;
   flex-direction: column;
@@ -1405,6 +1576,31 @@ onUnmounted(() => {
 
 .result-card:hover {
   border-color: var(--td-brand-color);
+}
+
+.result-card--issues {
+  border-color: var(--td-warning-color, #ed7b2f);
+}
+
+.result-card--failed {
+  border-color: var(--td-error-color, #d54941);
+}
+
+.result-card-verdict {
+  margin: 8px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--td-success-color, #2ba471);
+}
+
+.result-card-verdict.has-issues {
+  color: var(--td-error-color, #d54941);
+}
+
+.result-card-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--td-error-color, #d54941);
 }
 
 .result-card-id {
@@ -1490,6 +1686,12 @@ onUnmounted(() => {
 .muted {
   color: var(--td-text-color-placeholder);
   font-size: 12px;
+}
+
+.form-hint {
+  margin: 6px 0 0;
+  line-height: 1.4;
+  max-width: 360px;
 }
 
 .ragas-progress :deep(.t-progress__bar) {
@@ -1644,8 +1846,69 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
-.sample-filter {
-  margin-bottom: 8px;
+.verdict-summary {
+  margin-top: 16px;
+}
+
+.verdict-summary-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.verdict-title {
+  margin: 0;
+}
+
+.verdict-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+
+.verdict-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--td-component-border);
+  background: var(--td-bg-color-container);
+  color: var(--td-text-color-secondary);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.verdict-chip strong {
+  font-size: 13px;
+  color: var(--td-text-color-primary);
+}
+
+.verdict-chip.active {
+  border-color: var(--td-brand-color);
+  background: var(--td-brand-color-light, #f2f3ff);
+  color: var(--td-brand-color);
+}
+
+.verdict-chip--danger.active {
+  border-color: var(--td-error-color, #d54941);
+  background: var(--td-error-color-1, #fff0ed);
+  color: var(--td-error-color, #d54941);
+}
+
+.verdict-chip--warning.active {
+  border-color: var(--td-warning-color, #ed7b2f);
+  background: var(--td-warning-color-1, #fff1e9);
+  color: var(--td-warning-color, #ed7b2f);
+}
+
+.verdict-chip--success.active {
+  border-color: var(--td-success-color, #2ba471);
+  background: var(--td-success-color-1, #e8f8f2);
+  color: var(--td-success-color, #2ba471);
 }
 
 .sample-pager {
@@ -1661,5 +1924,31 @@ onUnmounted(() => {
 
 .expand-block p {
   margin: 0 0 6px;
+}
+
+.expand-question {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.expand-verdict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px !important;
+  color: var(--td-text-color-primary);
+}
+
+.hit-ok {
+  color: var(--td-success-color, #2ba471);
+}
+
+.hit-miss {
+  color: var(--td-error-color, #d54941);
+}
+
+:deep(.sample-row-issue) {
+  background: var(--td-error-color-1, #fff0ed);
 }
 </style>

@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from config.settings import settings
+from evals.schemas import EvalConfig
 
 
 def default_metric_layers(suite: str, dataset_id: str = "") -> list[str]:
@@ -57,3 +58,50 @@ def apply_config_overrides(overrides: dict[str, Any] | None):
     finally:
         for key, value in saved.items():
             setattr(settings, key, value)
+
+
+_EVAL_CHAT_KWARGS = {"temperature": 0, "extra_body": {"enable_thinking": False}}
+
+
+def eval_chat_model_kwargs(
+    config: EvalConfig | None = None,
+    extra: dict[str, Any] | None = None,
+    *,
+    chat_model_id: str | None = None,
+) -> dict[str, Any]:
+    """评测用聊天模型参数：显式传入 models 表 ID，避免落到系统默认模型。"""
+    kw = dict(_EVAL_CHAT_KWARGS)
+    if extra:
+        kw.update(extra)
+    model_id = chat_model_id or (config.chat_model_id if config else None)
+    if model_id:
+        kw["model"] = model_id
+    return kw
+
+
+def eval_embedding_kwargs(config: EvalConfig | None = None, *, embedding_model_id: str | None = None) -> dict[str, Any]:
+    model_id = embedding_model_id or (config.embedding_model_id if config else None)
+    if model_id:
+        return {"model": model_id}
+    return {}
+
+
+def eval_invoke_config(
+    kb_id: int,
+    config: EvalConfig | None = None,
+    *,
+    chat_model_id: str | None = None,
+    extra_configurable: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from config.settings import settings as _settings
+
+    configurable: dict[str, Any] = {"kb_ids": [kb_id]}
+    model_id = chat_model_id or (config.chat_model_id if config else None)
+    if model_id:
+        configurable["chat_model_id"] = model_id
+    if extra_configurable:
+        configurable.update(extra_configurable)
+    return {
+        "configurable": configurable,
+        "recursion_limit": _settings.agent_max_steps,
+    }

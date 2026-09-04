@@ -109,6 +109,9 @@ export interface CreateEvalPayload {
   pipeline_profile: PipelineProfile
   sample_limit?: number
   kb_template_id?: number
+  chat_model_id?: string
+  embedding_model_id?: string
+  ragas_model_id?: string
   workers?: number
   config_overrides?: Record<string, unknown>
 }

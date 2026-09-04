@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
 import psycopg
+from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
@@ -305,18 +306,24 @@ class ModelStore():
         for f in SECRET_FIELDS:
             if params.get(f):
                 params[f] = encrypt_secret(str(params[f]))
-        with self._conn() as conn:
-            with conn.transaction:
-                if is_default:
-                    conn.execute("UPDATE models SET is_default = FALSE WHERE type = %s", (type_,))
-                conn.execute(
-                    """
-                    INSERT INTO models (id, name, display_name, type, source, description, parameters, is_default, is_builtin)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (model_id, name.strip(), display_name or name.strip(), type_, source, description, Jsonb(params), is_default, is_builtin),
-                )
-        return self.get_model(model_id)  # type: ignore[return-value]
+        try:
+            with self._conn() as conn:
+                with conn.transaction():
+                    if is_default:
+                        conn.execute("UPDATE models SET is_default = FALSE WHERE type = %s", (type_,))
+                    conn.execute(
+                        """
+                        INSERT INTO models (id, name, display_name, type, source, description, parameters, is_default, is_builtin)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (model_id, name.strip(), display_name or name.strip(), type_, source, description, Jsonb(params), is_default, is_builtin),
+                    )
+        except UniqueViolation as exc:
+            raise ValueError(f"已存在同类型同名模型: {name} ({type_})") from exc
+        rec = self.get_model(model_id)
+        if rec is None:
+            raise ValueError("模型写入失败，请重试")
+        return rec
 
     def update_model(
         self,
@@ -361,12 +368,15 @@ class ModelStore():
         sets.append("updated_at = now()")
         args.append(model_id)
         with self._conn() as conn:
-            with conn.transaction:
+            with conn.transaction():
                 if is_default:
                     conn.execute("UPDATE models SET is_default = FALSE WHERE type = %s", (rec["type"],))
                 args_with_jsonb = [Jsonb(v) if isinstance(v, dict) else v for v in args]
                 conn.execute(f"UPDATE models SET {', '.join(sets)} WHERE id = %s", args_with_jsonb)
-        return self.get_model(model_id)  # type: ignore[return-value]
+        updated = self.get_model(model_id)
+        if updated is None:
+            raise ValueError(f"模型不存在: {model_id}")
+        return updated
 
     def set_default(self, model_id: str) -> dict:
         return self.update_model(model_id, is_default=True)
