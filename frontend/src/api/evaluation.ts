@@ -2,7 +2,7 @@ import request from './request'
 
 export type EvalSuite = 'rag_bench' | 'rag_quality' | 'intent_bench'
 export type PipelineProfile = 'rag_fixed' | 'rag_agent' | 'intent'
-export type EvalStatus = 'pending' | 'running' | 'success' | 'failed'
+export type EvalStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled'
 
 export interface EvalDatasetInfo {
   id: string
@@ -85,6 +85,7 @@ export interface EvalTask {
   total: number
   finished: number
   err_msg: string | null
+  eval_kb_id?: number | null
   created_at: string | null
   started_at: string | null
   finished_at: string | null
@@ -143,7 +144,7 @@ function unwrap<T>(res: { data: { success?: boolean; data: T } }): T {
   return res.data.data
 }
 
-export async function listEvalTasks(limit = 50, offset = 0): Promise<{ items: EvalTask[]; total: number }> {
+export async function listEvalTasks(limit = 200, offset = 0): Promise<{ items: EvalTask[]; total: number }> {
   const res = await request.get<{ success: boolean; data: { items: EvalTask[]; total: number } }>(
     '/evaluation/tasks',
     { params: { limit, offset } },
@@ -166,6 +167,20 @@ export async function createEvalTask(payload: CreateEvalPayload): Promise<EvalTa
 export async function deleteEvalTask(taskId: string): Promise<{ id: string }> {
   const res = await request.delete<{ success: boolean; data: { id: string } }>(
     `/evaluation/${encodeURIComponent(taskId)}`,
+  )
+  return unwrap(res)
+}
+
+export async function cancelEvalTask(taskId: string): Promise<EvalTask> {
+  const res = await request.post<{ success: boolean; data: EvalTask }>(
+    `/evaluation/${encodeURIComponent(taskId)}/cancel`,
+  )
+  return unwrap(res)
+}
+
+export async function produceEvalResults(taskId: string): Promise<EvalTask> {
+  const res = await request.post<{ success: boolean; data: EvalTask }>(
+    `/evaluation/${encodeURIComponent(taskId)}/results`,
   )
   return unwrap(res)
 }

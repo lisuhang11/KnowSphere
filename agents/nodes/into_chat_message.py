@@ -10,7 +10,7 @@ def format_context_block(sources: list[dict], note: str | None = None) -> str:
     """将 last_sources 编成模型可读的【知识库检索结果】块；序号从 1 起对齐 [[cN]]。"""
     lines = ["【知识库检索结果】"]
     if not sources:
-        lines.append("未命中相关片段。请明确说明未在知识库中找到相关信息。")
+        lines.append("(no retrieved materials)")
         if note and note.strip():
             lines.append(note.strip())
         return "\n".join(lines)

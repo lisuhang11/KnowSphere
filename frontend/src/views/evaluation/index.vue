@@ -2,7 +2,9 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next'
 import {
+  cancelEvalTask,
   createEvalTask,
+  produceEvalResults,
   deleteEvalDataset,
   deleteEvalTask,
   getEvalDataset,
@@ -26,16 +28,23 @@ import {
 import EvalMetricBars from '@/components/EvalMetricBars.vue'
 import EvalMetricCards from '@/components/EvalMetricCards.vue'
 import {
+  elapsedLabel,
+  etaLabel,
   formatMetricValue,
   highlightMetric,
+  isActiveTask,
+  hasEvalResult,
   isRagasScoring,
+  phaseLabel,
   progressLabel,
   progressPercentage,
+  progressStatus,
   taskDurationLabel,
+  taskPhase,
 } from '@/utils/evalMetrics'
 
 const loading = ref(false)
-const activeTab = ref<'datasets' | 'results'>('datasets')
+const activeTab = ref<'datasets' | 'tasks' | 'results'>('datasets')
 const tasks = ref<EvalTask[]>([])
 const datasets = ref<EvalDatasetInfo[]>([])
 
@@ -92,24 +101,42 @@ const samplePageSize = ref(20)
 const expandedQids = ref<(string | number)[]>([])
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let clockTimer: ReturnType<typeof setInterval> | null = null
+const nowMs = ref(Date.now())
 
-const hasRunning = computed(() => tasks.value.some((t) => t.status === 'running' || t.status === 'pending'))
+const hasRunning = computed(() => tasks.value.some((t) => isActiveTask(t)))
+const activeTasks = computed(() => tasks.value.filter((t) => isActiveTask(t)))
+const resultTasks = computed(() => tasks.value.filter((t) => !isActiveTask(t)))
+const cancellingIds = ref<Record<string, boolean>>({})
+const producingIds = ref<Record<string, boolean>>({})
 
-const statusTheme = (s: string) => {
-  if (s === 'success') return 'success'
+const statusTheme = (s: string, partial = false) => {
+  if (s === 'success') return partial ? 'warning' : 'success'
   if (s === 'failed') return 'danger'
-  if (s === 'running') return 'primary'
+  if (s === 'cancelled') return 'default'
+  if (s === 'running') return 'warning'
+  if (s === 'pending') return 'default'
   return 'default'
 }
 
-const statusLabel = (s: string) => {
+const statusLabel = (s: string, partial = false) => {
+  if (s === 'success' && partial) return '部分结果'
   const map: Record<string, string> = {
     pending: '等待中',
     running: '运行中',
     success: '已完成',
     failed: '失败',
+    cancelled: '已取消',
   }
   return map[s] || s
+}
+
+function isPartialResult(t: EvalTask) {
+  return Boolean(t.metric_summary?.partial)
+}
+
+function canProduceResult(t: EvalTask) {
+  return t.status === 'running' || t.status === 'cancelled' || (t.status === 'pending' && t.finished > 0)
 }
 
 const suiteLabel = (s: string) => {
@@ -123,7 +150,7 @@ const createDatasetHint = computed(() => {
     return '意图评测仅调用 query_understand，无需灌库。请选择含 intent_gt 的数据集（如 intent_demo）。'
   }
   if (form.value.dataset_id.startsWith('squad')) {
-    return 'SQuAD 2.0 使用 EM/F1 与不可答题拒答率。squad_normans 为单篇冒烟；squad_v2 在线加载全量 validation。'
+    return 'SQuAD 2.0 使用 EM/F1 与不可答题拒答率。抽样按段落整抽：抽中一段正文则保留该段全部问答，不会从同一段里拆一半题；实际题数可能略多于或略少于填写值。'
   }
   if (form.value.suite !== 'rag_quality') return ''
   if (form.value.dataset_id === 'hotpot') {
@@ -148,9 +175,7 @@ const detailSampleCount = computed(() => {
 const historyTasks = computed(() => {
   const ds = detailTask.value?.dataset_id
   if (!ds) return []
-  return tasks.value
-    .filter((t) => t.dataset_id === ds && t.status === 'success' && t.metric_summary)
-    .slice(0, 8)
+  return tasks.value.filter((t) => t.dataset_id === ds && hasEvalResult(t)).slice(0, 8)
 })
 
 function retrievalHit(row: EvalSample): boolean | null {
@@ -192,6 +217,35 @@ function historyHighlight(row: EvalTask) {
 
 function progressPct(t: EvalTask) {
   return progressPercentage(t)
+}
+
+function taskEta(t: EvalTask) {
+  return etaLabel(t, nowMs.value)
+}
+
+function taskElapsed(t: EvalTask) {
+  return elapsedLabel(t, nowMs.value)
+}
+
+function taskPhaseText(t: EvalTask) {
+  return phaseLabel(taskPhase(t))
+}
+
+function openTaskDetail(t: EvalTask) {
+  onRowClick({ row: t })
+}
+
+function evalKbId(t: EvalTask): number | null {
+  const fromTask = t.eval_kb_id
+  if (typeof fromTask === 'number' && fromTask > 0) return fromTask
+  const fromSummary = t.metric_summary?.eval_kb_id
+  if (typeof fromSummary === 'number' && fromSummary > 0) return fromSummary
+  return null
+}
+
+function evalKbName(t: EvalTask): string {
+  const name = t.metric_summary?.eval_kb_name
+  return typeof name === 'string' ? name : ''
 }
 
 function formatSampleMetrics(metrics: Record<string, unknown> | null | undefined): string {
@@ -252,13 +306,13 @@ function onSquadArticleFilter() {
   void loadContextPage()
 }
 
-async function loadTasks() {
-  loading.value = true
+async function loadTasks(opts: { silent?: boolean } = {}) {
+  if (!opts.silent) loading.value = true
   try {
     const data = await listEvalTasks()
     tasks.value = data.items
   } finally {
-    loading.value = false
+    if (!opts.silent) loading.value = false
   }
 }
 
@@ -286,9 +340,10 @@ async function submitCreate() {
     await createEvalTask(payload)
     MessagePlugin.success('评测任务已创建，请确保 Celery worker 已启动')
     createVisible.value = false
-    activeTab.value = 'results'
+    activeTab.value = 'tasks'
     await loadTasks()
     startPolling()
+    startClock()
   } catch (e) {
     MessagePlugin.error((e as Error).message)
   }
@@ -502,6 +557,88 @@ function confirmDeleteTask(row: EvalTask) {
   })
 }
 
+function confirmCancelTask(row: EvalTask) {
+  const running = row.status === 'running'
+  const dlg = DialogPlugin.confirm({
+    header: running ? '中断评测' : '取消任务',
+    body: running
+      ? `确定中断 ${row.dataset_id} 的评测？当前题目可能会跑完，之后不再继续；已完成的明细会保留。`
+      : `确定取消排队中的任务 ${row.id}？任务不会开始执行。`,
+    confirmBtn: running ? '中断' : '取消任务',
+    onConfirm: async () => {
+      cancellingIds.value = { ...cancellingIds.value, [row.id]: true }
+      try {
+        const updated = await cancelEvalTask(row.id)
+        upsertTask(updated)
+        if (detailTask.value?.id === row.id) detailTask.value = updated
+        await loadTasks({ silent: true })
+        upsertTask(updated)
+        if (hasEvalResult(updated) || updated.status === 'success') {
+          MessagePlugin.success('已中断，结果已写入评测结果')
+          activeTab.value = 'results'
+          await onRowClick({ row: updated })
+        } else {
+          MessagePlugin.success(running ? '已请求中断' : '已取消')
+        }
+      } catch (e) {
+        MessagePlugin.error((e as Error).message)
+      } finally {
+        const next = { ...cancellingIds.value }
+        delete next[row.id]
+        cancellingIds.value = next
+        dlg.destroy()
+      }
+    },
+  })
+}
+
+function upsertTask(updated: EvalTask) {
+  const idx = tasks.value.findIndex((t) => t.id === updated.id)
+  if (idx >= 0) {
+    const next = tasks.value.slice()
+    next[idx] = updated
+    tasks.value = next
+  } else {
+    tasks.value = [updated, ...tasks.value]
+  }
+}
+
+async function produceResult(row: EvalTask) {
+  producingIds.value = { ...producingIds.value, [row.id]: true }
+  try {
+    const updated = await produceEvalResults(row.id)
+    upsertTask(updated)
+    MessagePlugin.success(isPartialResult(updated) ? '已按已完成题目生成部分结果' : '已生成评测结果')
+    if (detailTask.value?.id === row.id) detailTask.value = updated
+    await loadTasks({ silent: true })
+    upsertTask(updated)
+    activeTab.value = 'results'
+    await onRowClick({ row: updated })
+  } catch (e) {
+    MessagePlugin.error((e as Error).message)
+  } finally {
+    const next = { ...producingIds.value }
+    delete next[row.id]
+    producingIds.value = next
+  }
+}
+
+function confirmProduceResult(row: EvalTask) {
+  if (row.status === 'running' || row.status === 'pending') {
+    const dlg = DialogPlugin.confirm({
+      header: '产出结果',
+      body: '将中断当前评测，并按已经跑完的题目汇总指标。尚未完成的题目不会纳入结果。',
+      confirmBtn: '中断并产出',
+      onConfirm: async () => {
+        dlg.destroy()
+        await produceResult(row)
+      },
+    })
+    return
+  }
+  void produceResult(row)
+}
+
 async function onRowClick(ctx: { row: EvalTask }) {
   const id = ctx.row.id
   detailVisible.value = true
@@ -520,17 +657,41 @@ function onExpandChange(keys: (string | number)[]) {
 
 function startPolling() {
   if (pollTimer) return
-  pollTimer = setInterval(async () => {
-    await loadTasks()
+  const tick = async () => {
+    await loadTasks({ silent: true })
     if (detailVisible.value && detailTask.value) {
       const id = detailTask.value.id
       detailTask.value = await getEvalTask(id)
-      const samples = await listEvalSamples(id, 500, 0)
-      detailSamples.value = samples.items
-      sampleTotal.value = samples.total
+      if (isActiveTask(detailTask.value) || detailSamples.value.length === 0) {
+        const samples = await listEvalSamples(id, 500, 0)
+        detailSamples.value = samples.items
+        sampleTotal.value = samples.total
+      } else if (detailTask.value.status === 'success' || detailTask.value.status === 'failed') {
+        const samples = await listEvalSamples(id, 500, 0)
+        detailSamples.value = samples.items
+        sampleTotal.value = samples.total
+      }
     }
     if (!hasRunning.value) stopPolling()
-  }, 3000)
+  }
+  void tick()
+  pollTimer = setInterval(() => {
+    void tick()
+  }, 1500)
+}
+
+function startClock() {
+  if (clockTimer) return
+  clockTimer = setInterval(() => {
+    nowMs.value = Date.now()
+  }, 1000)
+}
+
+function stopClock() {
+  if (clockTimer) {
+    clearInterval(clockTimer)
+    clockTimer = null
+  }
 }
 
 function stopPolling() {
@@ -541,15 +702,30 @@ function stopPolling() {
 }
 
 watch(hasRunning, (v) => {
-  if (v) startPolling()
+  if (v) {
+    startPolling()
+    startClock()
+  } else {
+    stopClock()
+  }
+})
+
+watch(activeTab, (tab) => {
+  if (tab === 'results' || tab === 'tasks') {
+    void loadTasks({ silent: true })
+  }
 })
 
 onMounted(async () => {
   await Promise.all([loadTasks(), loadDatasets()])
   startPolling()
+  if (hasRunning.value) startClock()
 })
 
-onUnmounted(stopPolling)
+onUnmounted(() => {
+  stopPolling()
+  stopClock()
+})
 </script>
 
 <template>
@@ -603,57 +779,121 @@ onUnmounted(stopPolling)
         <t-empty v-if="!datasets.length" description="暂无数据集" />
       </t-tab-panel>
 
-      <t-tab-panel value="results" label="评测结果">
+      <t-tab-panel value="tasks" :label="activeTasks.length ? `测评任务 (${activeTasks.length})` : '测评任务'">
         <t-alert theme="info" class="tip">
-          评测任务由 Celery 异步执行。请在本机运行：
+          进行中的评测显示在这里。跑完或点「产出结果」后会出现在「评测结果」。
           <code>celery -A api.celery_app.celery worker -B --loglevel=info</code>
         </t-alert>
-        <t-table :data="tasks" :loading="loading" row-key="id" hover stripe @row-click="onRowClick">
-          <t-table-column title="任务 ID" col-key="id" width="240">
-            <template #default="{ row }">
-              <span class="mono">{{ row.id }}</span>
-            </template>
-          </t-table-column>
-          <t-table-column title="数据集" col-key="dataset_id" width="140" />
-          <t-table-column title="套件" col-key="suite" width="110">
-            <template #default="{ row }">{{ suiteLabel(row.suite) }}</template>
-          </t-table-column>
-          <t-table-column title="状态" col-key="status" width="90">
-            <template #default="{ row }">
-              <t-tag :theme="statusTheme(row.status)" variant="light">{{ statusLabel(row.status) }}</t-tag>
-            </template>
-          </t-table-column>
-          <t-table-column title="进度" col-key="finished" width="160">
-            <template #default="{ row }">
-              <div v-if="row.total > 0 || isRagasScoring(row)" class="progress-cell">
-                <t-progress
-                  :percentage="progressPct(row)"
-                  :label="progressLabel(row)"
-                  size="small"
-                  :status="isRagasScoring(row) ? 'active' : undefined"
-                  :class="{ 'ragas-progress': isRagasScoring(row) }"
-                />
+        <div v-if="activeTasks.length" class="live-panel">
+          <div class="live-panel-head">
+            <strong>进行中</strong>
+            <span class="live-panel-meta">每 1.5s 自动刷新 · {{ activeTasks.length }} 个任务</span>
+          </div>
+          <article v-for="t in activeTasks" :key="t.id" class="live-card" @click="openTaskDetail(t)">
+            <div class="live-card-top">
+              <div class="live-card-title">
+                <t-tag :theme="statusTheme(t.status, isPartialResult(t))" variant="light" size="small">
+                  {{ statusLabel(t.status, isPartialResult(t)) }}
+                </t-tag>
+                <t-tag v-if="taskPhaseText(t)" size="small" variant="outline">{{ taskPhaseText(t) }}</t-tag>
+                <strong>{{ t.dataset_id }}</strong>
+                <span class="muted">{{ suiteLabel(t.suite) }} · {{ t.pipeline_profile }}</span>
               </div>
-              <span v-else>—</span>
-            </template>
-          </t-table-column>
-          <t-table-column title="关键指标" col-key="metric_summary" min-width="180">
-            <template #default="{ row }">
-              <span class="metrics-cell">{{ highlightMetric(row.metric_summary) }}</span>
-            </template>
-          </t-table-column>
-          <t-table-column title="耗时" col-key="finished_at" width="90">
-            <template #default="{ row }">{{ taskDurationLabel(row) }}</template>
-          </t-table-column>
-          <t-table-column title="操作" width="80">
-            <template #default="{ row }">
-              <t-button size="small" theme="danger" variant="text" @click.stop="confirmDeleteTask(row)">
+              <div class="live-card-time">
+                <span>已用 {{ taskElapsed(t) }}</span>
+                <span v-if="taskEta(t)">剩余 {{ taskEta(t) }}</span>
+              </div>
+            </div>
+            <t-progress
+              :percentage="progressPct(t)"
+              :label="progressLabel(t)"
+              :status="progressStatus(t)"
+              :class="{ 'ragas-progress': isRagasScoring(t) }"
+            />
+            <p class="live-card-metrics">{{ highlightMetric(t.metric_summary) }}</p>
+            <p v-if="evalKbId(t)" class="live-card-kb">
+              临时知识库
+              <router-link :to="`/knowledge-bases/${evalKbId(t)}`" @click.stop>
+                {{ evalKbName(t) || `#${evalKbId(t)}` }}
+              </router-link>
+              <span class="muted"> · 评测结束后自动删除</span>
+            </p>
+            <div class="live-card-actions" @click.stop>
+              <t-button size="small" variant="outline" @click="openTaskDetail(t)">查看明细</t-button>
+              <t-button
+                size="small"
+                theme="primary"
+                :loading="Boolean(producingIds[t.id])"
+                @click="confirmProduceResult(t)"
+              >
+                产出结果
+              </t-button>
+              <t-button
+                size="small"
+                theme="danger"
+                variant="outline"
+                :loading="Boolean(cancellingIds[t.id])"
+                @click="confirmCancelTask(t)"
+              >
+                {{ t.status === 'running' ? '中断' : '取消' }}
+              </t-button>
+            </div>
+          </article>
+        </div>
+        <t-empty v-else description="暂无进行中的评测。点击「新建评测」开始">
+          <template #action>
+            <t-button theme="primary" @click="createVisible = true">新建评测</t-button>
+          </template>
+        </t-empty>
+      </t-tab-panel>
+
+      <t-tab-panel value="results" :label="resultTasks.length ? `评测结果 (${resultTasks.length})` : '评测结果'">
+        <t-alert theme="info" class="tip">
+          跑完、中断或手动「产出结果」后会出现在这里。点卡片可看指标和逐题明细。
+        </t-alert>
+        <div v-if="resultTasks.length" class="result-list">
+          <article
+            v-for="t in resultTasks"
+            :key="t.id"
+            class="result-card"
+            @click="onRowClick({ row: t })"
+          >
+            <div class="live-card-top">
+              <div class="live-card-title">
+                <t-tag :theme="statusTheme(t.status, isPartialResult(t))" variant="light" size="small">
+                  {{ statusLabel(t.status, isPartialResult(t)) }}
+                </t-tag>
+                <strong>{{ t.dataset_id }}</strong>
+                <span class="muted">{{ suiteLabel(t.suite) }} · {{ t.pipeline_profile }}</span>
+              </div>
+              <div class="live-card-time">
+                <span>{{ taskDurationLabel(t) }}</span>
+                <span v-if="t.finished || t.total">{{ t.finished }}/{{ t.total || '?' }} 题</span>
+              </div>
+            </div>
+            <p class="live-card-metrics">{{ highlightMetric(t.metric_summary) }}</p>
+            <p class="result-card-id mono">{{ t.id }}</p>
+            <div class="live-card-actions" @click.stop>
+              <t-button size="small" variant="outline" @click="onRowClick({ row: t })">查看明细</t-button>
+              <t-button
+                v-if="canProduceResult(t)"
+                size="small"
+                theme="primary"
+                :loading="Boolean(producingIds[t.id])"
+                @click="confirmProduceResult(t)"
+              >
+                产出结果
+              </t-button>
+              <t-button size="small" theme="danger" variant="outline" @click="confirmDeleteTask(t)">
                 删除
               </t-button>
-            </template>
-          </t-table-column>
-        </t-table>
-        <t-empty v-if="!loading && tasks.length === 0" description="暂无评测任务，点击「新建评测」开始" />
+            </div>
+          </article>
+        </div>
+        <t-empty
+          v-else-if="!loading"
+          description="暂无评测结果。跑完评测，或在测评任务中点击「产出结果」，会出现在这里"
+        />
       </t-tab-panel>
     </t-tabs>
 
@@ -680,7 +920,7 @@ onUnmounted(stopPolling)
             <t-radio value="rag_agent">rag_agent</t-radio>
           </t-radio-group>
         </t-form-item>
-        <t-form-item label="抽样题数">
+        <t-form-item :label="form.dataset_id.startsWith('squad') ? '抽样题数（按段）' : '抽样题数'">
           <t-input-number v-model="form.sample_limit" :min="1" :max="500" placeholder="全部" theme="normal" />
         </t-form-item>
         <t-form-item label="并行度">
@@ -812,28 +1052,86 @@ onUnmounted(stopPolling)
 
     <t-drawer v-model:visible="detailVisible" size="large" :header="detailTask?.id || '任务详情'">
       <template v-if="detailTask">
+        <div v-if="isActiveTask(detailTask)" class="detail-live">
+          <div class="detail-live-head">
+            <t-tag :theme="statusTheme(detailTask.status, isPartialResult(detailTask))" variant="light">
+              {{ statusLabel(detailTask.status, isPartialResult(detailTask)) }}
+            </t-tag>
+            <t-tag v-if="taskPhaseText(detailTask)" size="small" variant="outline">
+              {{ taskPhaseText(detailTask) }}
+            </t-tag>
+            <span>已用 {{ taskElapsed(detailTask) }}</span>
+            <span v-if="taskEta(detailTask)">预计剩余 {{ taskEta(detailTask) }}</span>
+            <t-button
+              v-if="canProduceResult(detailTask)"
+              size="small"
+              theme="primary"
+              :loading="Boolean(producingIds[detailTask.id])"
+              @click="confirmProduceResult(detailTask)"
+            >
+              产出结果
+            </t-button>
+            <t-button
+              size="small"
+              theme="danger"
+              variant="outline"
+              :loading="Boolean(cancellingIds[detailTask.id])"
+              @click="confirmCancelTask(detailTask)"
+            >
+              {{ detailTask.status === 'running' ? '中断' : '取消' }}
+            </t-button>
+          </div>
+          <t-progress
+            :percentage="progressPct(detailTask)"
+            :label="progressLabel(detailTask)"
+            :status="progressStatus(detailTask)"
+            :class="{ 'ragas-progress': isRagasScoring(detailTask) }"
+          />
+          <p class="live-card-metrics">{{ highlightMetric(detailTask.metric_summary) }}</p>
+          <p v-if="evalKbId(detailTask)" class="live-card-kb">
+            临时知识库
+            <router-link :to="`/knowledge-bases/${evalKbId(detailTask)}`">
+              {{ evalKbName(detailTask) || `#${evalKbId(detailTask)}` }}
+            </router-link>
+            <span class="muted"> · 评测结束后自动删除</span>
+          </p>
+        </div>
+
         <t-descriptions :column="2" bordered size="small">
           <t-descriptions-item label="数据集">{{ detailTask.dataset_id }}</t-descriptions-item>
           <t-descriptions-item label="套件">{{ suiteLabel(detailTask.suite) }}</t-descriptions-item>
           <t-descriptions-item label="Pipeline">{{ detailTask.pipeline_profile }}</t-descriptions-item>
           <t-descriptions-item label="状态">
-            <t-tag :theme="statusTheme(detailTask.status)">{{ statusLabel(detailTask.status) }}</t-tag>
+            <t-tag :theme="statusTheme(detailTask.status, isPartialResult(detailTask))">
+              {{ statusLabel(detailTask.status, isPartialResult(detailTask)) }}
+            </t-tag>
           </t-descriptions-item>
           <t-descriptions-item label="耗时">{{ taskDurationLabel(detailTask) }}</t-descriptions-item>
           <t-descriptions-item label="进度">
-            <div v-if="detailTask.total > 0 || isRagasScoring(detailTask)" class="detail-progress">
+            <div class="detail-progress">
               <t-progress
                 :percentage="progressPct(detailTask)"
                 :label="progressLabel(detailTask)"
                 size="small"
+                :status="progressStatus(detailTask)"
               />
             </div>
-            <span v-else>—</span>
           </t-descriptions-item>
           <t-descriptions-item v-if="detailTask.err_msg" label="错误" :span="2">
             {{ detailTask.err_msg }}
           </t-descriptions-item>
         </t-descriptions>
+
+        <div v-if="canProduceResult(detailTask) && !isActiveTask(detailTask)" class="detail-produce">
+          <t-button
+            theme="primary"
+            :loading="Boolean(producingIds[detailTask.id])"
+            @click="confirmProduceResult(detailTask)"
+          >
+            产出结果
+          </t-button>
+          <span class="muted">按已完成的题目汇总 EM/F1 等指标，生成可对比的评测结果。</span>
+        </div>
 
         <h3 class="section-title">汇总指标</h3>
         <EvalMetricCards :summary="detailTask.metric_summary" :sample-count="detailSampleCount" />
@@ -886,12 +1184,9 @@ onUnmounted(stopPolling)
               <t-tag v-else-if="retrievalHit(row) === false" size="small" theme="danger" variant="light">未中</t-tag>
             </template>
           </t-table-column>
-          <t-table-column title="Gold / 预测" col-key="response" min-width="140">
+          <t-table-column title="正确答案 / 系统答案" col-key="response" min-width="180">
             <template #default="{ row }">
-              <span v-if="detailTask?.suite === 'intent_bench'" class="clip">
-                {{ row.reference || '—' }} → {{ row.response || row.error || '—' }}
-              </span>
-              <span v-else class="clip">{{ row.response || row.error || '—' }}</span>
+              <span class="clip">{{ row.reference || '—' }} → {{ row.response || row.error || '—' }}</span>
             </template>
           </t-table-column>
           <t-table-column title="耗时" col-key="latency_ms" width="72">
@@ -906,12 +1201,12 @@ onUnmounted(stopPolling)
           </t-table-column>
           <template #expanded-row="{ row }">
             <div class="expand-block">
-              <p><strong>Gold：</strong>{{ row.reference || '（空）' }}</p>
-              <p><strong>预测：</strong>{{ row.response || row.error || '—' }}</p>
+              <p><strong>正确答案：</strong>{{ row.reference || '（空）' }}</p>
+              <p><strong>系统答案：</strong>{{ row.response || row.error || '—' }}</p>
               <p>
                 <strong>检索：</strong>
-                pred {{ (row.retrieval_ids || []).join(', ') || '—' }}
-                / gt {{ (row.retrieval_gt || []).join(', ') || '—' }}
+                系统召回 {{ (row.retrieval_ids || []).join(', ') || '—' }}
+                / 应命中 {{ (row.retrieval_gt || []).join(', ') || '—' }}
               </p>
             </div>
           </template>
@@ -1052,8 +1347,149 @@ onUnmounted(stopPolling)
   gap: 4px;
 }
 
+.progress-phase {
+  font-size: 11px;
+  color: var(--td-text-color-secondary);
+}
+
 .detail-progress {
   max-width: 360px;
+}
+
+.detail-produce {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 0;
+}
+
+.live-panel {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--td-brand-color-light, #d4e3fc);
+  border-radius: 10px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--td-brand-color, #0052d9) 6%, transparent),
+    transparent
+  );
+}
+
+.live-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.live-panel-meta {
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+}
+
+.result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0 16px;
+}
+
+.result-card {
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-border);
+  cursor: pointer;
+}
+
+.result-card:hover {
+  border-color: var(--td-brand-color);
+}
+
+.result-card-id {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+}
+
+.live-card {
+  padding: 12px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-border);
+  cursor: pointer;
+}
+
+.live-card:last-child {
+  margin-bottom: 0;
+}
+
+.live-card:hover {
+  border-color: var(--td-brand-color);
+}
+
+.live-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.live-card-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-card-time {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+}
+
+.live-card-metrics {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+}
+
+.live-card-kb {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.live-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.detail-live {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--td-brand-color-light, #d4e3fc);
+  background: color-mix(in srgb, var(--td-brand-color, #0052d9) 5%, transparent);
+}
+
+.detail-live-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--td-text-color-secondary);
+}
+
+.muted {
+  color: var(--td-text-color-placeholder);
+  font-size: 12px;
 }
 
 .ragas-progress :deep(.t-progress__bar) {

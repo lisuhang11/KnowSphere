@@ -220,7 +220,10 @@ def test_aggregate_squad_splits_has_ans_no_ans():
 def test_default_metric_layers_and_prompt():
     assert default_metric_layers("rag_bench", "squad_normans") == ["retrieval", "squad"]
     assert default_metric_layers("rag_bench", "campus_demo") == ["retrieval", "generation"]
-    assert "unanswerable" in eval_system_prompt(["retrieval", "squad"])
+    prompt = eval_system_prompt(["retrieval", "squad"])
+    assert "unanswerable" not in prompt
+    assert "Evidence-First" in prompt
+    assert "doc_retrieval" in prompt
     assert "unanswerable" not in eval_system_prompt(["retrieval", "generation"])
 
 
@@ -232,5 +235,14 @@ def test_list_datasets_includes_squad_v2():
     assert "hotpot" in ids
     ds = load_dataset("squad_normans", sample_limit=3)
     assert ds.id == "squad_normans"
-    assert len(ds.items) == 3
-    assert ds.items[0].answer == "France"
+    # 按段整抽：题数可能略超预算，但同一 pid 的题必须全部保留
+    assert len(ds.items) >= 3
+    assert ds.passages
+    keep_pids = {p.pid for p in ds.passages}
+    assert {pid for it in ds.items for pid in it.pids} == keep_pids
+    # 源数据中属于这些 pid 的题应全部在结果里（不半段截断）
+    full = load_dataset("squad_normans")
+    for pid in keep_pids:
+        n_full = sum(1 for it in full.items if pid in it.pids)
+        n_samp = sum(1 for it in ds.items if pid in it.pids)
+        assert n_samp == n_full

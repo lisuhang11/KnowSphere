@@ -13,6 +13,10 @@ from psycopg.types.json import Jsonb
 from config.settings import settings
 from evals.schemas import EvalConfig, TaskStatus
 
+_TASK_COLS = """id, owner, dataset_id, suite, pipeline_profile, status,
+                config_snapshot, metric_summary, total, finished, err_msg,
+                eval_kb_id, created_at, started_at, finished_at, celery_task_id"""
+
 def ensure_eval_tables() -> None:
     with psycopg.connect(settings.postgres_dsn) as conn:
         conn.execute(
@@ -32,9 +36,13 @@ def ensure_eval_tables() -> None:
                 eval_kb_id      BIGINT,
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
                 started_at      TIMESTAMPTZ,
-                finished_at     TIMESTAMPTZ
+                finished_at     TIMESTAMPTZ,
+                celery_task_id  TEXT
             )
             """
+        )
+        conn.execute(
+            "ALTER TABLE ks_evaluation_tasks ADD COLUMN IF NOT EXISTS celery_task_id TEXT"
         )
         conn.execute(
             """
@@ -72,9 +80,7 @@ class EvalStore():
                 INSERT INTO ks_evaluation_tasks
                     (id, owner, dataset_id, suite, pipeline_profile, status, config_snapshot)
                 VALUES (%s, %s, %s, %s, %s, 'pending', %s)
-                RETURNING id, owner, dataset_id, suite, pipeline_profile, status,
-                          config_snapshot, metric_summary, total, finished, err_msg,
-                          eval_kb_id, created_at, started_at, finished_at
+                RETURNING """ + _TASK_COLS + """
                 """,
                 (
                     task_id,
@@ -93,9 +99,7 @@ class EvalStore():
         with psycopg.connect(self.dsn) as conn:
             row = conn.execute(
                 """
-                SELECT id, owner, dataset_id, suite, pipeline_profile, status,
-                       config_snapshot, metric_summary, total, finished, err_msg,
-                       eval_kb_id, created_at, started_at, finished_at
+                SELECT """ + _TASK_COLS + """
                 FROM ks_evaluation_tasks WHERE id = %s
                 """,
                 (task_id,),
@@ -112,8 +116,11 @@ class EvalStore():
         finished: int | None = None,
         err_msg: str | None = None,
         eval_kb_id: int | None = None,
+        celery_task_id: str | None = None,
         started: bool = False,
         finished_at: bool = False,
+        only_if_active: bool = False,
+        clear_err_msg: bool = False,
     ) -> None:
         sets: list[str] = []
         params: list[Any] = []
@@ -132,9 +139,14 @@ class EvalStore():
         if err_msg is not None:
             sets.append("err_msg = %s")
             params.append(err_msg)
+        if clear_err_msg:
+            sets.append("err_msg = NULL")
         if eval_kb_id is not None:
             sets.append("eval_kb_id = %s")
             params.append(eval_kb_id)
+        if celery_task_id is not None:
+            sets.append("celery_task_id = %s")
+            params.append(celery_task_id)
         if started:
             sets.append("started_at = %s")
             params.append(datetime.now(timezone.utc))
@@ -144,12 +156,42 @@ class EvalStore():
         if not sets:
             return
         params.append(task_id)
+        where = "id = %s"
+        if only_if_active:
+            where += " AND status IN ('pending', 'running')"
         with psycopg.connect(self.dsn) as conn:
             conn.execute(
-                f"UPDATE ks_evaluation_tasks SET {', '.join(sets)} WHERE id = %s",
+                f"UPDATE ks_evaluation_tasks SET {', '.join(sets)} WHERE {where}",
                 params,
             )
             conn.commit()
+
+    def is_cancelled(self, task_id: str) -> bool:
+        task = self.get_task(task_id)
+        return bool(task and task["status"] == "cancelled")
+
+    def mark_cancelled(self, task_id: str, *, err_msg: str = "用户取消") -> dict[str, Any] | None:
+        """将 pending/running 标为 cancelled，返回更新前的任务快照（含 celery_task_id）。"""
+        ensure_eval_tables()
+        with psycopg.connect(self.dsn) as conn:
+            prev = conn.execute(
+                "SELECT " + _TASK_COLS + " FROM ks_evaluation_tasks WHERE id = %s",
+                (task_id,),
+            ).fetchone()
+            if not prev:
+                return None
+            cur = conn.execute(
+                """
+                UPDATE ks_evaluation_tasks
+                SET status = 'cancelled', err_msg = %s, finished_at = %s
+                WHERE id = %s AND status IN ('pending', 'running')
+                """,
+                (err_msg, datetime.now(timezone.utc), task_id),
+            )
+            conn.commit()
+            if cur.rowcount == 0:
+                return _row_to_task(prev)
+            return _row_to_task(prev)
 
     def upsert_sample(self, task_id: str, row: dict[str, Any]) -> None:
         with psycopg.connect(self.dsn) as conn:
@@ -212,6 +254,9 @@ class EvalStore():
             for r in rows
         ]
 
+    def list_all_samples(self, task_id: str) -> list[dict[str, Any]]:
+        return self.list_samples(task_id, limit=100_000, offset=0)
+
     def count_samples(self, task_id: str) -> int:
         with psycopg.connect(self.dsn) as conn:
             row = conn.execute(
@@ -232,9 +277,7 @@ class EvalStore():
         with psycopg.connect(self.dsn) as conn:
             rows = conn.execute(
                 """
-                SELECT id, owner, dataset_id, suite, pipeline_profile, status,
-                       config_snapshot, metric_summary, total, finished, err_msg,
-                       eval_kb_id, created_at, started_at, finished_at
+                SELECT """ + _TASK_COLS + """
                 FROM ks_evaluation_tasks
                 WHERE owner = %s
                 ORDER BY created_at DESC
@@ -278,4 +321,5 @@ def _row_to_task(row) -> dict[str, Any]:
         "created_at": row[12].isoformat() if row[12] else None,
         "started_at": row[13].isoformat() if row[13] else None,
         "finished_at": row[14].isoformat() if row[14] else None,
+        "celery_task_id": row[15] if len(row) > 15 else None,
     }

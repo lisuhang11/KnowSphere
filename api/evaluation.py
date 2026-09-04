@@ -7,7 +7,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from api import celery_app  # noqa: F401 — 确保 Celery 使用 Redis broker
+from api import celery_app
 from api.tasks import run_evaluation_task
 from config.settings import get_current_owner, settings
 from evals.config import default_metric_layers
@@ -89,7 +89,7 @@ def _build_config(req: EvaluationRequest) -> EvalConfig:
 
 @evaluation_router.get("/tasks")
 def list_evaluation_tasks(
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(200, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
     owner = get_current_owner() or settings.default_owner
@@ -127,7 +127,9 @@ def create_evaluation(req: EvaluationRequest) -> dict[str, Any]:
     store = EvalStore()
     task = store.create_task(config)
     try:
-        run_evaluation_task.delay(task["id"])
+        async_result = run_evaluation_task.delay(task["id"])
+        store.update_task(task["id"], celery_task_id=async_result.id)
+        task["celery_task_id"] = async_result.id
     except Exception as exc:
         store.delete_task(task["id"])
         raise HTTPException(
@@ -233,6 +235,63 @@ def remove_dataset(dataset_id: str) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"success": True, "data": {"id": dataset_id}}
+
+def _interrupt_evaluation(store: EvalStore, task: dict[str, Any]) -> None:
+    was_running = task["status"] == "running"
+    store.mark_cancelled(task["id"], err_msg="用户中断" if was_running else "用户取消")
+    celery_id = task.get("celery_task_id")
+    if celery_id:
+        try:
+            celery_app.celery.control.revoke(celery_id, terminate=was_running)
+        except Exception:
+            pass
+
+
+@evaluation_router.post("/{task_id}/cancel")
+def cancel_evaluation(task_id: str) -> dict[str, Any]:
+    """取消排队中的任务，或中断正在运行的评测。已有题目时会直接汇总到评测结果。"""
+    from evals.finalize import NoEvalSamples, finalize_task_results
+
+    store = EvalStore()
+    task = store.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task["status"] not in ("pending", "running"):
+        raise HTTPException(status_code=400, detail=f"当前状态为 {task['status']}，无法取消")
+    _interrupt_evaluation(store, task)
+    try:
+        updated = finalize_task_results(task_id, partial=True)
+    except (NoEvalSamples, FileNotFoundError):
+        updated = store.get_task(task_id)
+    return {"success": True, "data": updated}
+
+
+@evaluation_router.post("/{task_id}/results")
+def produce_evaluation_results(task_id: str) -> dict[str, Any]:
+    """产出评测结果：运行中先中断，再按已完成题目汇总；已中断/已完成则直接汇总。"""
+    from evals.finalize import NoEvalSamples, finalize_task_results
+
+    store = EvalStore()
+    task = store.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task["status"] == "failed":
+        raise HTTPException(status_code=400, detail="失败任务无法产出结果")
+    if task["status"] in ("pending", "running"):
+        _interrupt_evaluation(store, task)
+        partial = True
+    elif task["status"] == "cancelled":
+        partial = True
+    else:
+        partial = bool((task.get("metric_summary") or {}).get("partial"))
+    try:
+        updated = finalize_task_results(task_id, partial=partial or None)
+    except NoEvalSamples as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"success": True, "data": updated}
+
 
 @evaluation_router.get("/{task_id}/samples")
 def get_evaluation_samples(

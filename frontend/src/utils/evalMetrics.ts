@@ -1,6 +1,6 @@
 import type { EvalTask } from '@/api/evaluation'
 
-export type EvalPhase = 'agent' | 'ragas' | 'done'
+export type EvalPhase = 'pending' | 'loading' | 'ingest' | 'eval' | 'agent' | 'ragas' | 'done'
 
 export interface MetricCardItem {
   key: string
@@ -93,33 +93,159 @@ export function metricScoreClass(value: number): string {
 }
 
 export function taskPhase(task: EvalTask): EvalPhase | null {
+  if (task.status === 'pending') return 'pending'
+  if (task.status === 'cancelled') return null
   const phase = task.metric_summary?.phase
-  if (phase === 'agent' || phase === 'ragas' || phase === 'done') return phase
+  if (
+    phase === 'loading' ||
+    phase === 'ingest' ||
+    phase === 'eval' ||
+    phase === 'agent' ||
+    phase === 'ragas' ||
+    phase === 'done'
+  ) {
+    return phase
+  }
   if (task.status === 'running' && task.suite === 'rag_quality') return 'agent'
+  if (task.status === 'running' && task.total > 0) return 'eval'
+  if (task.status === 'running') return 'loading'
   if (task.status === 'success') return 'done'
   return null
+}
+
+export function phaseLabel(phase: EvalPhase | null): string {
+  switch (phase) {
+    case 'pending':
+      return '排队中'
+    case 'loading':
+      return '加载数据集'
+    case 'ingest':
+      return '灌库中'
+    case 'eval':
+      return '跑题中'
+    case 'agent':
+      return 'Agent 跑题'
+    case 'ragas':
+      return 'RAGAS 打分'
+    case 'done':
+      return '已完成'
+    default:
+      return ''
+  }
 }
 
 export function isRagasScoring(task: EvalTask): boolean {
   return task.status === 'running' && taskPhase(task) === 'ragas'
 }
 
+export function isActiveTask(task: EvalTask): boolean {
+  return task.status === 'pending' || task.status === 'running'
+}
+
+function summaryHasMetrics(summary: Record<string, unknown> | null | undefined): boolean {
+  if (!summary) return false
+  if (summary.result_ready) return true
+  return Boolean(
+    summary.squad_metrics ||
+      summary.ragas_metrics ||
+      summary.retrieval_metrics ||
+      summary.generation_metrics ||
+      summary.intent_metrics,
+  )
+}
+
+export function hasEvalResult(task: EvalTask): boolean {
+  if (task.status === 'success' || task.status === 'failed') return true
+  if (task.status === 'cancelled') {
+    const sampleCount = Number(task.metric_summary?.sample_count ?? task.finished ?? 0)
+    return sampleCount > 0 || summaryHasMetrics(task.metric_summary)
+  }
+  return summaryHasMetrics(task.metric_summary)
+}
+
+export function isQueueTask(task: EvalTask): boolean {
+  return isActiveTask(task)
+}
+
 export function progressLabel(task: EvalTask): string {
+  const phase = taskPhase(task)
+  if (task.status === 'cancelled') return '已取消'
+  if (phase === 'pending') return '等待 worker…'
+  if (phase === 'loading') return '加载数据集…'
+  if (phase === 'ingest') {
+    const done = Number(task.metric_summary?.ingest_finished ?? task.finished ?? 0)
+    const total = Number(task.metric_summary?.ingest_total ?? task.total ?? 0)
+    return total > 0 ? `灌库 ${done}/${total} 段` : '灌库中…'
+  }
   if (isRagasScoring(task)) {
     const n = task.metric_summary?.ragas_total ?? task.total
     return n ? `RAGAS 打分中（${n} 题）` : 'RAGAS 打分中'
   }
-  if (taskPhase(task) === 'agent' && task.suite === 'rag_quality') {
-    return `Agent ${task.finished}/${task.total}`
+  if (phase === 'agent' && task.suite === 'rag_quality') {
+    return `Agent ${task.finished}/${task.total || '?'}`
   }
-  if (task.total > 0) return `${task.finished}/${task.total}`
+  if (task.total > 0) return `${task.finished}/${task.total} 题`
+  if (task.status === 'running') return '准备中…'
   return '—'
 }
 
 export function progressPercentage(task: EvalTask): number {
+  const phase = taskPhase(task)
+  if (phase === 'pending' || phase === 'loading') return 0
+  if (phase === 'ingest') {
+    const done = Number(task.metric_summary?.ingest_finished ?? task.finished ?? 0)
+    const total = Number(task.metric_summary?.ingest_total ?? task.total ?? 0)
+    if (!total) return 0
+    return Math.min(99, Math.round((done / total) * 100))
+  }
   if (isRagasScoring(task)) return 100
   if (!task.total) return 0
-  return Math.round((task.finished / task.total) * 100)
+  return Math.min(100, Math.round((task.finished / task.total) * 100))
+}
+
+export function progressStatus(
+  task: EvalTask,
+): 'success' | 'error' | 'warning' | 'active' | undefined {
+  if (task.status === 'success') return 'success'
+  if (task.status === 'failed') return 'error'
+  if (task.status === 'cancelled') return 'warning'
+  if (task.status === 'running' || task.status === 'pending') return 'active'
+  return undefined
+}
+
+export function elapsedLabel(task: EvalTask, nowMs = Date.now()): string {
+  if (!task.started_at) {
+    if (task.status === 'pending') return '排队中'
+    return '—'
+  }
+  const end = task.finished_at ? new Date(task.finished_at).getTime() : nowMs
+  const ms = end - new Date(task.started_at).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return '—'
+  if (ms < 1000) return `${ms}ms`
+  const sec = Math.floor(ms / 1000)
+  if (sec < 60) return `${sec}s`
+  const min = Math.floor(sec / 60)
+  const rem = sec % 60
+  if (min < 60) return `${min}m ${rem}s`
+  return `${Math.floor(min / 60)}h ${min % 60}m`
+}
+
+export function etaLabel(task: EvalTask, nowMs = Date.now()): string | null {
+  if (task.status !== 'running') return null
+  const phase = taskPhase(task)
+  let done = task.finished
+  let total = task.total
+  if (phase === 'ingest') {
+    done = Number(task.metric_summary?.ingest_finished ?? 0)
+    total = Number(task.metric_summary?.ingest_total ?? 0)
+  }
+  if (!task.started_at || !total || done <= 0 || done >= total) return null
+  const elapsed = nowMs - new Date(task.started_at).getTime()
+  if (elapsed < 2000) return null
+  const remaining = Math.round(((elapsed / done) * (total - done)) / 1000)
+  if (remaining < 5) return '<5s'
+  if (remaining < 60) return `约 ${remaining}s`
+  return `约 ${Math.floor(remaining / 60)}m ${remaining % 60}s`
 }
 
 export function buildMetricCardGroups(summary: Record<string, unknown> | null | undefined): MetricCardGroup[] {
@@ -166,6 +292,20 @@ export function hasMetricCards(summary: Record<string, unknown> | null | undefin
 
 export function highlightMetric(summary: Record<string, unknown> | null | undefined): string {
   if (!summary) return '—'
+  const phase = summary.phase
+  if (phase === 'loading') return '加载数据集…'
+  if (phase === 'ingest') {
+    const done = summary.ingest_finished
+    const total = summary.ingest_total
+    if (typeof done === 'number' && typeof total === 'number' && total > 0) {
+      return `灌库 ${done}/${total}`
+    }
+    return '灌库中…'
+  }
+  if (phase === 'ragas') return 'RAGAS 打分中…'
+  if (phase === 'agent' && !summary.ragas_metrics && !summary.squad_metrics) {
+    return 'Agent 跑题中…'
+  }
   const squad = summary.squad_metrics as Record<string, number> | undefined
   if (squad && typeof squad.f1 === 'number') {
     const parts = [`F1 ${formatMetricValue(squad.f1)}`]
@@ -188,7 +328,10 @@ export function highlightMetric(summary: Record<string, unknown> | null | undefi
 }
 
 export function taskDurationLabel(task: EvalTask): string {
-  if (!task.started_at || !task.finished_at) return '—'
+  if (!task.started_at || !task.finished_at) {
+    if (task.status === 'running' || task.status === 'pending') return elapsedLabel(task)
+    return '—'
+  }
   const ms = new Date(task.finished_at).getTime() - new Date(task.started_at).getTime()
   if (!Number.isFinite(ms) || ms < 0) return '—'
   if (ms < 1000) return `${ms}ms`
@@ -218,6 +361,9 @@ export function formatMetricsSummary(summary: Record<string, unknown> | null | u
   if (!groups.length) {
     if (!summary) return '—'
     const phase = summary.phase
+    if (phase === 'loading') return '加载数据集…'
+    if (phase === 'ingest') return '灌库中…'
+    if (phase === 'eval') return '跑题中…'
     if (phase === 'agent') return 'Agent 跑题中…'
     if (phase === 'ragas') return 'RAGAS 打分中…'
     return JSON.stringify(summary).slice(0, 80)

@@ -10,29 +10,17 @@ from config.settings import settings
 from evals.corpus import map_retrieval_ids
 from evals.metrics.aggregate import compute_sample_metrics, metric_input_from_item
 from evals.schemas import QAPair, SampleResult
+from prompts import build_system_prompt
 from tools.retrieval.doc_retrieval import doc_retrieval
 
-EVAL_SYSTEM_PROMPT = """You are KnowSphere, evaluated on a document corpus.
 
-Rules:
-1. Always call doc_retrieval first; ground every answer in retrieved passages.
-2. If the passages do not contain the answer, state clearly what is missing.
-3. Answer concisely in the same language as the question.
-4. Do not call web_search."""
-
-SQUAD_EVAL_SYSTEM_PROMPT = """You are KnowSphere, evaluated on SQuAD-style extractive QA.
-
-Rules:
-1. Always call doc_retrieval first; ground the answer in retrieved passages.
-2. If the answer is present, reply with a short span copied from the passages. No extra words.
-3. If the passages do not contain the answer, reply exactly: unanswerable
-4. Do not explain. Do not call web_search."""
+def eval_system_prompt(metric_layers: list[str] | None = None) -> str:
+    """评测与产品共用 WeKnora 风格 Agent 系统提示（仅绑定检索工具）。"""
+    _ = metric_layers
+    return build_system_prompt(enable_citation=False, tool_names=["doc_retrieval"])
 
 
-def eval_system_prompt(metric_layers: list[str] | None) -> str:
-    if metric_layers and "squad" in metric_layers:
-        return SQUAD_EVAL_SYSTEM_PROMPT
-    return EVAL_SYSTEM_PROMPT
+EVAL_SYSTEM_PROMPT = eval_system_prompt()
 
 
 def _extract(result: dict) -> tuple[str, list[dict]]:

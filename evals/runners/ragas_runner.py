@@ -14,6 +14,7 @@ from ragas.metrics import answer_relevancy, context_precision, context_recall, f
 
 from agents.agent import build_agent
 from config.settings import set_current_owner, settings
+from evals.cancel import EvalCancelled, check_stop
 from evals.corpus import ingest_passages
 from evals.datasets import load_dataset
 from evals.hotpot import cleanup_question, ingest_question, load_hotpot_sample
@@ -56,13 +57,13 @@ def _to_sample_row(
 def _run_ragas_batch(
     rows: list[dict],
     *,
-    on_phase: Callable[[str, int], None] | None = None,
+    on_phase: Callable[[str, int, int | None], None] | None = None,
 ) -> tuple[dict[str, float], list[dict], dict[int, dict[str, float]]]:
     if not rows:
         raise RuntimeError("没有任何题目跑通，请检查 PG/SiliconFlow 配置")
 
     if on_phase:
-        on_phase("ragas", len(rows))
+        on_phase("ragas", len(rows), None)
 
     run_config = RunConfig(timeout=480, max_retries=10, max_wait=120, max_workers=4)
     result = evaluate(
@@ -93,7 +94,8 @@ def run_ragas_eval(
     workers: int = 4,
     on_progress: Callable[[int, int], None] | None = None,
     on_sample: Callable[[dict], None] | None = None,
-    on_phase: Callable[[str, int], None] | None = None,
+    on_phase: Callable[[str, int, int | None], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> tuple[dict[str, float], list[dict], list[dict]]:
     """HotpotQA + Agent + RAGAS（原 CLI 路径）。"""
     ChunkStore().init_schema()
@@ -111,6 +113,7 @@ def run_ragas_eval(
     lock = threading.Lock()
 
     def _run_one(qid: int, item: dict) -> tuple[int, dict, int]:
+        check_stop(should_stop)
         owner = f"hotpot_{item['id']}"
         set_current_owner(owner)
         kb_id: int | None = None
@@ -137,6 +140,8 @@ def run_ragas_eval(
                 "type": item["type"],
             }
             return qid, row, n_chunks
+        except EvalCancelled:
+            raise
         except Exception as exc:
             return qid, {"qid": qid, "error": str(exc), "user_input": item.get("question", "")}, 0
         finally:
@@ -144,20 +149,26 @@ def run_ragas_eval(
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(_run_one, qid, item): (qid, item) for qid, item in indexed}
-        for fut in as_completed(futures):
-            qid, item = futures[fut]
-            qid, row, _ = fut.result()
-            with lock:
-                done += 1
-                row_by_qid[qid] = row
-                if on_progress:
-                    on_progress(done, len(items))
-                sample = _to_sample_row(qid, item, row)
-                if on_sample:
-                    on_sample(sample)
-                if not row.get("error"):
-                    rows.append(row)
+        try:
+            for fut in as_completed(futures):
+                qid, item = futures[fut]
+                qid, row, _ = fut.result()
+                with lock:
+                    done += 1
+                    row_by_qid[qid] = row
+                    if on_progress:
+                        on_progress(done, len(items))
+                    sample = _to_sample_row(qid, item, row)
+                    if on_sample:
+                        on_sample(sample)
+                    if not row.get("error"):
+                        rows.append(row)
+        except EvalCancelled:
+            for fut in futures:
+                fut.cancel()
+            raise
 
+    check_stop(should_stop)
     if not rows:
         samples = [_to_sample_row(qid, item, row_by_qid.get(qid, {})) for qid, item in indexed]
         raise RuntimeError("没有任何题目跑通，请检查 PG/SiliconFlow 配置")
@@ -179,22 +190,26 @@ def run_ragas_eval_dataset(
     *,
     on_progress: Callable[[int, int], None] | None = None,
     on_sample: Callable[[dict], None] | None = None,
-    on_phase: Callable[[str, int], None] | None = None,
+    on_phase: Callable[[str, int, int | None], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    on_kb_created: Callable[[int, str], None] | None = None,
 ) -> tuple[dict[str, float], list[dict], list[dict]]:
     """JSON/Parquet 数据集 + Agent + RAGAS。"""
     dataset = load_dataset(config.dataset_id, sample_limit=config.sample_limit)
     owner = config.owner or "eval"
-    task_owner = f"{owner}_{uuid.uuid4().hex[:8]}"
 
     store = ChunkStore()
     store.init_schema()
 
+    kb_name = f"ragas_{config.dataset_id}_{uuid.uuid4().hex[:6]}"
     eval_kb = store.create_knowledge_base(
-        name=f"ragas_{config.dataset_id}_{uuid.uuid4().hex[:6]}",
-        description=f"RAGAS 评测 KB ({config.dataset_id})",
-        owner=task_owner,
+        name=kb_name,
+        description=f"RAGAS 评测临时库（{config.dataset_id}）。评测结束或中断后自动删除。",
+        owner=owner,
     )
     kb_id = eval_kb["id"]
+    if on_kb_created:
+        on_kb_created(kb_id, kb_name)
 
     agent = build_agent(
         system_prompt=EVAL_SYSTEM_PROMPT,
@@ -209,7 +224,8 @@ def run_ragas_eval_dataset(
     lock = threading.Lock()
 
     def _run_one(qid: int, item: QAPair) -> tuple[int, dict]:
-        set_current_owner(task_owner)
+        check_stop(should_stop)
+        set_current_owner(owner)
         try:
             result = agent.invoke(
                 {"messages": [{"role": "user", "content": item.question}]},
@@ -230,36 +246,70 @@ def run_ragas_eval_dataset(
                 "retrieved_contexts": contexts,
                 "reference": item.answer,
             }
+        except EvalCancelled:
+            raise
         except Exception as exc:
             return qid, {"qid": qid, "error": str(exc), "user_input": item.question}
 
     try:
-        ingest_passages(dataset.passages, kb_id=kb_id, owner=task_owner, kb_row=eval_kb)
+        n_passages = len(dataset.passages)
+        total_items = len(indexed)
 
+        last_ingest_report = [-1]
+
+        def _on_ingest(done: int, ingest_total: int) -> None:
+            check_stop(should_stop)
+            step = max(1, ingest_total // 20) if ingest_total else 1
+            if done not in (0, ingest_total) and done - last_ingest_report[0] < step:
+                return
+            last_ingest_report[0] = done
+            if on_phase:
+                on_phase("ingest", ingest_total, done)
+            if on_progress:
+                on_progress(done, max(ingest_total, 1))
+
+        if on_phase:
+            on_phase("ingest", n_passages, 0)
+        ingest_passages(
+            dataset.passages,
+            kb_id=kb_id,
+            owner=owner,
+            kb_row=eval_kb,
+            on_progress=_on_ingest,
+        )
+
+        if on_phase:
+            on_phase("agent", total_items, 0)
         if on_progress:
-            on_progress(0, len(indexed))
+            on_progress(0, total_items)
 
         with ThreadPoolExecutor(max_workers=max(1, config.workers)) as pool:
             futures = {pool.submit(_run_one, qid, item): (qid, item) for qid, item in indexed}
-            for fut in as_completed(futures):
-                qid, item = futures[fut]
-                qid, row = fut.result()
-                with lock:
-                    done += 1
-                    row_by_qid[qid] = row
-                    if on_progress:
-                        on_progress(done, len(indexed))
-                    sample = _to_sample_row(qid, item, row)
-                    if on_sample:
-                        on_sample(sample)
-                    if not row.get("error"):
-                        rows.append(row)
+            try:
+                for fut in as_completed(futures):
+                    qid, item = futures[fut]
+                    qid, row = fut.result()
+                    with lock:
+                        done += 1
+                        row_by_qid[qid] = row
+                        if on_progress:
+                            on_progress(done, len(indexed))
+                        sample = _to_sample_row(qid, item, row)
+                        if on_sample:
+                            on_sample(sample)
+                        if not row.get("error"):
+                            rows.append(row)
+            except EvalCancelled:
+                for fut in futures:
+                    fut.cancel()
+                raise
     finally:
         try:
-            store.delete_knowledge_base(kb_id, owner=task_owner)
+            store.delete_knowledge_base(kb_id, owner=owner)
         except Exception:
             pass
 
+    check_stop(should_stop)
     if not rows:
         samples = [_to_sample_row(qid, item, row_by_qid.get(qid, {})) for qid, item in indexed]
         raise RuntimeError("没有任何题目跑通，请检查 PG/SiliconFlow 配置")

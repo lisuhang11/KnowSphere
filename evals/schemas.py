@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 SuiteName = Literal["rag_bench", "rag_quality", "intent_bench"]
 PipelineProfile = Literal["rag_fixed", "rag_agent", "intent"]
-TaskStatus = Literal["pending", "running", "success", "failed"]
+TaskStatus = Literal["pending", "running", "success", "failed", "cancelled"]
 
 @dataclass
 class Passage:

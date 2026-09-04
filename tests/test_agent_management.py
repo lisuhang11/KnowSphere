@@ -60,11 +60,11 @@ def test_system_prompt_lists_bound_tools_only():
     assert "get_document_info" in full
     assert "write_plan" in full
     assert "query_knowledge_graph" in full
-    assert "知识库检索之后" in full
-    assert "换更具体的检索词" in full
+    assert "Evidence-First" in full
+    assert "Deep Read" in full
     ppt = build_system_prompt(tool_names=["generate_pptx", "doc_retrieval"])
     assert "generate_pptx" in ppt
-    assert "不要在工具成功返回前声称已经生成文件" in ppt
+    assert "before the tool succeeds" in ppt
 
 
 def test_tools_for_state_respects_request_web_toggle():

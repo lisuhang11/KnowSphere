@@ -94,59 +94,29 @@ def _prepare_messages(
     bound = set(bound_tool_names or [])
     has_web_tool = "web_search" in bound or "web_fetch" in bound
     has_graph_tool = "query_knowledge_graph" in bound
-    has_doc = "doc_retrieval" in bound
-    has_grep = "grep_chunks" in bound
-    has_list = "list_chunks" in bound
-    has_doc_info = "get_document_info" in bound
-    parts = [system_prompt]
-    web_label = "已开启" if web_on and has_web_tool else "未开启"
-    if graph_on and has_graph_tool:
-        graph_label = "已开启"
-    elif kb_ids:
-        graph_label = "未开启（所选库未开图谱，或 Neo4j 未启用）"
-    else:
-        graph_label = "未开启（未选择知识库）"
+    web_label = "Enabled" if web_on and has_web_tool else "Disabled"
+    graph_label = "Enabled" if graph_on and has_graph_tool else "Disabled"
+    filled = system_prompt.replace("{{web_search_status}}", web_label)
+    parts = [filled]
     parts.append(
-        f"\n\n【本轮能力】联网搜索：{web_label}。知识图谱：{graph_label}。"
+        f"\n\n### System Status\nWeb Search: {web_label}\nKnowledge Graph: {graph_label}\nUser Language: 中文"
     )
     if kb_ids:
-        seq: list[str] = []
-        if has_doc:
-            seq.append("库内事实必须先调用 doc_retrieval")
-        if has_grep:
-            seq.append("专名/编号/错误码用 grep_chunks")
-        if has_list:
-            seq.append("摘要不够再用 list_chunks，传入检索结果的 chunk_id / cN 或 document_id / dN 精读")
-        if has_doc_info:
-            seq.append("文件名和解析状态用 get_document_info（无正文）")
-        if has_graph_tool:
-            seq.append("关系型问题可在检索之后再 query_knowledge_graph（可选，不能替代语义检索）")
-        if has_web_tool:
-            seq.append("仅当库内缺失或不相关时才 web_search")
-        seq_text = "；".join(seq) + "。" if seq else ""
-        parts.append(
-            "\n\n【本轮已限定知识库】"
-            f"{seq_text}"
-            "禁止用互联网公开常识（同名公众人物等）顶替用户文档。"
-            "检索无相关内容时明确说明未找到。"
-        )
+        parts.append("\n\nBound knowledge bases are selected for this turn. Search them with the tools in your list.")
     else:
-        web_hint = (
-            "实时/公开信息可使用 web_search / web_fetch。"
-            if has_web_tool
-            else "本轮未开启联网搜索。"
-        )
         parts.append(
-            "\n\n【本轮未选择知识库】无法检索用户文档。"
-            "对知识库中的人物、项目等问题，须提示用户在输入框上方选择知识库。"
-            f"{web_hint}"
+            "\n\nNo knowledge base is selected this turn. If the question depends on uploaded documents, tell the user to select a knowledge base. "
+            + (
+                "Web search / web_fetch may be used if enabled."
+                if has_web_tool
+                else "Web search is not enabled this turn."
+            )
         )
     rewrite = (rewrite_query or "").strip()
     if rewrite:
         parts.append(
-            f"\n\n【本轮改写检索词】{rewrite}\n"
-            "调用 doc_retrieval / grep_chunks / web_search 时优先使用该检索词；"
-            "多跳可按中间结果改写后再搜；正文不够用 list_chunks 精读。"
+            f"\n\nRewritten query for this turn: {rewrite}\n"
+            "Prefer this query for doc_retrieval / grep_chunks / web_search; rewrite again from intermediate results on multi-hop tasks."
         )
     memory_block = (memory_suffix or "").strip()
     if memory_block:

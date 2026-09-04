@@ -231,6 +231,8 @@ def run_evaluation_task(self, task_id: str) -> dict:
     task = store.get_task(task_id)
     if not task:
         return {"task_id": task_id, "status": "missing"}
+    if task["status"] == "cancelled":
+        return {"task_id": task_id, "status": "cancelled"}
 
     snap = task["config_snapshot"]
     config = EvalConfig(
@@ -247,7 +249,17 @@ def run_evaluation_task(self, task_id: str) -> dict:
         owner=task["owner"],
     )
 
-    store.update_task(task_id, status="running", started=True)
+    store.update_task(task_id, status="running", started=True, only_if_active=True)
+    task = store.get_task(task_id)
+    if not task or task["status"] != "running":
+        return {"task_id": task_id, "status": task["status"] if task else "missing"}
+
+    def _should_stop() -> bool:
+        return store.is_cancelled(task_id)
+
+    def _on_kb_created(kb_id: int, _name: str) -> None:
+        store.update_task(task_id, eval_kb_id=kb_id, only_if_active=True)
+
     try:
 
         def _on_sample(row: dict) -> None:
@@ -263,11 +275,17 @@ def run_evaluation_task(self, task_id: str) -> dict:
                     finished=done,
                     total=total,
                     metric_summary=summary,
+                    only_if_active=True,
                 )
 
-            results, summary = run_intent_bench(config, on_progress=_prog, on_sample=_on_sample)
+            results, summary = run_intent_bench(
+                config, on_progress=_prog, on_sample=_on_sample, should_stop=_should_stop
+            )
             for row in intent_rows(results):
                 store.upsert_sample(task_id, row)
+            from evals.finalize import mark_result_summary
+
+            summary = mark_result_summary(summary, partial=False, planned_total=len(results))
             store.update_task(
                 task_id,
                 status="success",
@@ -275,6 +293,7 @@ def run_evaluation_task(self, task_id: str) -> dict:
                 finished=len(results),
                 total=len(results),
                 finished_at=True,
+                clear_err_msg=True,
             )
             return {"task_id": task_id, "status": "success", "summary": summary}
 
@@ -282,20 +301,68 @@ def run_evaluation_task(self, task_id: str) -> dict:
             limit = config.sample_limit or 50
 
             def _prog(done: int, total: int) -> None:
-                store.update_task(
-                    task_id,
-                    finished=done,
-                    total=total,
-                    metric_summary={
-                        "phase": "agent",
-                        "agent_finished": done,
-                        "agent_total": total,
-                    },
-                )
-
-            def _phase(phase: str, count: int) -> None:
                 task_row = store.get_task(task_id) or {}
+                summary = dict(task_row.get("metric_summary") or {})
+                phase = summary.get("phase") or "agent"
+                if phase == "ingest":
+                    store.update_task(
+                        task_id,
+                        finished=done,
+                        total=total,
+                        metric_summary={
+                            "phase": "ingest",
+                            "ingest_finished": done,
+                            "ingest_total": total,
+                        },
+                        only_if_active=True,
+                    )
+                else:
+                    store.update_task(
+                        task_id,
+                        finished=done,
+                        total=total,
+                        metric_summary={
+                            "phase": "agent",
+                            "agent_finished": done,
+                            "agent_total": total,
+                            "ingest_finished": summary.get("ingest_finished"),
+                            "ingest_total": summary.get("ingest_total"),
+                        },
+                        only_if_active=True,
+                    )
+
+            def _phase(phase: str, count: int, finished: int | None = None) -> None:
+                task_row = store.get_task(task_id) or {}
+                prev = dict(task_row.get("metric_summary") or {})
+                if phase == "ingest":
+                    store.update_task(
+                        task_id,
+                        finished=int(finished or 0),
+                        total=count,
+                        metric_summary={
+                            "phase": "ingest",
+                            "ingest_finished": int(finished or 0),
+                            "ingest_total": count,
+                        },
+                        only_if_active=True,
+                    )
+                    return
                 total = int(task_row.get("total") or count or 0)
+                if phase == "agent":
+                    store.update_task(
+                        task_id,
+                        finished=int(finished or 0),
+                        total=count,
+                        metric_summary={
+                            "phase": "agent",
+                            "agent_finished": int(finished or 0),
+                            "agent_total": count,
+                            "ingest_finished": prev.get("ingest_finished"),
+                            "ingest_total": prev.get("ingest_total"),
+                        },
+                        only_if_active=True,
+                    )
+                    return
                 store.update_task(
                     task_id,
                     finished=total,
@@ -305,7 +372,10 @@ def run_evaluation_task(self, task_id: str) -> dict:
                         "agent_finished": total,
                         "agent_total": total,
                         "ragas_total": count,
+                        "ingest_finished": prev.get("ingest_finished"),
+                        "ingest_total": prev.get("ingest_total"),
                     },
+                    only_if_active=True,
                 )
 
             if config.dataset_id == "hotpot":
@@ -315,6 +385,7 @@ def run_evaluation_task(self, task_id: str) -> dict:
                     on_progress=_prog,
                     on_sample=_on_sample,
                     on_phase=_phase,
+                    should_stop=_should_stop,
                 )
             else:
                 from evals.runners.ragas_runner import run_ragas_eval_dataset
@@ -324,6 +395,8 @@ def run_evaluation_task(self, task_id: str) -> dict:
                     on_progress=_prog,
                     on_sample=_on_sample,
                     on_phase=_phase,
+                    should_stop=_should_stop,
+                    on_kb_created=_on_kb_created,
                 )
             for row in samples:
                 store.upsert_sample(task_id, row)
@@ -332,6 +405,9 @@ def run_evaluation_task(self, task_id: str) -> dict:
                 status="success",
                 metric_summary={
                     "phase": "done",
+                    "result_ready": True,
+                    "partial": False,
+                    "planned_total": len(samples),
                     "ragas_metrics": summary,
                     "sample_count": len(samples),
                     "agent_finished": len(samples),
@@ -340,20 +416,39 @@ def run_evaluation_task(self, task_id: str) -> dict:
                 finished=len(samples),
                 total=len(samples),
                 finished_at=True,
+                clear_err_msg=True,
             )
             return {"task_id": task_id, "status": "success"}
 
         def _prog(done: int, total: int, summary: dict) -> None:
+            kb_id = summary.get("eval_kb_id")
             store.update_task(
                 task_id,
                 finished=done,
                 total=total,
                 metric_summary=summary,
+                eval_kb_id=int(kb_id) if kb_id is not None else None,
+                only_if_active=True,
             )
 
-        results, summary = run_bench(config, on_progress=_prog, on_sample=_on_sample)
+        results, summary = run_bench(
+            config,
+            on_progress=_prog,
+            on_sample=_on_sample,
+            should_stop=_should_stop,
+            on_kb_created=_on_kb_created,
+        )
         for row in results_to_sample_rows(results):
             store.upsert_sample(task_id, row)
+        from evals.finalize import mark_result_summary
+
+        task_row = store.get_task(task_id) or {}
+        summary = mark_result_summary(
+            summary,
+            partial=False,
+            planned_total=len(results),
+            prev=task_row.get("metric_summary") if isinstance(task_row.get("metric_summary"), dict) else {},
+        )
         store.update_task(
             task_id,
             status="success",
@@ -361,9 +456,32 @@ def run_evaluation_task(self, task_id: str) -> dict:
             finished=len(results),
             total=len(results),
             finished_at=True,
+            clear_err_msg=True,
         )
         return {"task_id": task_id, "status": "success", "summary": summary}
     except Exception as exc:
+        from evals.cancel import EvalCancelled
+        from evals.finalize import NoEvalSamples, finalize_task_results
+
+        if isinstance(exc, EvalCancelled) or store.is_cancelled(task_id):
+            try:
+                finalized = finalize_task_results(task_id, partial=True)
+                return {"task_id": task_id, "status": "success", "summary": finalized.get("metric_summary")}
+            except (NoEvalSamples, FileNotFoundError):
+                store.update_task(
+                    task_id,
+                    status="cancelled",
+                    err_msg="用户中断",
+                    finished_at=True,
+                    only_if_active=True,
+                )
+                return {"task_id": task_id, "status": "cancelled"}
         logger.exception("evaluation task %s failed", task_id)
-        store.update_task(task_id, status="failed", err_msg=str(exc), finished_at=True)
+        store.update_task(
+            task_id,
+            status="failed",
+            err_msg=str(exc),
+            finished_at=True,
+            only_if_active=True,
+        )
         return {"task_id": task_id, "status": "failed", "error": str(exc)}

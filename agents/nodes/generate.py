@@ -15,19 +15,31 @@ from utils.citation import citation_payload_from_source_dicts
 from utils.run_config import chat_model_kwargs_from_config, kb_ids_from_config
 from utils.short_term_memory import memory_system_suffix_from_state, memory_view_from_state
 
-_RAG_TAIL = (
-    "\n\n【本轮已限定知识库】"
-    "仅依据消息中的【知识库检索结果】作答；"
-    "禁止使用互联网公开常识（同名公众人物等）臆测；"
-    "检索无相关内容时明确说明未找到。"
-)
 
-_NO_KB_TAIL = (
-    "\n\n【本轮未选择知识库】无法检索知识库。"
-    "若消息中已有 [会话附件内容] 或图片说明，请依据这些内容作答；"
-    "对知识库中的人物、项目等具体问题，须提示用户在输入框上方选择知识库；"
-    "禁止凭公开资料作答（尤其同名人物）。"
-)
+def _prepare_messages(
+    system_prompt: str,
+    messages: list[BaseMessage],
+    config: RunnableConfig | None,
+    *,
+    system_prompt_override: str | None = None,
+    memory_suffix: str | None = None,
+) -> list[BaseMessage]:
+    """组装系统消息。非检索意图优先使用 query_understand 写入的 override。"""
+    from config.settings import settings
+    from prompts import PURE_CHAT_SYSTEM_PROMPT, build_rag_system_prompt
+
+    extra = (memory_suffix or "").strip()
+    if system_prompt_override:
+        base = system_prompt_override.strip()
+    else:
+        kb_ids = kb_ids_from_config(config)
+        if kb_ids:
+            base = build_rag_system_prompt(enable_citation=settings.citation_enabled)
+        else:
+            base = (system_prompt or "").strip() or PURE_CHAT_SYSTEM_PROMPT.strip()
+    if extra:
+        base = f"{base.rstrip()}\n\n{extra}"
+    return [SystemMessage(content=base)] + list(messages)
 
 
 def _delta_text(chunk: Any) -> str:
@@ -90,27 +102,6 @@ def _append_context_block(messages: list[BaseMessage], context_block: str) -> li
     else:
         out.append(HumanMessage(content=block))
     return out
-
-
-def _prepare_messages(
-    system_prompt: str,
-    messages: list[BaseMessage],
-    config: RunnableConfig | None,
-    *,
-    system_prompt_override: str | None = None,
-    memory_suffix: str | None = None,
-) -> list[BaseMessage]:
-    """组装系统消息。非检索意图优先使用 query_understand 写入的 override。"""
-    base = (system_prompt_override or "").strip() or system_prompt
-    extra = (memory_suffix or "").strip()
-    if extra:
-        base = f"{base.rstrip()}\n\n{extra}"
-    if system_prompt_override:
-        return [SystemMessage(content=base)] + list(messages)
-
-    kb_ids = kb_ids_from_config(config)
-    tail = _RAG_TAIL if kb_ids else _NO_KB_TAIL
-    return [SystemMessage(content=base + tail)] + list(messages)
 
 
 def _llm_messages(state: KnowSphereState, config: RunnableConfig, system_prompt: str) -> list[BaseMessage]:

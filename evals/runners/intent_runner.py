@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
 from config.settings import set_current_owner
+from evals.cancel import EvalCancelled, check_stop
 from evals.config import apply_config_overrides
 from evals.datasets import load_dataset
 from evals.metrics.aggregate import average_metrics, sample_metrics_to_dict
@@ -22,6 +23,7 @@ def run_intent_bench(
     *,
     on_progress: Callable[[int, int, dict], None] | None = None,
     on_sample: Callable[[dict], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> tuple[list[SampleResult], dict]:
     """执行意图识别评测，返回 (逐题结果, 汇总指标)。"""
     dataset = load_dataset(config.dataset_id, sample_limit=config.sample_limit)
@@ -47,6 +49,7 @@ def run_intent_bench(
 
         def _one(item) -> SampleResult:
             nonlocal done
+            check_stop(should_stop)
             set_current_owner(owner)
             row = run_intent_item(item)
             sample_row = results_to_sample_rows([row])[0]
@@ -63,8 +66,13 @@ def run_intent_bench(
         workers = max(1, min(config.workers, total or 1))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = [pool.submit(_one, item) for item in dataset.items]
-            for fut in as_completed(futures):
-                fut.result()
+            try:
+                for fut in as_completed(futures):
+                    fut.result()
+            except EvalCancelled:
+                for fut in futures:
+                    fut.cancel()
+                raise
         results.sort(key=lambda r: r.qid)
 
     return results, average_metrics(results)

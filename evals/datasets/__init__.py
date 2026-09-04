@@ -595,8 +595,43 @@ def _load_json(path: Path, *, sample_limit: int | None) -> EvalDataset:
                 meta=meta,
             )
         )
-    if sample_limit is not None:
-        items = items[:sample_limit]
+    if sample_limit is not None and sample_limit < len(items):
+        # RAG/SQuAD 风格：有 passage 归属时按段整抽，避免同一 context 被拆成半题
+        if passages and any(it.pids for it in items):
+            from evals.datasets.squad import sample_items_by_passage
+
+            pass_rows = [{"pid": p.pid, "title": p.title, "text": p.text} for p in passages]
+            item_rows = [
+                {
+                    "qid": it.qid,
+                    "question": it.question,
+                    "pids": it.pids,
+                    "answer": it.answer,
+                    "meta": it.meta,
+                }
+                for it in items
+            ]
+            pass_rows, item_rows = sample_items_by_passage(
+                pass_rows, item_rows, sample_limit=sample_limit, seed=42
+            )
+            pid_to_text = {int(p["pid"]): str(p["text"]) for p in pass_rows}
+            passages = [
+                Passage(pid=int(p["pid"]), title=str(p.get("title") or f"passage_{p['pid']}"), text=str(p["text"]))
+                for p in pass_rows
+            ]
+            items = [
+                QAPair(
+                    qid=int(row["qid"]),
+                    question=str(row["question"]),
+                    pids=[int(x) for x in row.get("pids") or []],
+                    passages=[pid_to_text.get(int(pid), "") for pid in (row.get("pids") or [])],
+                    answer=str(row.get("answer") or ""),
+                    meta=dict(row.get("meta") or {}),
+                )
+                for row in item_rows
+            ]
+        else:
+            items = items[:sample_limit]
     return EvalDataset(
         id=str(raw.get("id") or path.stem),
         passages=passages,

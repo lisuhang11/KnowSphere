@@ -116,7 +116,7 @@ python -m evals.run_bench --dataset squad_v2 --limit 200 --profile rag_agent
 
 - 数据：每个 Wikipedia 段落作为 passage，`corpus_mode=shared`；`meta.is_impossible` 标记不可答题
 - 指标：Overall EM/F1、HasAns EM/F1、NoAns Acc、Span Hit（gold span 是否出现在自由回答中）、检索 recall
-- 评测 prompt 要求短 span 或原样回复 `unanswerable`（产品中文提示词不动）
+- 评测使用与产品相同的 WeKnora 风格系统提示词（不再单独要求回复 `unanswerable`）
 - 也可在前端「评测」页选择 `squad_normans` / `squad_v2` 走 rag_bench
 
 ## 关键设计说明

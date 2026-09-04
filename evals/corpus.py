@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from evals.schemas import Passage, QAPair
 from ingestion.ingest import create_splitter
 from models import create_embeddings
@@ -25,6 +27,7 @@ def ingest_passages(
     kb_id: int,
     owner: str,
     kb_row: dict | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> int:
     """将 passages 切块写入 eval KB，返回总 chunk 数。"""
     store = ChunkStore()
@@ -35,8 +38,13 @@ def ingest_passages(
     )
     embeddings = create_embeddings()
     total = 0
-    for passage in passages:
+    n_passages = len(passages)
+    if on_progress:
+        on_progress(0, n_passages)
+    for idx, passage in enumerate(passages):
         if not passage.text.strip():
+            if on_progress:
+                on_progress(idx + 1, n_passages)
             continue
         chunks = splitter.split_text(passage.text) or [passage.text]
         vectors = embeddings.embed_documents(chunks)
@@ -49,6 +57,8 @@ def ingest_passages(
             kb_id=kb_id,
             base_metadata={"eval_passage_id": passage.pid},
         )
+        if on_progress:
+            on_progress(idx + 1, n_passages)
     return total
 
 def ingest_isolated_item(item: QAPair, *, kb_id: int, owner: str, kb_row: dict | None = None) -> int:

@@ -213,6 +213,14 @@ function fmtTime(v: string | null): string {
   return Number.isNaN(d.getTime()) ? v : d.toLocaleString('zh-CN', { hour12: false })
 }
 
+function isEvalKb(kb: KnowledgeBase): boolean {
+  return (
+    kb.name.startsWith('eval_') ||
+    kb.name.startsWith('ragas_') ||
+    (kb.description || '').includes('评测临时库')
+  )
+}
+
 onMounted(() => {
   void loadModels()
   void load()
@@ -279,6 +287,7 @@ onMounted(() => {
             <div class="card-header">
               <span class="card-title" :title="kb.name">
                 <span class="card-title-text">{{ kb.name }}</span>
+                <t-tag v-if="isEvalKb(kb)" size="small" variant="light" theme="warning">评测临时</t-tag>
               </span>
               <t-popup overlay-class-name="card-more-popup" trigger="click" destroy-on-close placement="bottom-right">
                 <div class="more-wrap" @click.stop>

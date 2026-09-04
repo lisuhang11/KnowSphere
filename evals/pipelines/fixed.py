@@ -9,29 +9,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from evals.corpus import map_retrieval_ids
 from evals.metrics.aggregate import compute_sample_metrics, metric_input_from_item
-from evals.pipelines.agent import eval_system_prompt
 from evals.schemas import QAPair, SampleResult
 from models import create_chat_model
+from prompts.rag_system import build_rag_system_prompt, format_rag_user_message
 from tools.retrieval.doc_retrieval import doc_retrieval
-
-_RAG_PROMPT = """你是 KnowSphere 评测助手。仅依据下列检索上下文回答问题，简洁准确。
-若上下文不足以回答，请说明未找到相关信息。
-
-【检索上下文】
-{context}
-
-【问题】
-{question}"""
-
-_SQUAD_RAG_PROMPT = """Use ONLY the retrieved context.
-If the answer is present, reply with a short span copied from the context. No extra words.
-If the context does not contain the answer, reply exactly: unanswerable
-
-【Context】
-{context}
-
-【Question】
-{question}"""
 
 
 def run_rag_fixed(
@@ -51,15 +32,9 @@ def run_rag_fixed(
             f"[{i + 1}] {s.get('file_name', '')}: {s.get('snippet', '')}" for i, s in enumerate(sources)
         )
         llm = create_chat_model(**(chat_model_kwargs or {"temperature": 0}))
-        if metric_layers and "squad" in metric_layers:
-            system = eval_system_prompt(metric_layers)
-            template = _SQUAD_RAG_PROMPT
-        else:
-            system = "评测模式：基于检索上下文作答。"
-            template = _RAG_PROMPT
         messages = [
-            SystemMessage(content=system),
-            HumanMessage(content=template.format(context=context or "（无）", question=item.question)),
+            SystemMessage(content=build_rag_system_prompt(enable_citation=False)),
+            HumanMessage(content=format_rag_user_message(item.question, context)),
         ]
         response = llm.invoke(messages)
         text = response.content if isinstance(response.content, str) else str(response.content)

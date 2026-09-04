@@ -273,6 +273,60 @@ def convert_squad_hf_rows(
     return _finalize_dataset(dataset_id, passages, items, sample_limit=sample_limit, seed=seed)
 
 
+def sample_items_by_passage(
+    passages: list[dict[str, Any]],
+    items: list[dict[str, Any]],
+    *,
+    sample_limit: int,
+    seed: int = 42,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """按段落整抽：抽中一段则保留该段全部问答，不拆开同一 context 的题。
+
+    ``sample_limit`` 为题数预算：按随机段落顺序装箱，尽量接近上限；
+    单段题数已超过预算时仍整段保留（宁可略超，也不半段截断）。
+    """
+    if sample_limit <= 0:
+        raise ValueError("sample_limit 须为正整数")
+    if sample_limit >= len(items):
+        return passages, items
+
+    by_pid: dict[int, list[dict[str, Any]]] = {}
+    for row in items:
+        pids = row.get("pids") or []
+        if not pids:
+            continue
+        pid = int(pids[0])
+        by_pid.setdefault(pid, []).append(row)
+
+    pid_order = [int(p["pid"]) for p in passages if int(p["pid"]) in by_pid]
+    rng = random.Random(seed)
+    rng.shuffle(pid_order)
+
+    selected_pids: list[int] = []
+    selected_items: list[dict[str, Any]] = []
+    for pid in pid_order:
+        chunk = by_pid[pid]
+        if selected_items and len(selected_items) + len(chunk) > sample_limit:
+            continue
+        selected_pids.append(pid)
+        selected_items.extend(chunk)
+        if len(selected_items) >= sample_limit:
+            break
+
+    if not selected_items:
+        # 极端情况：每段都超预算且上面未选中——取最短的一段整段保留
+        shortest = min(by_pid.items(), key=lambda kv: len(kv[1]))
+        selected_pids = [shortest[0]]
+        selected_items = list(shortest[1])
+
+    keep = set(selected_pids)
+    out_passages = [p for p in passages if int(p["pid"]) in keep]
+    selected_items.sort(key=lambda row: int(row["qid"]))
+    for i, row in enumerate(selected_items):
+        row["qid"] = i
+    return out_passages, selected_items
+
+
 def _finalize_dataset(
     dataset_id: str,
     passages: list[dict[str, Any]],
@@ -281,15 +335,10 @@ def _finalize_dataset(
     sample_limit: int | None,
     seed: int,
 ) -> dict[str, Any]:
-    if sample_limit is not None:
-        rng = random.Random(seed)
-        if sample_limit < len(items):
-            items = rng.sample(items, sample_limit)
-            items.sort(key=lambda row: int(row["qid"]))
-        keep_pids = {int(pid) for row in items for pid in row.get("pids") or []}
-        passages = [p for p in passages if int(p["pid"]) in keep_pids]
-        for i, row in enumerate(items):
-            row["qid"] = i
+    if sample_limit is not None and sample_limit < len(items):
+        passages, items = sample_items_by_passage(
+            passages, items, sample_limit=sample_limit, seed=seed
+        )
     if not passages or not items:
         raise ValueError("转换结果为空：没有可用段落或问题")
     n_has = sum(1 for row in items if not row.get("meta", {}).get("is_impossible"))
