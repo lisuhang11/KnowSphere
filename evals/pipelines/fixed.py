@@ -14,6 +14,7 @@ from evals.schemas import QAPair, SampleResult
 from models import create_chat_model
 from prompts.rag_system import build_rag_system_prompt, format_rag_user_message
 from tools.retrieval.doc_retrieval import doc_retrieval
+from utils.language import answer_language_for_query
 
 
 def run_rag_fixed(
@@ -36,7 +37,12 @@ def run_rag_fixed(
         )
         llm = create_chat_model(**(chat_model_kwargs or {"temperature": 0}))
         messages = [
-            SystemMessage(content=build_rag_system_prompt(enable_citation=False)),
+            SystemMessage(
+                content=build_rag_system_prompt(
+                    enable_citation=False,
+                    language=answer_language_for_query(item.question),
+                )
+            ),
             HumanMessage(content=format_rag_user_message(item.question, context)),
         ]
         response = call_with_tpm_retry(lambda: llm.invoke(messages))

@@ -145,7 +145,7 @@ const ICON_MAP: Record<string, string> = {
 }
 
 const topMenuItems: MenuItem[] = [
-  { title: '新对话', path: 'creatChat', children: true },
+  { title: '新对话', path: 'chat', children: true },
   { title: '知识库', path: 'knowledge-bases' },
   { title: '智能体', path: 'agents' },
   { title: '工具', path: 'tools' },
@@ -196,7 +196,12 @@ function isMenuItemActive(itemPath: string): boolean {
   const currentRoute = route.name
   switch (itemPath) {
     case 'knowledge-bases':
-      return currentRoute === 'knowledge-bases' || currentRoute === 'knowledge-base-detail'
+      return (
+        currentRoute === 'knowledge-bases' ||
+        currentRoute === 'knowledge-base-detail' ||
+        currentRoute === 'document-detail' ||
+        currentRoute === 'document-detail-legacy'
+      )
     case 'agents':
       return currentRoute === 'agents'
     case 'tools':
@@ -207,8 +212,8 @@ function isMenuItemActive(itemPath: string): boolean {
       return currentRoute === 'models'
     case 'evaluation':
       return currentRoute === 'evaluation'
-    case 'creatChat':
-      return currentRoute === 'chat' && !chatStore.currentThreadId
+    case 'chat':
+      return currentRoute === 'chat'
     default:
       return false
   }
@@ -241,8 +246,7 @@ function getImgSrc(url: string): string {
 }
 
 async function handleMenuClick(path: string) {
-  if (path === 'creatChat') {
-    chatStore.startDraftChat()
+  if (path === 'chat') {
     void router.push('/chat')
     return
   }
@@ -254,8 +258,7 @@ async function handleMenuClick(path: string) {
 }
 
 function openSession(id: string) {
-  chatStore.selectThread(id)
-  void router.push('/chat')
+  void router.push(`/chat/${id}`)
 }
 
 function buildSessionMenuOptions(item: { is_pinned?: boolean }) {
@@ -287,7 +290,7 @@ async function handleSessionMenuClick(data: { value: string }, item: { id: strin
       const wasCurrent = chatStore.currentThreadId === item.id
       await chatStore.removeThread(item.id)
       MessagePlugin.success('会话已删除')
-      if (wasCurrent) chatStore.startDraftChat()
+      if (wasCurrent) void router.push('/chat')
     } catch {
       /* axios 拦截器已提示 */
     }

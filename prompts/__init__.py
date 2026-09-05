@@ -35,6 +35,7 @@ def build_system_prompt(
     skills: Sequence[SkillInfo] | None = None,
     *,
     web_search_status: str | None = None,
+    language: str | None = None,
 ) -> str:
     """组装智能推理系统提示词；有知识库工具时用 WeKnora Progressive RAG 模板。"""
     names = ordered_tool_names(tool_names)
@@ -57,6 +58,10 @@ def build_system_prompt(
         from skills.prompt import append_skills_prompt
 
         prompt = append_skills_prompt(prompt, skills)
+    if language:
+        from utils.language import apply_answer_language
+
+        prompt = apply_answer_language(prompt, language)
     return prompt
 
 

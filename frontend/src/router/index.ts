@@ -15,6 +15,11 @@ const router = createRouter({
           component: () => import('@/views/chat/index.vue'),
         },
         {
+          path: 'chat/:sessionId',
+          name: 'chat-session',
+          component: () => import('@/views/chat/index.vue'),
+        },
+        {
           path: 'knowledge-bases',
           name: 'knowledge-bases',
           component: () => import('@/views/knowledge-bases/index.vue'),
@@ -23,6 +28,11 @@ const router = createRouter({
           path: 'knowledge-bases/:kbId',
           name: 'knowledge-base-detail',
           component: () => import('@/views/knowledge-bases/detail.vue'),
+        },
+        {
+          path: 'knowledge-bases/:kbId/documents/:documentId',
+          name: 'document-detail',
+          component: () => import('@/views/documents/detail.vue'),
         },
         {
           path: 'models',
@@ -51,7 +61,7 @@ const router = createRouter({
         },
         {
           path: 'documents/:documentId',
-          name: 'document-detail',
+          name: 'document-detail-legacy',
           component: () => import('@/views/documents/detail.vue'),
         },
       ],

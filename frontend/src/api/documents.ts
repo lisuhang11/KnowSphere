@@ -69,7 +69,7 @@ export interface ChunkingProcessConfig {
 
 /** 列出某知识库内的文档 */
 export async function listDocuments(kbId: number): Promise<DocumentInfo[]> {
-  const resp = await request.get<DocumentInfo[]>('/documents', { params: { kb_id: kbId } })
+  const resp = await request.get<DocumentInfo[]>(`/knowledge-bases/${kbId}/documents`)
   return resp.data
 }
 
@@ -88,7 +88,6 @@ export async function uploadDocument(
 ): Promise<{ document_id: string; file_name: string; kb_id: number; status: DocumentStatus; task_id: string | null }> {
   const form = new FormData()
   form.append('file', file)
-  form.append('kb_id', String(kbId))
   if (processConfig) form.append('process_config', JSON.stringify(processConfig))
   const resp = await request.post<{
     document_id: string
@@ -96,7 +95,7 @@ export async function uploadDocument(
     kb_id: number
     status: DocumentStatus
     task_id: string | null
-  }>('/upload', form, {
+  }>(`/knowledge-bases/${kbId}/documents`, form, {
     onUploadProgress: (e) => {
       if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100))
     },

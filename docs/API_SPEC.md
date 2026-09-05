@@ -90,7 +90,7 @@
 
 ## 4. 文档 `/documents`
 
-当前文档路由在 `api/documents.py`，部分路径尚未挂到知识库前缀下。
+当前文档路由在 `api/documents.py`。创建/列表挂在知识库下；单条文档操作仍用 `/documents/{id}`。
 
 ### 4.1 规范路由（目标形态）
 
@@ -111,8 +111,8 @@
 
 | Handler | 当前路径 | 备注 |
 |---------|----------|------|
-| `UploadDocument` | `POST /upload` | ⚠ 宜迁为嵌套前缀 |
-| `ListDocuments` | `GET /documents?kb_id=` | ⚠ 宜为 `GET /knowledge-bases/{id}/documents` |
+| `UploadDocument` | `POST /knowledge-bases/{id}/documents` | ✓ 旧路径 `POST /upload` 仍作别名 |
+| `ListDocuments` | `GET /knowledge-bases/{id}/documents` | ✓ 旧路径 `GET /documents?kb_id=` 仍作别名 |
 | `GetDocument` | `GET /documents/{id}/meta` | ✓ |
 | `DeleteDocument` | `DELETE /documents/{id}` | ✓ |
 | `GetDocumentStatus` | `GET /documents/{id}/status` | ✓ |
@@ -186,9 +186,7 @@
 
 | 优先级 | 现状 | 规范 |
 |--------|------|------|
-| P0 | `POST /upload` | `POST /knowledge-bases/{id}/documents` |
 | P0 | `POST /preview-chunking` | `POST /chunker/preview` |
-| P1 | `GET /documents?kb_id=` | `GET /knowledge-bases/{id}/documents` |
 | P1 | `PATCH /knowledge-bases/{id}` | `PUT /knowledge-bases/{id}` |
 | P2 | `GET /documents/{id}/meta` | `GET /documents/{id}` |
 | P3 | 缺 `POST /sessions/{id}/stop` | 显式停止流式生成接口 |

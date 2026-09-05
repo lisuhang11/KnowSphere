@@ -206,9 +206,13 @@ def build_query_understand_prompts(
     web_search_enabled: bool = True,
     session_summary: str = "",
     working_memory: dict | None = None,
+    language: str | None = None,
 ) -> tuple[str, str]:
+    from utils.language import answer_language_for_query, apply_answer_language
+
     now = datetime.now()
-    system = QUERY_UNDERSTAND_SYSTEM.replace("{{language}}", "中文").replace(
+    lang = language or answer_language_for_query(query)
+    system = apply_answer_language(QUERY_UNDERSTAND_SYSTEM, lang).replace(
         "{{conversation}}",
         format_rewrite_conversation(
             history_pairs,

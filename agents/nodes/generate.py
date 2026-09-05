@@ -12,6 +12,7 @@ from states import KnowSphereState
 from tools.retrieval.doc_retrieval import _emit_thinking
 from utils.agent_runtime import resolve_system_prompt
 from utils.citation import citation_payload_from_source_dicts
+from utils.language import answer_language_from_state, ensure_answer_language
 from utils.run_config import chat_model_kwargs_from_config, kb_ids_from_config
 from utils.short_term_memory import memory_system_suffix_from_state, memory_view_from_state
 
@@ -23,6 +24,7 @@ def _prepare_messages(
     *,
     system_prompt_override: str | None = None,
     memory_suffix: str | None = None,
+    answer_language: str | None = None,
 ) -> list[BaseMessage]:
     """组装系统消息。非检索意图优先使用 query_understand 写入的 override。"""
     from config.settings import settings
@@ -37,6 +39,7 @@ def _prepare_messages(
             base = build_rag_system_prompt(enable_citation=settings.citation_enabled)
         else:
             base = (system_prompt or "").strip() or PURE_CHAT_SYSTEM_PROMPT.strip()
+    base = ensure_answer_language(base, answer_language)
     if extra:
         base = f"{base.rstrip()}\n\n{extra}"
     return [SystemMessage(content=base)] + list(messages)
@@ -117,6 +120,7 @@ def _llm_messages(state: KnowSphereState, config: RunnableConfig, system_prompt:
         config,
         system_prompt_override=state.get("system_prompt_override"),
         memory_suffix=memory_system_suffix_from_state(state),
+        answer_language=answer_language_from_state(state),
     )
 
 

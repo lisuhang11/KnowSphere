@@ -278,6 +278,22 @@ export async function deleteEvalDataset(datasetId: string): Promise<{ id: string
   return unwrap(res)
 }
 
+export async function downloadEvalDataset(datasetId: string): Promise<void> {
+  const res = await request.get<Blob>(`/evaluation/datasets/${encodeURIComponent(datasetId)}/export`, {
+    responseType: 'blob',
+    timeout: 180000,
+  })
+  const blob = res.data instanceof Blob ? res.data : new Blob([res.data], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${datasetId}.json`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
 export async function listEvalSamples(
   taskId: string,
   limit = 100,

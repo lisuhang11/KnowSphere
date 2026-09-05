@@ -82,7 +82,7 @@ function metricItems(
 
 export function formatMetricValue(value: number): string {
   if (!Number.isFinite(value)) return '—'
-  return value.toFixed(3)
+  return `${(value * 100).toFixed(1)}%`
 }
 
 export function metricScoreClass(value: number): string {
@@ -496,8 +496,8 @@ export function classifySample(row: EvalSample): SampleVerdict {
       const faith = ragas.faithfulness
       const rel = ragas.answer_relevancy
       const parts = [
-        typeof faith === 'number' ? `忠实度 ${Number(faith).toFixed(3)}` : '',
-        typeof rel === 'number' ? `相关性 ${Number(rel).toFixed(3)}` : '',
+        typeof faith === 'number' ? `忠实度 ${formatMetricValue(Number(faith))}` : '',
+        typeof rel === 'number' ? `相关性 ${formatMetricValue(Number(rel))}` : '',
       ].filter(Boolean)
       return {
         kind: 'correct',
@@ -575,7 +575,7 @@ export function classifySample(row: EvalSample): SampleVerdict {
         ok: false,
         label: '部分匹配',
         theme: 'warning',
-        reason: `尚未完全匹配（F1 ${f1.toFixed(3)}）。${hitNote}`.trim(),
+        reason: `尚未完全匹配（F1 ${formatMetricValue(f1)}）。${hitNote}`.trim(),
       }
     }
 

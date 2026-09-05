@@ -21,6 +21,7 @@ from schemas.query import (
 )
 from states import KnowSphereState
 from tools.retrieval.doc_retrieval import _emit_thinking
+from utils.language import answer_language_from_state
 from utils.message_content import message_text
 from utils.query_understand_images import (
     build_multimodal_user_content,
@@ -77,6 +78,7 @@ def _apply_intent_side_effects(
     kb_selected: bool,
     web_search_enabled: bool = True,
     agent_has_tools: bool = False,
+    language: str | None = None,
 ) -> dict:
     """非检索意图写入专用系统提示覆盖。"""
     intent = result.get("intent")
@@ -87,7 +89,7 @@ def _apply_intent_side_effects(
         agent_has_tools=agent_has_tools,
     ):
         return {"system_prompt_override": ""}
-    override = intent_system_prompt(intent)
+    override = intent_system_prompt(intent, language=language)
     if override:
         return {"system_prompt_override": override}
     return {"system_prompt_override": ""}
@@ -149,6 +151,7 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
 
     kb_selected = bool(state.get("kb_selected"))
     web_on = _web_search_on(state)
+    language = answer_language_from_state(state, current_query)
     history_pairs = list(state.get("history_pairs") or [])
     has_images = bool(state.get("has_images"))
     has_attachments = bool(state.get("has_attachments"))
@@ -156,6 +159,7 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
 
     result: dict = {
         "rewrite_query": current_query,
+        "answer_language": language,
         "intent": fallback_intent(
             kb_selected=kb_selected,
             has_images=has_images,
@@ -187,6 +191,7 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
                 kb_selected=kb_selected,
                 web_search_enabled=web_on,
                 agent_has_tools=_agent_has_tools(state),
+                language=language,
             )
         )
         return result
@@ -200,6 +205,7 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
         web_search_enabled=web_on,
         session_summary=str(state.get("session_summary") or ""),
         working_memory=state.get("working_memory") if isinstance(state.get("working_memory"), dict) else None,
+        language=language,
     )
 
     rewrite = current_query
@@ -253,6 +259,7 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
                 kb_selected=kb_selected,
                 web_search_enabled=web_on,
                 agent_has_tools=_agent_has_tools(state),
+                language=language,
             )
         )
         return result
@@ -285,6 +292,7 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
             kb_selected=kb_selected,
             web_search_enabled=web_on,
             agent_has_tools=_agent_has_tools(state),
+            language=language,
         )
     )
     return result

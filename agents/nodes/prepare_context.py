@@ -9,6 +9,7 @@ from config.settings import settings
 from schemas.query import fallback_intent
 from states import KnowSphereState
 from utils.agent_runtime import resolve_agent_tool_names
+from utils.language import ANSWER_LANGUAGE_EN, answer_language_for_query
 from utils.message_content import (
     message_has_attachments,
     message_has_images,
@@ -44,6 +45,7 @@ def _empty_turn(
     return {
         "current_query": "",
         "rewrite_query": "",
+        "answer_language": ANSWER_LANGUAGE_EN,
         "intent": "",
         "history_pairs": [],
         "kb_selected": kb_selected,
@@ -102,6 +104,7 @@ def prepare_context(state: KnowSphereState, config: RunnableConfig) -> dict:
         "current_query": current_query,
         "history_pairs": history_pairs,
         "rewrite_query": current_query,
+        "answer_language": answer_language_for_query(current_query),
         "intent": default_intent,
         "has_images": has_images,
         "has_attachments": has_attachments,

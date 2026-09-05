@@ -8,6 +8,7 @@ import {
   startRagasScore,
   retryEvalFailed,
   deleteEvalDataset,
+  downloadEvalDataset,
   deleteEvalTask,
   getEvalDataset,
   getEvalTask,
@@ -692,6 +693,21 @@ async function submitEdit() {
   }
 }
 
+const exportingId = ref<string | null>(null)
+
+async function exportDataset(d: EvalDatasetInfo | { id: string }) {
+  if (exportingId.value) return
+  exportingId.value = d.id
+  try {
+    await downloadEvalDataset(d.id)
+    MessagePlugin.success(`已导出 ${d.id}.json`)
+  } catch (e) {
+    MessagePlugin.error((e as Error).message)
+  } finally {
+    exportingId.value = null
+  }
+}
+
 function confirmDeleteDataset(d: EvalDatasetInfo) {
   let extra = '此操作不可恢复。'
   if (d.online) extra = '将从评测库中移除该在线集，之后不再出现在列表中。此操作不可恢复。'
@@ -1012,6 +1028,14 @@ onUnmounted(() => {
             </div>
             <div class="card-actions">
               <t-button size="small" variant="outline" @click="openPreview(d)">预览</t-button>
+              <t-button
+                size="small"
+                variant="outline"
+                :loading="exportingId === d.id"
+                @click="exportDataset(d)"
+              >
+                导出 JSON
+              </t-button>
               <t-button size="small" theme="primary" variant="outline" @click="useDataset(d)">用此评测</t-button>
               <t-button v-if="!d.online" size="small" variant="text" @click="openEdit(d)">编辑描述</t-button>
               <t-button
@@ -1272,11 +1296,26 @@ onUnmounted(() => {
       <div v-if="previewLoading" class="preview-state">加载中…</div>
       <template v-else-if="preview">
         <p class="ds-desc">{{ preview.description }}</p>
-        <div v-if="preview.id === 'squad_v2'" class="preview-toolbar">
-          <t-button size="small" variant="outline" :loading="squadSyncing" @click="resyncSquadV2">
+        <div class="preview-toolbar">
+          <t-button
+            size="small"
+            variant="outline"
+            :loading="exportingId === preview.id"
+            @click="exportDataset(preview)"
+          >
+            导出 JSON
+          </t-button>
+          <t-button
+            v-if="preview.id === 'squad_v2'"
+            size="small"
+            variant="outline"
+            :loading="squadSyncing"
+            @click="resyncSquadV2"
+          >
             重新同步 dev-v2.0
           </t-button>
           <t-select
+            v-if="preview.id === 'squad_v2'"
             v-model="squadTitleFilter"
             clearable
             placeholder="按 Wikipedia 条目筛选"

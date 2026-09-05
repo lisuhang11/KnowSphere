@@ -332,6 +332,11 @@ onMounted(async () => {
   try {
     docInfo.value = await getDocumentMeta(documentId)
     if (docInfo.value?.knowledge_base_id) {
+      if (route.name === 'document-detail-legacy') {
+        void router.replace(
+          `/knowledge-bases/${docInfo.value.knowledge_base_id}/documents/${documentId}`,
+        )
+      }
       try {
         kbForReparse.value = await getKnowledgeBase(docInfo.value.knowledge_base_id)
       } catch {
@@ -353,11 +358,14 @@ onMounted(async () => {
 
 function handleClose() {
   drawerVisible.value = false
-  // 有历史记录则回退，直达链接（无历史）回所属知识库；没有 /documents 列表路由
+  const kbFromRoute = Number(route.params.kbId)
+  const kbId = Number.isFinite(kbFromRoute) && kbFromRoute > 0
+    ? kbFromRoute
+    : docInfo.value?.knowledge_base_id
   if (window.history.length > 1) {
     router.back()
-  } else if (docInfo.value?.knowledge_base_id) {
-    router.push(`/knowledge-bases/${docInfo.value.knowledge_base_id}`)
+  } else if (kbId) {
+    router.push(`/knowledge-bases/${kbId}`)
   } else {
     router.push('/knowledge-bases')
   }

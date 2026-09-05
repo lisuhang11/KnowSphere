@@ -21,24 +21,21 @@ documents_router = APIRouter(tags=["documents"])
 
 PREVIEW_TEXT_LIMIT = 200_000
 
-@documents_router.post("/upload")
-@traceable(name="upload_endpoint", run_type="chain")
-async def upload(
-    file: UploadFile = File(...),
-    kb_id: int = Form(..., description="目标知识库 ID"),
-    process_config: str | None = Form(
-        default=None,
-        description='文档级处理配置（JSON 字符串，可选）',
-    ),
-    owner: str | None = None,
-    docs: DocumentService = Depends(get_document_service),
-) -> dict:
+
+def _enqueue_upload(
+    *,
+    kb_id: int,
+    file_name: str,
+    file_bytes: bytes,
+    process_config: str | None,
+    owner: str | None,
+    docs: DocumentService,
+) -> JSONResponse:
     parsed = parse_process_config(process_config)
-    file_bytes = await file.read()
     try:
         payload = docs.begin_upload(
             kb_id=kb_id,
-            file_name=file.filename or "upload",
+            file_name=file_name,
             file_bytes=file_bytes,
             owner=owner,
             process_config=parsed,
@@ -73,9 +70,52 @@ async def upload(
         },
     )
 
-@documents_router.get("/documents")
-def list_documents(
-    kb_id: int = Query(..., description="知识库 ID"),
+
+@documents_router.post("/knowledge-bases/{kb_id}/documents")
+@traceable(name="upload_endpoint", run_type="chain")
+async def upload_document(
+    kb_id: int,
+    file: UploadFile = File(...),
+    process_config: str | None = Form(
+        default=None,
+        description="文档级处理配置（JSON 字符串，可选）",
+    ),
+    owner: str | None = None,
+    docs: DocumentService = Depends(get_document_service),
+) -> dict:
+    return _enqueue_upload(
+        kb_id=kb_id,
+        file_name=file.filename or "upload",
+        file_bytes=await file.read(),
+        process_config=process_config,
+        owner=owner,
+        docs=docs,
+    )
+
+
+@documents_router.post("/upload", include_in_schema=False)
+@traceable(name="upload_endpoint_legacy", run_type="chain")
+async def upload_document_legacy(
+    file: UploadFile = File(...),
+    kb_id: int = Form(..., description="目标知识库 ID"),
+    process_config: str | None = Form(default=None),
+    owner: str | None = None,
+    docs: DocumentService = Depends(get_document_service),
+) -> dict:
+    """旧路径别名：POST /upload。"""
+    return _enqueue_upload(
+        kb_id=kb_id,
+        file_name=file.filename or "upload",
+        file_bytes=await file.read(),
+        process_config=process_config,
+        owner=owner,
+        docs=docs,
+    )
+
+
+@documents_router.get("/knowledge-bases/{kb_id}/documents")
+def list_kb_documents(
+    kb_id: int,
     owner: str | None = None,
     docs: DocumentService = Depends(get_document_service),
 ) -> list[dict]:
@@ -83,6 +123,16 @@ def list_documents(
         return docs.list_documents(kb_id, owner=owner)
     except Exception as exc:
         raise map_service_error(exc, default_status=500, default_prefix="查询文档列表失败") from exc
+
+
+@documents_router.get("/documents", include_in_schema=False)
+def list_documents_legacy(
+    kb_id: int = Query(..., description="知识库 ID"),
+    owner: str | None = None,
+    docs: DocumentService = Depends(get_document_service),
+) -> list[dict]:
+    """旧路径别名：GET /documents?kb_id=。"""
+    return list_kb_documents(kb_id, owner=owner, docs=docs)
 
 @documents_router.delete("/documents/{document_id}")
 def delete_document(

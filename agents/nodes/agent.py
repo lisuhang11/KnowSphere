@@ -19,6 +19,7 @@ from utils.agent_runtime import (
     resolve_agent_tool_names,
     resolve_system_prompt,
 )
+from utils.language import ANSWER_LANGUAGE_EN, answer_language_from_state, apply_answer_language
 from utils.citation import citation_payload_from_source_dicts
 from utils.run_config import (
     chat_model_kwargs_from_config,
@@ -87,6 +88,7 @@ def _prepare_messages(
     rewrite_query: str | None = None,
     bound_tool_names: list[str] | None = None,
     memory_suffix: str | None = None,
+    answer_language: str | None = None,
 ) -> list[BaseMessage]:
     kb_ids = kb_ids_from_config(config)
     web_on = web_search_enabled_from_config(config)
@@ -96,10 +98,15 @@ def _prepare_messages(
     has_graph_tool = "query_knowledge_graph" in bound
     web_label = "Enabled" if web_on and has_web_tool else "Disabled"
     graph_label = "Enabled" if graph_on and has_graph_tool else "Disabled"
-    filled = system_prompt.replace("{{web_search_status}}", web_label)
+    language = answer_language or ANSWER_LANGUAGE_EN
+    filled = apply_answer_language(
+        system_prompt.replace("{{web_search_status}}", web_label),
+        language,
+    )
     parts = [filled]
     parts.append(
-        f"\n\n### System Status\nWeb Search: {web_label}\nKnowledge Graph: {graph_label}\nUser Language: 中文"
+        f"\n\n### System Status\nWeb Search: {web_label}\nKnowledge Graph: {graph_label}\n"
+        f"User Language: {language}\nALWAYS respond in {language}"
     )
     if kb_ids:
         parts.append("\n\nBound knowledge bases are selected for this turn. Search them with the tools in your list.")
@@ -142,7 +149,14 @@ def _llm_messages(
         rewrite_query=state.get("rewrite_query"),
         bound_tool_names=bound_tool_names,
         memory_suffix=memory_system_suffix_from_state(state),
+        answer_language=answer_language_from_state(state),
     )
+
+
+def _step_limit_message(language: str) -> str:
+    if language == ANSWER_LANGUAGE_EN:
+        return "Sorry, this request needs more steps. Please simplify or split the question and try again."
+    return "抱歉，处理该请求需要更多步骤，请简化问题或拆分后再试。"
 
 
 def _finalize_response(state: KnowSphereState, response: Any) -> AIMessage:
@@ -155,7 +169,7 @@ def _finalize_response(state: KnowSphereState, response: Any) -> AIMessage:
     if _are_more_steps_needed(state, response):
         return AIMessage(
             id=response.id,
-            content="抱歉，处理该请求需要更多步骤，请简化问题或拆分后再试。",
+            content=_step_limit_message(answer_language_from_state(state)),
         )
     if not getattr(response, "tool_calls", None):
         cites = citation_payload_from_source_dicts(state.get("last_sources") or [])

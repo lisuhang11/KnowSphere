@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useSessionChat, type ChatMsg } from '@/composables/useSessionChat'
 import { useChatPageResources } from '@/composables/useChatPageResources'
@@ -19,7 +20,36 @@ provideChatAttachmentPreviewDrawer()
 const referencesDrawer = provideChatReferencesDrawer()
 
 const chatStore = useChatStore()
+const route = useRoute()
+const router = useRouter()
 const scrollRef = ref<HTMLElement>()
+
+function routeSessionId(): string | null {
+  const raw = route.params.sessionId
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : null
+}
+
+watch(
+  () => [route.name, route.params.sessionId, chatStore.threads.length] as const,
+  () => {
+    if (route.name !== 'chat' && route.name !== 'chat-session') return
+    const id = routeSessionId()
+    if (id) chatStore.selectThread(id)
+    else chatStore.startDraftChat()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => chatStore.currentThreadId,
+  (id) => {
+    if (route.name !== 'chat' && route.name !== 'chat-session') return
+    if (id === routeSessionId()) return
+    if (id) void router.replace({ name: 'chat-session', params: { sessionId: id } })
+    else void router.replace({ name: 'chat' })
+  },
+)
+
 const {
   messages,
   streaming,
@@ -109,6 +139,10 @@ async function onHeaderCleared() {
   await clearMessages()
 }
 
+function onSessionDeleted() {
+  chatStore.startDraftChat()
+}
+
 async function doSend(textOverride?: string) {
   const text = (textOverride ?? input.value).trim()
   const { readyIds, fallbackFiles, readyMetas } = getReadyAttachmentPayload()
@@ -148,7 +182,7 @@ onMounted(() => {
       :messages="messages"
       :has-references-panel="hasReferencesPanel"
       @cleared="onHeaderCleared"
-      @deleted="chatStore.startDraftChat()"
+      @deleted="onSessionDeleted"
     />
 
     <div ref="scrollRef" class="chat_scroll_box" @scroll="handleScroll">

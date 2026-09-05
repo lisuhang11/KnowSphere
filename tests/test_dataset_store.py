@@ -10,6 +10,7 @@ import pytest
 from evals.datasets import (
     BUILTIN_JSON_IDS,
     delete_json_dataset,
+    dump_dataset_export,
     get_dataset_preview,
     list_datasets,
     patch_json_dataset,
@@ -91,6 +92,12 @@ def test_save_patch_preview_delete(monkeypatch, tmp_path: Path):
     assert preview["passages"][0]["pid"] == 0
     assert preview["stats"]["item_count"] == 1
 
+    exported = dump_dataset_export("my_eval_set")
+    assert exported == tmp_path / "my_eval_set.json"
+    raw = json.loads(exported.read_text(encoding="utf-8"))
+    assert raw["id"] == "my_eval_set"
+    assert raw["items"][0]["question"] == "q?"
+
     delete_json_dataset("my_eval_set")
     assert not (tmp_path / "my_eval_set.json").exists()
     with pytest.raises(FileNotFoundError):
@@ -143,6 +150,11 @@ def test_squad_article_upload_auto_id(monkeypatch, tmp_path: Path):
 
     preview = get_dataset_preview(saved["id"])
     assert preview["stats"]["noans_count"] == 1
+
+
+def test_export_unknown_dataset_raises():
+    with pytest.raises(FileNotFoundError, match="未知数据集"):
+        dump_dataset_export("definitely_missing_ds")
 
 
 def test_cannot_overwrite_shipped():

@@ -246,7 +246,7 @@ function fmtTime(v: string | null): string {
 
 /** 打开文档详情抽屉（独立路由承载，可直达/刷新） */
 function goDetail(doc: DocumentInfo) {
-  router.push(`/documents/${doc.document_id}`)
+  router.push(`/knowledge-bases/${kbId.value}/documents/${doc.document_id}`)
 }
 
 /* ---------- 内嵌图片预览（经后端鉴权代理 /documents/{id}/images/{name} 从 MinIO 读取） ---------- */

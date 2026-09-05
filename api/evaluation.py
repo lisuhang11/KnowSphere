@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from api import celery_app
@@ -13,6 +16,7 @@ from config.settings import get_current_owner, settings
 from evals.config import default_metric_layers
 from evals.datasets import (
     delete_json_dataset,
+    dump_dataset_export,
     ensure_dataset_available,
     get_dataset_contexts,
     get_dataset_preview,
@@ -175,6 +179,32 @@ def upload_dataset(req: DatasetUploadRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"success": True, "data": saved}
+
+@evaluation_router.get("/datasets/{dataset_id}/export")
+def export_dataset(dataset_id: str) -> Response:
+    """下载完整数据集 JSON（本地文件原样，在线集转成可再导入格式）。"""
+    try:
+        payload = dump_dataset_export(dataset_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    filename = f"{dataset_id}.json"
+    if isinstance(payload, Path):
+        return FileResponse(
+            payload,
+            media_type="application/json; charset=utf-8",
+            filename=filename,
+        )
+    body = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    return Response(
+        content=body.encode("utf-8"),
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 @evaluation_router.get("/datasets/{dataset_id}/contexts")
 def get_dataset_contexts_view(

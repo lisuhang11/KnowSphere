@@ -410,6 +410,53 @@ def get_dataset_preview(dataset_id: str, *, item_limit: int = _PREVIEW_ITEMS) ->
     return listing
 
 
+def _eval_dataset_to_export_dict(ds: EvalDataset, *, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "id": ds.id,
+        "passages": [{"pid": p.pid, "title": p.title, "text": p.text} for p in ds.passages],
+        "items": [],
+    }
+    extra = extra or {}
+    for key in ("description", "source", "created_at"):
+        if extra.get(key):
+            payload[key] = extra[key]
+    items: list[dict[str, Any]] = []
+    for item in ds.items:
+        row: dict[str, Any] = {
+            "qid": item.qid,
+            "question": item.question,
+            "pids": list(item.pids),
+            "answer": item.answer,
+        }
+        if item.meta:
+            row["meta"] = dict(item.meta)
+        items.append(row)
+    payload["items"] = items
+    return payload
+
+
+def dump_dataset_export(dataset_id: str) -> Path | dict[str, Any]:
+    """导出完整数据集：本地 JSON 原样返回，其余转成可再导入的 KnowSphere JSON。"""
+    ensure_dataset_available(dataset_id)
+    json_path = _json_dataset_path(dataset_id)
+    if json_path.exists():
+        return json_path
+    if dataset_id == "squad_v2":
+        from evals.datasets.squad_dev import is_squad_dev_cached, squad_dev_cache_path
+
+        if is_squad_dev_cached():
+            return squad_dev_cache_path()
+    ds = load_dataset(dataset_id)
+    try:
+        preview = get_dataset_preview(dataset_id)
+    except Exception:  # noqa: BLE001
+        preview = {}
+    return _eval_dataset_to_export_dict(
+        ds,
+        extra={k: preview.get(k) for k in ("description", "source", "created_at")},
+    )
+
+
 def list_datasets() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     _SAMPLES_ROOT.mkdir(parents=True, exist_ok=True)

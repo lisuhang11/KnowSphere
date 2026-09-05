@@ -35,6 +35,7 @@ class TurnState(TypedDict, total=False):
 
     current_query: str
     rewrite_query: str
+    answer_language: str
     intent: str
     history_pairs: list[dict[str, str]]
     kb_selected: bool

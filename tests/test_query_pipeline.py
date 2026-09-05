@@ -177,6 +177,7 @@ def test_prepare_context_sets_defaults():
     assert out["current_query"] == "你好"
     assert out["kb_selected"] is True
     assert out["rewrite_query"] == "你好"
+    assert out["answer_language"] == "中文"
     assert out["image_description"] == ""
     assert out["system_prompt_override"] == ""
     assert out["last_sources"] == []

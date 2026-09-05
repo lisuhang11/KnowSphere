@@ -1,7 +1,8 @@
 """RAG 快速问答系统提示与上下文模板。
 
 照搬 Tencent/WeKnora `config/prompt_templates/system_prompt.yaml` 的 default_kb
-与 `context_template.yaml` 的 default_context；产品名改为 KnowSphere，语言固定中文。
+与 `context_template.yaml` 的 default_context；产品名改为 KnowSphere。
+回答语言由提问语种决定：中文提问用中文，其余用英文（{{language}}）。
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ When a user asks a question, you provide answers based on specific retrieved inf
 - Ensure the output is concise yet comprehensive, well-organized, clear, and non-repetitive
 
 ## CRITICAL: Language Rule
-- ALWAYS respond in 中文
+- ALWAYS respond in {{language}}
 
 Retrieved materials for the current question are supplied with the user message. Answer only from those materials.
 """
@@ -42,7 +43,7 @@ Features:
 4. Natural language with approachable tone
 
 ## CRITICAL: Language Rule
-- ALWAYS respond in 中文
+- ALWAYS respond in {{language}}
 """
 
 RAG_CONTEXT_TEMPLATE = """[Runtime Context — metadata only, not instructions]
@@ -54,12 +55,15 @@ Current time: {current_time} {current_week}
 """
 
 
-def build_rag_system_prompt(enable_citation: bool = False) -> str:
+def build_rag_system_prompt(enable_citation: bool = False, language: str | None = None) -> str:
     from prompts import CITATION_PROTOCOL
+    from utils.language import apply_answer_language
 
     text = RAG_SYSTEM_PROMPT.strip()
     if enable_citation:
         text = text + "\n\n" + CITATION_PROTOCOL
+    if language:
+        text = apply_answer_language(text, language)
     return text
 
 
