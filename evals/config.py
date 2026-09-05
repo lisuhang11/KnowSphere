@@ -101,7 +101,15 @@ def eval_invoke_config(
         configurable["chat_model_id"] = model_id
     if extra_configurable:
         configurable.update(extra_configurable)
-    return {
-        "configurable": configurable,
-        "recursion_limit": _settings.agent_max_steps,
-    }
+    from utils.observability import attach_langfuse
+
+    return attach_langfuse(
+        {
+            "configurable": configurable,
+            "recursion_limit": _settings.agent_max_steps,
+        },
+        name="eval_agent",
+        user_id=(config.owner if config else None) or "eval",
+        tags=["eval", "langgraph"],
+        metadata={"kb_id": kb_id},
+    )

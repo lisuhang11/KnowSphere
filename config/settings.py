@@ -164,4 +164,33 @@ class Settings(BaseSettings):
         validation_alias="MASTER_KEY",
     )
 
+    # Langfuse（对话 / 摄取 tracing）。未配公钥+私钥时 SDK 不发送。
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_base_url: str = "https://cloud.langfuse.com"
+    langfuse_tracing_enabled: bool = True
+
+
+def _sync_observability_env() -> None:
+    """把 Settings 写回 os.environ，供 Langfuse SDK 读取；并关掉 LangSmith 自动上报。"""
+    import os
+
+    os.environ["LANGSMITH_TRACING"] = "false"
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
+    if settings.langfuse_public_key:
+        os.environ["LANGFUSE_PUBLIC_KEY"] = settings.langfuse_public_key
+    if settings.langfuse_secret_key:
+        os.environ["LANGFUSE_SECRET_KEY"] = settings.langfuse_secret_key
+    if settings.langfuse_base_url:
+        os.environ["LANGFUSE_BASE_URL"] = settings.langfuse_base_url
+        os.environ.setdefault("LANGFUSE_HOST", settings.langfuse_base_url)
+    enabled = bool(
+        settings.langfuse_tracing_enabled
+        and settings.langfuse_public_key
+        and settings.langfuse_secret_key
+    )
+    os.environ["LANGFUSE_TRACING_ENABLED"] = "true" if enabled else "false"
+
+
 settings = Settings()
+_sync_observability_env()

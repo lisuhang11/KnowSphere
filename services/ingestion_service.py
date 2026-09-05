@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langsmith import traceable
 
 from chunkers import embedding_content, split_parent_child_with_diagnostics, split_with_diagnostics
 from chunkers.legacy_splitter import CHINESE_SEPARATORS
@@ -17,6 +16,7 @@ from ingestion.embed_batch import embed_documents_batched
 from models import create_embeddings
 from services.errors import BadRequestError, NotFoundError
 from stores.facade import ChunkStore
+from utils.observability import observe
 
 def resolve_chunk_config(kb: dict, process_config: dict | None) -> dict[str, str | int | bool]:
     """合并知识库默认与文档级覆盖（文档优先）。"""
@@ -174,7 +174,7 @@ class IngestionService:
             raise NotFoundError(f"知识库不存在: {kb_id}")
         return kb
 
-    @traceable(name="ingest_file", run_type="chain")
+    @observe(name="ingest_file")
     def ingest_file(
         self,
         path: str,
@@ -223,7 +223,7 @@ class IngestionService:
             **extra,
         }
 
-    @traceable(name="reparse_document", run_type="chain")
+    @observe(name="reparse_document")
     def reparse_document(
         self,
         path: str,

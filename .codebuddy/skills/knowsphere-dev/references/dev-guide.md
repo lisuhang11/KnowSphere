@@ -70,6 +70,8 @@
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | SILICONFLOW_API_KEY | - | chat+embedding 全走 SiliconFlow |
+| LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY | - | 可选；配齐后对话与摄取写入 Langfuse |
+| LANGFUSE_BASE_URL | https://cloud.langfuse.com | Cloud 或自托管（如 http://localhost:3000） |
 | CHAT_MODEL | Qwen/Qwen3-32B | 对话模型 |
 | EMBEDDING_MODEL | BAAI/bge-m3 | 向量模型（1024 维） |
 | CHUNK_SIZE / CHUNK_OVERLAP | 600 / 90 | 切块参数 |

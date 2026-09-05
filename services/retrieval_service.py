@@ -257,7 +257,7 @@ class RetrievalService:
             llm = create_chat_model(
                 **chat_model_kwargs_from_config(config, _MQ_LLM_KWARGS),
             ).with_structured_output(_SubQueries)
-            out = llm.invoke(_MQ_PROMPT.format(query=query, n=n), config={"callbacks": []})
+            out = llm.invoke(_MQ_PROMPT.format(query=query, n=n), config=config)
             seen = {query.strip().lower()}
             uniq = []
             for q in (getattr(out, "queries", None) or []):

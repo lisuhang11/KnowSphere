@@ -110,7 +110,7 @@ def _invoke_text_query_understand(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        config={"callbacks": []},
+        config=config,
     )
 
 
@@ -139,7 +139,7 @@ def _invoke_multimodal_query_understand(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
-        config={"callbacks": []},
+        config=config,
     )
     return parse_query_understand_json(message_text(getattr(resp, "content", "")))
 

@@ -36,7 +36,7 @@ bash .codebuddy/skills/knowsphere-dev/scripts/start_all.sh
 ### 1. 环境准备（首次）
 
 ```bash
-cp .env.example .env        # 填入 SILICONFLOW_API_KEY / LANGSMITH_API_KEY
+cp .env.example .env        # 填入 SILICONFLOW_API_KEY；可选 LANGFUSE_*
 uv sync                     # 若需 pytest/ruff 等开发工具再 --extra dev
 cd frontend && npm install
 ```

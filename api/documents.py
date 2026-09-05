@@ -6,7 +6,6 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, Response
-from langsmith import traceable
 
 from api import celery_app
 from api.deps import DocumentService, get_document_service
@@ -16,6 +15,7 @@ from api.tasks import process_document_task, reprocess_document_task
 from ingestion.parser import ParserError
 from ingestion.parser.image_store import get_image_store
 from utils.object_store import inline_content_disposition, read_document_bytes, read_document_text
+from utils.observability import observe
 
 documents_router = APIRouter(tags=["documents"])
 
@@ -72,7 +72,7 @@ def _enqueue_upload(
 
 
 @documents_router.post("/knowledge-bases/{kb_id}/documents")
-@traceable(name="upload_endpoint", run_type="chain")
+@observe(name="upload_endpoint")
 async def upload_document(
     kb_id: int,
     file: UploadFile = File(...),
@@ -94,7 +94,7 @@ async def upload_document(
 
 
 @documents_router.post("/upload", include_in_schema=False)
-@traceable(name="upload_endpoint_legacy", run_type="chain")
+@observe(name="upload_endpoint_legacy")
 async def upload_document_legacy(
     file: UploadFile = File(...),
     kb_id: int = Form(..., description="目标知识库 ID"),

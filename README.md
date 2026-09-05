@@ -1,14 +1,14 @@
 # KnowSphere
 
-基于 **LangGraph + LangSmith** 的 BYOD（Bring Your Own Document）知识问答助手。
+基于 **LangGraph + Langfuse** 的 BYOD（Bring Your Own Document）知识问答助手。
 
-用户上传 PDF / Markdown / TXT 文档 → 自动切块向量化入库 → 单智能体 ReAct 检索回答（带来源引用）。全链路 LangSmith tracing / 监控 / 数据集评测。
+用户上传 PDF / Markdown / TXT 文档 → 自动切块向量化入库 → 单智能体 ReAct 检索回答（带来源引用）。全链路 Langfuse tracing / 监控。
 
 ## 架构
 
 ```
 用户上传 ──► FastAPI (POST /upload) ──► 摄取: 切块(600字/15%) → bge-m3 向量化 → pgvector
-                                                      │ 全程 @traceable
+                                                      │ 全程 Langfuse @observe / CallbackHandler
 用户提问 ──► FastAPI /sessions/* (api/sessions.py) ──► LangGraph graph（进程内运行）──► doc_retrieval(混合检索+来源)
 评测    ──► python -m evals.run_eval ──► HotpotQA 抽样 + RAGAS 四指标（SiliconFlow judge）
 ```
@@ -40,7 +40,7 @@ KnowSphere/
 
 ```bash
 uv sync                      # 或 pip install -e ".[dev]"
-cp .env.example .env         # 填入 SILICONFLOW_API_KEY / LANGSMITH_API_KEY
+cp .env.example .env         # 填入 SILICONFLOW_API_KEY；可选 LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY
 ```
 
 模型默认走 SiliconFlow：chat `Qwen/Qwen3.5-35B-A3B`、embedding `BAAI/bge-m3`（模型 ID 可在 `.env` 覆盖，以 SiliconFlow 控制台为准）。
@@ -118,6 +118,16 @@ python -m evals.run_bench --dataset squad_v2 --limit 200
 - 指标：Overall EM/F1、HasAns EM/F1、NoAns Acc、Span Hit（gold span 是否出现在自由回答中）、检索 recall
 - 评测使用与产品相同的 WeKnora 风格系统提示词；证据不足时要求拒答（如「未找到相关信息」），不强制英文 token `unanswerable`
 - 也可在前端「评测」页选择 `squad_normans` / `squad_v2` 走 rag_bench
+
+## Langfuse 观测
+
+对话（LangGraph）和文档摄取会写入 [Langfuse](https://langfuse.com) traces。未配置密钥时自动关闭，不影响业务。
+
+1. 在 [Langfuse Cloud](https://cloud.langfuse.com) 建项目，或[自托管](https://langfuse.com/self-hosting)（官方 `docker compose up` 后 UI 在 `http://localhost:3000`）。
+2. 把 `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` 写入 `.env`。
+3. 重启 API 与 Celery worker。聊天按会话聚合（`session_id` = 会话 UUID），摄取函数名为 `ingest_file` / `reparse_document`。
+
+启动时会关闭 LangSmith 自动 tracing（`LANGSMITH_TRACING=false`），旧 `.env` 里的 `LANGSMITH_*` 可删掉。
 
 ## 关键设计说明
 

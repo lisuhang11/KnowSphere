@@ -12,6 +12,7 @@ from celery import shared_task
 
 from config.settings import settings
 from services.deps import get_document_task_service
+from utils.observability import flush_langfuse
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,8 @@ def process_document_task(
             raise self.retry(exc=exc)
         tasks.mark_failed(document_id, owner, str(exc))
         return {"document_id": document_id, "status": "failed", "error": str(exc)}
+    finally:
+        flush_langfuse()
 
 @shared_task(
     bind=True,
@@ -80,6 +83,8 @@ def reprocess_document_task(
             raise self.retry(exc=exc)
         tasks.mark_failed(document_id, owner, str(exc))
         return {"document_id": document_id, "status": "failed", "error": str(exc)}
+    finally:
+        flush_langfuse()
 
 @shared_task(
     bind=True,

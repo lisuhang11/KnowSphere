@@ -38,3 +38,6 @@ if __name__ == "__main__":
     if len(sys.argv) == 4 and sys.argv[2] == "--kb-id":
         kb_id = int(sys.argv[3])
     print(ingest_file(sys.argv[1], kb_id=kb_id))
+    from utils.observability import flush_langfuse
+
+    flush_langfuse()

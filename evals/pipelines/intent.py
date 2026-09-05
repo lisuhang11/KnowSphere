@@ -50,10 +50,19 @@ def run_intent_item(item: QAPair, *, chat_model_id: str | None = None) -> Sample
     }
 
     try:
+        from utils.observability import attach_langfuse
+
+        invoke_cfg = attach_langfuse(
+            {"configurable": {"chat_model_id": chat_model_id}} if chat_model_id else {},
+            name="eval_intent",
+            user_id="eval",
+            session_id=f"eval-intent-{item.qid}",
+            tags=["eval", "intent"],
+        )
         out = call_with_tpm_retry(
             lambda: query_understand(
                 state,
-                {"configurable": {"chat_model_id": chat_model_id}} if chat_model_id else {},
+                invoke_cfg,
             )
         )
         pred = str(out.get("intent") or "").strip()

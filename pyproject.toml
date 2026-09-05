@@ -1,7 +1,7 @@
 [project]
 name = "knowsphere"
 version = "0.1.0"
-description = "KnowSphere: BYOD 文档知识问答助手（LangGraph + LangSmith）"
+description = "KnowSphere: BYOD 文档知识问答助手（LangGraph + Langfuse）"
 requires-python = ">=3.11"
 dependencies = [
     "langgraph>=1.0",
@@ -10,7 +10,7 @@ dependencies = [
     "langchain-openai>=0.3",
     "langchain-community>=0.3,<0.4",  # ragas 0.2 依赖 vertexai 模块，community 0.4 起被移除
     "langchain-text-splitters>=0.3",
-    "langsmith>=0.3",
+    "langfuse>=3.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "python-multipart>=0.0.9",
@@ -100,5 +100,7 @@ target-version = "py311"
 "tools/skills/execute_skill_script.py" = ["BLE001", "S110"]
 # 评测逐题兜底：单题失败跳过不中断整轮
 "evals/run_eval.py" = ["BLE001"]
+# Langfuse SDK 缺失/未配置时降级，不阻断业务
+"utils/observability.py" = ["BLE001"]
 # 技能沙箱脚本：尽力抽取，pypdf 缺失时走 stdlib 回退
 "skills/pdf-extract/scripts/extract_text.py" = ["BLE001", "S110"]

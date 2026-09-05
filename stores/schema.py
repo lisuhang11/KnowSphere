@@ -109,7 +109,7 @@ def init_schema(dsn: str) -> None:
         # 经 /documents/{id}/images/... 鉴权代理读取（Q5/Q12）。
         # status 解析状态机（对齐  parse_status）：pending → processing →
         # completed / failed，另加 cancelled（用户取消，保留已写数据可 reparse）。
-        # stage 为当前处理阶段名（低成本诊断，替代砍掉的 Langfuse span 追踪）。
+        # stage 为当前处理阶段名（上传进度/列表诊断）；完整摄取与对话链路见 Langfuse traces。
         # stored_name：MinIO storage_key（{owner}/{kb_id}/{document_id}/{file_name}）
         # 历史本地文件为 {document_id}_{file_name}，无 `/`；存量数据无此列时回退 file_name。
         conn.execute(

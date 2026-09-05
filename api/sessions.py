@@ -45,6 +45,7 @@ from utils.file_artifacts import (
 from utils.message_content import message_attachments, message_images, message_query_text
 from utils.model_credentials import ensure_knowledgeqa_model_ready
 from utils.model_store import ModelStore
+from utils.observability import attach_langfuse
 from utils.vector_store import ChunkStore
 
 logger = logging.getLogger(__name__)
@@ -1039,10 +1040,21 @@ async def stream_session_run(session_id: str, body: SessionStreamRequest) -> Str
     pinned = [n for n in pinned if n in set(bound_skills)]
     if pinned:
         configurable["pinned_skill_names"] = pinned
-    config = {
-        "configurable": configurable,
-        "recursion_limit": resolve_max_iterations(agent_id),
-    }
+    config = attach_langfuse(
+        {
+            "configurable": configurable,
+            "recursion_limit": resolve_max_iterations(agent_id),
+        },
+        name="session_chat",
+        user_id=str(configurable.get("owner") or settings.default_owner),
+        session_id=sid_str,
+        tags=["chat", "langgraph"],
+        metadata={
+            "agent_id": agent_id,
+            "kb_ids": kb_ids,
+            "web_search_enabled": web_on,
+        },
+    )
 
     preview: dict[str, Any] = {
         "content": query_text,

@@ -52,7 +52,7 @@ def _summarize_archive(archive_text: str, previous_summary: str, config: Runnabl
             {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
             {"role": "user", "content": build_summary_user_prompt(archive_text, previous_summary)},
         ],
-        config={"callbacks": []},
+        config=config,
     )
     text = message_text(getattr(resp, "content", ""))
     if not text:

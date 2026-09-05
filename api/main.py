@@ -48,6 +48,9 @@ async def lifespan(app: FastAPI):
     await init_agent_runtime()
     yield
     await close_agent_runtime()
+    from utils.observability import flush_langfuse
+
+    flush_langfuse()
 
 app = FastAPI(
     title="KnowSphere API",
