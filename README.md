@@ -127,8 +127,6 @@ python -m evals.run_bench --dataset squad_v2 --limit 200
 2. 把 `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` 写入 `.env`。
 3. 重启 API 与 Celery worker。聊天按会话聚合（`session_id` = 会话 UUID），摄取函数名为 `ingest_file` / `reparse_document`。
 
-启动时会关闭 LangSmith 自动 tracing（`LANGSMITH_TRACING=false`），旧 `.env` 里的 `LANGSMITH_*` 可删掉。
-
 ## 关键设计说明
 
 - **混合检索**：向量余弦 + pg_trgm 词法相似度加权（`HYBRID_LEX_WEIGHT`）。中文场景 pg_trgm 免装分词扩展；数据量大后可换 pg_jieba 或 Qdrant 稀疏向量。

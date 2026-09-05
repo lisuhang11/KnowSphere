@@ -1,7 +1,7 @@
 """Langfuse 观测：开关、@observe、LangGraph CallbackHandler。
 
 未配置 LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY 时全部 no-op，
-不影响对话与摄取。启动时关闭 LangSmith 自动 tracing，避免旧 .env 继续上报。
+不影响对话与摄取。
 """
 
 from __future__ import annotations

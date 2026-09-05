@@ -9,6 +9,8 @@ from utils.model_credentials import PLACEHOLDER_KEYS, model_has_usable_key, vali
 
 def test_placeholder_keys():
     assert "sk-xxx" in PLACEHOLDER_KEYS
+    assert "pk-lf-xxx" in PLACEHOLDER_KEYS
+    assert "sk-lf-xxx" in PLACEHOLDER_KEYS
     assert "EMPTY" in PLACEHOLDER_KEYS
 
 def test_validate_bare_name_without_env(monkeypatch):

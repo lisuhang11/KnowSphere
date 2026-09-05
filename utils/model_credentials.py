@@ -8,7 +8,7 @@ from config.settings import settings
 from models.providers import get_provider, runtime_provider
 from utils.model_store import ModelStore, is_model_ref
 
-PLACEHOLDER_KEYS = frozenset({"", "sk-xxx", "lsv2-xxx", "EMPTY"})
+PLACEHOLDER_KEYS = frozenset({"", "sk-xxx", "pk-lf-xxx", "sk-lf-xxx", "EMPTY"})
 
 
 def _env_api_key_ok() -> bool:

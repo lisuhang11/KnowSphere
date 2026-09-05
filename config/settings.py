@@ -172,11 +172,9 @@ class Settings(BaseSettings):
 
 
 def _sync_observability_env() -> None:
-    """把 Settings 写回 os.environ，供 Langfuse SDK 读取；并关掉 LangSmith 自动上报。"""
+    """把 Settings 写回 os.environ，供 Langfuse SDK 读取。"""
     import os
 
-    os.environ["LANGSMITH_TRACING"] = "false"
-    os.environ["LANGCHAIN_TRACING_V2"] = "false"
     if settings.langfuse_public_key:
         os.environ["LANGFUSE_PUBLIC_KEY"] = settings.langfuse_public_key
     if settings.langfuse_secret_key:
