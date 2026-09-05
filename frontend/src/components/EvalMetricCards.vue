@@ -40,14 +40,22 @@ const showCards = computed(() => hasMetricCards(props.summary))
   </div>
   <div v-else-if="summary?.phase === 'agent'" class="metric-placeholder">Agent 跑题中，完成后展示指标…</div>
   <div v-else-if="summary?.phase === 'ragas'" class="metric-placeholder ragas-active">
-    <span class="ragas-pulse" /> RAGAS 批量打分中，请稍候…
+    <span class="ragas-pulse" />
+    RAGAS 离线打分中
+    <template v-if="typeof summary.ragas_total === 'number'">
+      （第 {{ Number(summary.ragas_finished || 0) + 1 }}/{{ summary.ragas_total }} 题）
+    </template>
+  </div>
+  <div v-else-if="summary?.phase === 'collect_done'" class="metric-placeholder ragas-ready">
+    已收集 RAG 轨迹（question / 检索片段 / 回答 / 标准答案），可以开始离线 RAGAS 打分。
+    <span class="hint">点「RAGAS 打分」选择评分模型。失败题不会送进 RAGAS；打完后这里会显示忠实度、答案相关性、上下文精确度、上下文召回。</span>
   </div>
   <div
     v-else-if="summary?.phase === 'done' && summary?.sample_count && !summary?.retrieval_metrics && !summary?.squad_metrics"
     class="metric-placeholder ragas-failed"
   >
     Agent 已作答，但 RAGAS 分数未写出（打分未完成或评分模型 429）。
-    <span class="hint">正常完成时，这里会显示忠实度、答案相关性、上下文精确度、上下文召回四张卡片。</span>
+    <span class="hint">可重新选择评分模型做离线打分。正常完成时，这里会显示忠实度、答案相关性、上下文精确度、上下文召回四张卡片。</span>
   </div>
   <pre v-else-if="summary" class="json-fallback">{{ JSON.stringify(summary, null, 2) }}</pre>
   <div v-else class="metric-placeholder">暂无指标</div>
@@ -135,6 +143,14 @@ const showCards = computed(() => hasMetricCards(props.summary))
   gap: 8px;
   color: var(--td-warning-color, #e37318);
   background: color-mix(in srgb, var(--td-warning-color-1, #fff1e9) 70%, transparent);
+}
+
+.metric-placeholder.ragas-ready {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--td-brand-color, #0052d9);
+  background: color-mix(in srgb, var(--td-brand-color-1, #ecf2fe) 50%, transparent);
 }
 
 .metric-placeholder .hint {

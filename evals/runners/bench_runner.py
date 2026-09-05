@@ -63,6 +63,7 @@ def run_bench(
     on_sample: Callable[[dict], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     on_kb_created: Callable[[int, str], None] | None = None,
+    qids: list[int] | None = None,
 ) -> tuple[list[SampleResult], dict]:
     """执行 rag_bench，返回 (逐题结果, 汇总指标)。"""
     if on_progress:
@@ -70,8 +71,14 @@ def run_bench(
     check_stop(should_stop)
 
     dataset = load_dataset(config.dataset_id, sample_limit=config.sample_limit)
+    items = list(dataset.items)
+    if qids is not None:
+        want = {int(q) for q in qids}
+        items = [item for item in items if int(item.qid) in want]
+        if not items:
+            raise ValueError("没有匹配的失败题可重试")
     owner = config.owner or "eval"
-    total = len(dataset.items)
+    total = len(items)
     n_passages = len(dataset.passages)
 
     store = ChunkStore()
@@ -174,7 +181,7 @@ def run_bench(
 
             workers = max(1, min(config.workers, total or 1))
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = [pool.submit(_one, item) for item in dataset.items]
+                futures = [pool.submit(_one, item) for item in items]
                 try:
                     for fut in as_completed(futures):
                         fut.result()

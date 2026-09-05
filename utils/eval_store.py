@@ -45,6 +45,9 @@ def ensure_eval_tables() -> None:
             "ALTER TABLE ks_evaluation_tasks ADD COLUMN IF NOT EXISTS celery_task_id TEXT"
         )
         conn.execute(
+            "ALTER TABLE ks_evaluation_samples ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::jsonb"
+        )
+        conn.execute(
             """
             CREATE TABLE IF NOT EXISTS ks_evaluation_samples (
                 id              BIGSERIAL PRIMARY KEY,
@@ -58,6 +61,7 @@ def ensure_eval_tables() -> None:
                 metrics         JSONB,
                 latency_ms      INT,
                 error           TEXT,
+                details         JSONB NOT NULL DEFAULT '{}'::jsonb,
                 UNIQUE (task_id, qid)
             )
             """
@@ -117,6 +121,7 @@ class EvalStore():
         err_msg: str | None = None,
         eval_kb_id: int | None = None,
         celery_task_id: str | None = None,
+        config_snapshot: dict | None = None,
         started: bool = False,
         finished_at: bool = False,
         only_if_active: bool = False,
@@ -147,6 +152,9 @@ class EvalStore():
         if celery_task_id is not None:
             sets.append("celery_task_id = %s")
             params.append(celery_task_id)
+        if config_snapshot is not None:
+            sets.append("config_snapshot = %s")
+            params.append(Jsonb(config_snapshot))
         if started:
             sets.append("started_at = %s")
             params.append(datetime.now(timezone.utc))
@@ -199,8 +207,8 @@ class EvalStore():
                 """
                 INSERT INTO ks_evaluation_samples
                     (task_id, qid, question, reference, response,
-                     retrieval_ids, retrieval_gt, metrics, latency_ms, error)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     retrieval_ids, retrieval_gt, metrics, latency_ms, error, details)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (task_id, qid) DO UPDATE SET
                     question = EXCLUDED.question,
                     reference = EXCLUDED.reference,
@@ -209,7 +217,11 @@ class EvalStore():
                     retrieval_gt = EXCLUDED.retrieval_gt,
                     metrics = EXCLUDED.metrics,
                     latency_ms = EXCLUDED.latency_ms,
-                    error = EXCLUDED.error
+                    error = EXCLUDED.error,
+                    details = CASE
+                        WHEN EXCLUDED.details = '{}'::jsonb THEN ks_evaluation_samples.details
+                        ELSE EXCLUDED.details
+                    END
                 """,
                 (
                     task_id,
@@ -222,6 +234,7 @@ class EvalStore():
                     Jsonb(row.get("metrics") or {}),
                     row.get("latency_ms"),
                     row.get("error"),
+                    Jsonb(row.get("details") or {}),
                 ),
             )
             conn.commit()
@@ -231,7 +244,7 @@ class EvalStore():
             rows = conn.execute(
                 """
                 SELECT qid, question, reference, response, retrieval_ids, retrieval_gt,
-                       metrics, latency_ms, error
+                       metrics, latency_ms, error, details
                 FROM ks_evaluation_samples
                 WHERE task_id = %s
                 ORDER BY qid
@@ -250,6 +263,7 @@ class EvalStore():
                 "metrics": r[6],
                 "latency_ms": r[7],
                 "error": r[8],
+                "details": r[9] if len(r) > 9 and isinstance(r[9], dict) else (r[9] or {}),
             }
             for r in rows
         ]

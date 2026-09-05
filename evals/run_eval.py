@@ -19,13 +19,17 @@ def main() -> None:
     def _prog(done: int, total: int) -> None:
         print(f"[{done}/{total}] 跑题进度")
 
-    summary, detail, _samples = run_ragas_eval(
+    _, _, samples = run_ragas_eval(
         n=args.n,
         seed=args.seed,
         split=args.split,
         workers=args.workers,
         on_progress=_prog,
     )
+    from evals.runners.ragas_runner import _run_ragas_batch, samples_to_ragas_rows
+
+    print(f"已收集 {len(samples)} 题，开始离线 RAGAS…")
+    summary, detail, _ = _run_ragas_batch(samples_to_ragas_rows(samples))
     print("\n===== RAGAS 汇总（均值）=====")
     for k, v in summary.items():
         print(f"  {k}: {v}")

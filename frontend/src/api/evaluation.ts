@@ -101,6 +101,10 @@ export interface EvalSample {
   metrics: Record<string, unknown> | null
   latency_ms: number | null
   error: string | null
+  details?: {
+    retrieved_contexts?: string[]
+    ragas_error?: string
+  } | null
 }
 
 export interface CreateEvalPayload {
@@ -184,6 +188,22 @@ export async function cancelEvalTask(taskId: string): Promise<EvalTask> {
 export async function produceEvalResults(taskId: string): Promise<EvalTask> {
   const res = await request.post<{ success: boolean; data: EvalTask }>(
     `/evaluation/${encodeURIComponent(taskId)}/results`,
+  )
+  return unwrap(res)
+}
+
+export async function retryEvalFailed(taskId: string, qids?: number[]): Promise<EvalTask> {
+  const res = await request.post<{ success: boolean; data: EvalTask }>(
+    `/evaluation/${encodeURIComponent(taskId)}/retry`,
+    qids?.length ? { qids } : {},
+  )
+  return unwrap(res)
+}
+
+export async function startRagasScore(taskId: string, ragasModelId: string): Promise<EvalTask> {
+  const res = await request.post<{ success: boolean; data: EvalTask }>(
+    `/evaluation/${encodeURIComponent(taskId)}/ragas`,
+    { ragas_model_id: ragasModelId },
   )
   return unwrap(res)
 }

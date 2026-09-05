@@ -24,10 +24,17 @@ def run_intent_bench(
     on_progress: Callable[[int, int, dict], None] | None = None,
     on_sample: Callable[[dict], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    qids: list[int] | None = None,
 ) -> tuple[list[SampleResult], dict]:
     """执行意图识别评测，返回 (逐题结果, 汇总指标)。"""
     dataset = load_dataset(config.dataset_id, sample_limit=config.sample_limit)
-    missing = [it.qid for it in dataset.items if not (it.meta or {}).get("intent_gt")]
+    items = list(dataset.items)
+    if qids is not None:
+        want = {int(q) for q in qids}
+        items = [item for item in items if int(item.qid) in want]
+        if not items:
+            raise ValueError("没有匹配的失败题可重试")
+    missing = [it.qid for it in items if not (it.meta or {}).get("intent_gt")]
     if missing:
         raise ValueError(
             f"intent_bench 要求每题含 meta.intent_gt，缺失 qid: {missing[:10]}"
@@ -41,7 +48,7 @@ def run_intent_bench(
 
     with apply_config_overrides(overrides):
         set_current_owner(owner)
-        total = len(dataset.items)
+        total = len(items)
         if on_progress:
             on_progress(0, total, {})
         done = 0
@@ -65,7 +72,7 @@ def run_intent_bench(
 
         workers = max(1, min(config.workers, total or 1))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [pool.submit(_one, item) for item in dataset.items]
+            futures = [pool.submit(_one, item) for item in items]
             try:
                 for fut in as_completed(futures):
                     fut.result()

@@ -214,28 +214,11 @@ def parse_temporary_attachment_task(self, attachment_id: str, session_id: str) -
 
     return {"attachment_id": attachment_id, "status": "ready"}
 
-@shared_task(
-    bind=True,
-    name="api.tasks.run_evaluation_task",
-    max_retries=0,
-    acks_late=True,
-)
-def run_evaluation_task(self, task_id: str) -> dict:
-    """异步执行评测任务（rag_bench 或 rag_quality）。"""
-    from evals.runners.bench_runner import results_to_sample_rows, run_bench
-    from evals.runners.ragas_runner import run_ragas_eval
+def _eval_config_from_task(task: dict) -> "EvalConfig":
     from evals.schemas import EvalConfig
-    from utils.eval_store import EvalStore
 
-    store = EvalStore()
-    task = store.get_task(task_id)
-    if not task:
-        return {"task_id": task_id, "status": "missing"}
-    if task["status"] == "cancelled":
-        return {"task_id": task_id, "status": "cancelled"}
-
-    snap = task["config_snapshot"]
-    config = EvalConfig(
+    snap = task["config_snapshot"] or {}
+    return EvalConfig(
         dataset_id=task["dataset_id"],
         suite=snap.get("suite", task["suite"]),
         pipeline_profile=snap.get("pipeline_profile", task["pipeline_profile"]),
@@ -250,6 +233,28 @@ def run_evaluation_task(self, task_id: str) -> dict:
         workers=snap.get("workers") or 4,
         owner=task["owner"],
     )
+
+
+@shared_task(
+    bind=True,
+    name="api.tasks.run_evaluation_task",
+    max_retries=0,
+    acks_late=True,
+)
+def run_evaluation_task(self, task_id: str) -> dict:
+    """异步执行评测任务（rag_bench 或 rag_quality）。"""
+    from evals.runners.bench_runner import results_to_sample_rows, run_bench
+    from evals.runners.ragas_runner import run_ragas_eval
+    from utils.eval_store import EvalStore
+
+    store = EvalStore()
+    task = store.get_task(task_id)
+    if not task:
+        return {"task_id": task_id, "status": "missing"}
+    if task["status"] == "cancelled":
+        return {"task_id": task_id, "status": "cancelled"}
+
+    config = _eval_config_from_task(task)
 
     store.update_task(task_id, status="running", started=True, only_if_active=True)
     task = store.get_task(task_id)
@@ -398,7 +403,7 @@ def run_evaluation_task(self, task_id: str) -> dict:
                 )
 
             if config.dataset_id == "hotpot":
-                summary, _detail, samples = run_ragas_eval(
+                _summary, _detail, samples = run_ragas_eval(
                     n=limit,
                     workers=config.workers,
                     chat_model_id=config.chat_model_id,
@@ -412,7 +417,7 @@ def run_evaluation_task(self, task_id: str) -> dict:
             else:
                 from evals.runners.ragas_runner import run_ragas_eval_dataset
 
-                summary, _detail, samples = run_ragas_eval_dataset(
+                _summary, _detail, samples = run_ragas_eval_dataset(
                     config,
                     on_progress=_prog,
                     on_sample=_on_sample,
@@ -422,22 +427,23 @@ def run_evaluation_task(self, task_id: str) -> dict:
                 )
             for row in samples:
                 store.upsert_sample(task_id, row)
-            ragas_error = None
-            if not summary:
-                ragas_error = "RAGAS 未写出有效分数（评分模型可能 429/TPM 限流，或返回了空分）"
+            from evals.runners.ragas_runner import samples_to_ragas_rows
+
+            scorable = samples_to_ragas_rows(samples)
             store.update_task(
                 task_id,
                 status="success",
                 metric_summary={
-                    "phase": "done",
+                    "phase": "collect_done",
                     "result_ready": True,
-                    "partial": False,
+                    "partial": len(scorable) < len(samples),
+                    "ready_for_ragas": True,
                     "planned_total": len(samples),
-                    "ragas_metrics": summary,
-                    "ragas_error": ragas_error,
-                    "sample_count": len(samples),
+                    "sample_count": len(scorable),
+                    "error_count": max(0, len(samples) - len(scorable)),
                     "agent_finished": len(samples),
                     "agent_total": len(samples),
+                    "ragas_pending": len(scorable),
                 },
                 finished=len(samples),
                 total=len(samples),
@@ -508,7 +514,9 @@ def run_evaluation_task(self, task_id: str) -> dict:
             summary = dict(finalized.get("metric_summary") or {})
             summary["run_error"] = str(exc)[:800]
             if config.suite == "rag_quality":
-                summary["ragas_error"] = str(exc)[:800]
+                summary["phase"] = "collect_done"
+                summary["ready_for_ragas"] = True
+                summary["ragas_pending"] = int(summary.get("sample_count") or 0)
             store.update_task(task_id, metric_summary=summary, only_if_active=False)
             return {"task_id": task_id, "status": "success", "summary": summary, "error": str(exc)}
         except (NoEvalSamples, FileNotFoundError):
@@ -521,3 +529,369 @@ def run_evaluation_task(self, task_id: str) -> dict:
             only_if_active=True,
         )
         return {"task_id": task_id, "status": "failed", "error": str(exc)}
+
+
+@shared_task(
+    bind=True,
+    name="api.tasks.run_ragas_score_task",
+    max_retries=0,
+    acks_late=True,
+)
+def run_ragas_score_task(self, task_id: str, ragas_model_id: str | None = None) -> dict:
+    """对已收集的 RAG 轨迹做离线 RAGAS 打分。"""
+    from evals.cancel import EvalCancelled
+    from evals.finalize import NoEvalSamples, finalize_task_results
+    from evals.runners.ragas_runner import _run_ragas_batch, samples_to_ragas_rows
+    from utils.eval_store import EvalStore
+
+    store = EvalStore()
+    task = store.get_task(task_id)
+    if not task:
+        return {"task_id": task_id, "status": "missing"}
+    if task["status"] == "cancelled":
+        return {"task_id": task_id, "status": "cancelled"}
+
+    samples = store.list_all_samples(task_id)
+    rows = samples_to_ragas_rows(samples)
+    if not rows:
+        store.update_task(
+            task_id,
+            status="success",
+            metric_summary={
+                **(task.get("metric_summary") or {}),
+                "phase": "collect_done",
+                "ready_for_ragas": True,
+                "ragas_error": "没有可打分的题目（需要 Agent 成功作答）",
+            },
+            finished_at=True,
+            only_if_active=False,
+        )
+        return {"task_id": task_id, "status": "success"}
+
+    prev = dict(task.get("metric_summary") or {})
+    snap = dict(task.get("config_snapshot") or {})
+    if ragas_model_id:
+        snap["ragas_model_id"] = ragas_model_id
+
+    store.update_task(
+        task_id,
+        status="running",
+        config_snapshot=snap,
+        metric_summary={
+            **prev,
+            "phase": "ragas",
+            "ragas_finished": 0,
+            "ragas_total": len(rows),
+            "ragas_error": None,
+            "ready_for_ragas": True,
+        },
+        total=len(rows),
+        finished=0,
+        started=True,
+        only_if_active=False,
+        clear_err_msg=True,
+    )
+
+    by_qid = {int(s["qid"]): s for s in samples}
+
+    def _should_stop() -> bool:
+        return store.is_cancelled(task_id)
+
+    def _phase(phase: str, count: int, finished: int | None = None) -> None:
+        store.update_task(
+            task_id,
+            finished=int(finished or 0),
+            total=count,
+            metric_summary={
+                **prev,
+                "phase": "ragas",
+                "ragas_finished": int(finished or 0),
+                "ragas_total": count,
+                "ready_for_ragas": True,
+            },
+            only_if_active=True,
+        )
+
+    def _on_scored(qid: int, scores: dict, error: str | None = None) -> None:
+        sample = dict(by_qid.get(qid) or {})
+        metrics = dict(sample.get("metrics") or {})
+        metrics["ragas"] = scores
+        sample["metrics"] = metrics
+        details = dict(sample.get("details") or {})
+        if error:
+            details["ragas_error"] = error
+        else:
+            details.pop("ragas_error", None)
+        sample["details"] = details
+        sample["qid"] = qid
+        sample["question"] = sample.get("question") or ""
+        store.upsert_sample(task_id, sample)
+        by_qid[qid] = sample
+
+    try:
+        summary, _detail, ragas_by_qid = _run_ragas_batch(
+            rows,
+            on_phase=_phase,
+            on_scored=_on_scored,
+            should_stop=_should_stop,
+            ragas_model_id=ragas_model_id,
+            embedding_model_id=snap.get("embedding_model_id"),
+        )
+        scored = sum(1 for v in ragas_by_qid.values() if v)
+        store.update_task(
+            task_id,
+            status="success",
+            metric_summary={
+                **prev,
+                "phase": "done",
+                "result_ready": True,
+                "ready_for_ragas": True,
+                "partial": scored < len(rows),
+                "ragas_metrics": summary,
+                "ragas_error": None if summary else "RAGAS 未写出有效分数（评分模型超时、思考链污染 JSON，或 429/TPM 限流）",
+                "ragas_scored": scored,
+                "ragas_total": len(rows),
+                "ragas_finished": scored,
+                "sample_count": len(rows),
+                "error_count": max(0, len(samples) - len(rows)),
+            },
+            finished=len(rows),
+            total=len(rows),
+            finished_at=True,
+            only_if_active=False,
+            clear_err_msg=True,
+        )
+        return {"task_id": task_id, "status": "success", "ragas_scored": scored}
+    except Exception as exc:
+        if isinstance(exc, EvalCancelled) or store.is_cancelled(task_id):
+            try:
+                finalized = finalize_task_results(task_id, partial=True)
+                summary = dict(finalized.get("metric_summary") or {})
+                summary["ready_for_ragas"] = True
+                summary["phase"] = "done" if summary.get("ragas_metrics") else "collect_done"
+                store.update_task(task_id, metric_summary=summary, only_if_active=False)
+            except (NoEvalSamples, FileNotFoundError):
+                store.update_task(task_id, status="cancelled", err_msg="用户中断", finished_at=True)
+            return {"task_id": task_id, "status": "cancelled"}
+        logger.exception("ragas score task %s failed", task_id)
+        store.update_task(
+            task_id,
+            status="success",
+            metric_summary={
+                **prev,
+                "phase": "collect_done",
+                "ready_for_ragas": True,
+                "ragas_error": str(exc)[:800],
+            },
+            finished_at=True,
+            only_if_active=False,
+        )
+        return {"task_id": task_id, "status": "success", "error": str(exc)}
+
+
+def _summarize_after_retry(store, task_id: str, task: dict, prev: dict) -> dict:
+    from evals.failed import retryable_qids
+    from evals.finalize import mark_result_summary, summarize_sample_rows
+    from evals.runners.ragas_runner import samples_to_ragas_rows
+
+    samples = store.list_all_samples(task_id)
+    suite = task.get("suite") or ""
+    leftover = retryable_qids(samples, suite=suite)
+    if suite == "rag_quality":
+        scorable = samples_to_ragas_rows(samples)
+        summary = {
+            **prev,
+            "phase": "done" if prev.get("ragas_metrics") else "collect_done",
+            "result_ready": True,
+            "partial": bool(leftover),
+            "ready_for_ragas": True,
+            "planned_total": len(samples),
+            "sample_count": len(scorable),
+            "error_count": len(leftover),
+            "agent_finished": len(samples),
+            "agent_total": len(samples),
+            "ragas_pending": len(scorable),
+        }
+        if leftover:
+            summary["phase"] = "collect_done" if not prev.get("ragas_metrics") else summary["phase"]
+        store.update_task(
+            task_id,
+            status="success",
+            metric_summary=summary,
+            finished=len(samples),
+            total=len(samples),
+            finished_at=True,
+            only_if_active=False,
+            clear_err_msg=True,
+        )
+        return summary
+
+    summary = mark_result_summary(
+        summarize_sample_rows(samples),
+        partial=bool(leftover),
+        planned_total=len(samples),
+        prev=prev,
+    )
+    summary["error_count"] = len(leftover)
+    store.update_task(
+        task_id,
+        status="success",
+        metric_summary=summary,
+        finished=len(samples),
+        total=max(int(task.get("total") or 0), len(samples)),
+        finished_at=True,
+        only_if_active=False,
+        clear_err_msg=True,
+    )
+    return summary
+
+
+@shared_task(
+    bind=True,
+    name="api.tasks.run_eval_retry_task",
+    max_retries=0,
+    acks_late=True,
+)
+def run_eval_retry_task(self, task_id: str, qids: list[int] | None = None) -> dict:
+    """只重跑失败题（运行出错，或 rag_quality 空答），写回原任务。"""
+    from evals.cancel import EvalCancelled
+    from evals.failed import retryable_qids
+    from evals.finalize import NoEvalSamples, finalize_task_results
+    from utils.eval_store import EvalStore
+
+    store = EvalStore()
+    task = store.get_task(task_id)
+    if not task:
+        return {"task_id": task_id, "status": "missing"}
+
+    samples = store.list_all_samples(task_id)
+    failed = retryable_qids(samples, suite=task["suite"])
+    want = [int(q) for q in (qids or failed)]
+    target = [q for q in want if q in set(failed)]
+    if not target:
+        return {"task_id": task_id, "status": "success", "retried": 0}
+
+    prev = dict(task.get("metric_summary") or {})
+    config = _eval_config_from_task(task)
+    store.update_task(
+        task_id,
+        status="running",
+        metric_summary={
+            **prev,
+            "phase": "agent" if config.suite == "rag_quality" else "eval",
+            "retry_total": len(target),
+            "retry_finished": 0,
+        },
+        total=len(target),
+        finished=0,
+        started=True,
+        only_if_active=False,
+        clear_err_msg=True,
+    )
+
+    def _should_stop() -> bool:
+        return store.is_cancelled(task_id)
+
+    def _on_sample(row: dict) -> None:
+        store.upsert_sample(task_id, row)
+
+    def _on_kb_created(kb_id: int, _name: str) -> None:
+        store.update_task(task_id, eval_kb_id=kb_id, only_if_active=True)
+
+    def _prog_simple(done: int, total: int, summary: dict | None = None) -> None:
+        payload = dict(prev)
+        if isinstance(summary, dict):
+            payload.update(summary)
+        payload["phase"] = payload.get("phase") or ("agent" if config.suite == "rag_quality" else "eval")
+        payload["retry_finished"] = done
+        payload["retry_total"] = total
+        store.update_task(
+            task_id,
+            finished=done,
+            total=total,
+            metric_summary=payload,
+            only_if_active=True,
+        )
+
+    def _prog_ragas(done: int, total: int) -> None:
+        _prog_simple(done, total, {"phase": "agent"})
+
+    def _phase(phase: str, count: int, finished: int | None = None) -> None:
+        _prog_simple(int(finished or 0), count, {"phase": phase})
+
+    try:
+        if config.suite == "intent_bench":
+            from evals.runners.intent_runner import run_intent_bench
+
+            run_intent_bench(
+                config,
+                on_progress=lambda done, total, summary: _prog_simple(done, total, summary),
+                on_sample=_on_sample,
+                should_stop=_should_stop,
+                qids=target,
+            )
+        elif config.suite == "rag_quality":
+            limit = config.sample_limit or 50
+            if config.dataset_id == "hotpot":
+                from evals.runners.ragas_runner import run_ragas_eval
+
+                run_ragas_eval(
+                    n=limit,
+                    workers=config.workers,
+                    chat_model_id=config.chat_model_id,
+                    embedding_model_id=config.embedding_model_id,
+                    on_progress=_prog_ragas,
+                    on_sample=_on_sample,
+                    on_phase=_phase,
+                    should_stop=_should_stop,
+                    qids=target,
+                    require_success=False,
+                )
+            else:
+                from evals.runners.ragas_runner import run_ragas_eval_dataset
+
+                run_ragas_eval_dataset(
+                    config,
+                    on_progress=_prog_ragas,
+                    on_sample=_on_sample,
+                    on_phase=_phase,
+                    should_stop=_should_stop,
+                    on_kb_created=_on_kb_created,
+                    qids=target,
+                    require_success=False,
+                )
+        else:
+            from evals.runners.bench_runner import run_bench
+
+            run_bench(
+                config,
+                on_progress=lambda done, total, summary: _prog_simple(done, total, summary),
+                on_sample=_on_sample,
+                should_stop=_should_stop,
+                on_kb_created=_on_kb_created,
+                qids=target,
+            )
+
+        summary = _summarize_after_retry(store, task_id, task, prev)
+        leftover = int((summary or {}).get("error_count") or 0)
+        return {"task_id": task_id, "status": "success", "retried": len(target), "error_count": leftover}
+    except Exception as exc:
+        if isinstance(exc, EvalCancelled) or store.is_cancelled(task_id):
+            try:
+                finalize_task_results(task_id, partial=True)
+            except (NoEvalSamples, FileNotFoundError):
+                store.update_task(task_id, status="cancelled", err_msg="用户中断", finished_at=True)
+            return {"task_id": task_id, "status": "cancelled"}
+        logger.exception("retry failed samples %s failed", task_id)
+        try:
+            _summarize_after_retry(store, task_id, task, {**prev, "retry_error": str(exc)[:800]})
+        except Exception:
+            store.update_task(
+                task_id,
+                status="success",
+                metric_summary={**prev, "retry_error": str(exc)[:800]},
+                finished_at=True,
+                only_if_active=False,
+            )
+        return {"task_id": task_id, "status": "success", "error": str(exc)}
+

@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
+import re
 import threading
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout, as_completed
 from typing import Callable
 
-from ragas import EvaluationDataset, RunConfig, evaluate
+from ragas import RunConfig
+from ragas.dataset_schema import SingleTurnSample
 from ragas.embeddings import LangchainEmbeddingsWrapper
 from ragas.llms import LangchainLLMWrapper
-from ragas.metrics import answer_relevancy, context_precision, context_recall, faithfulness
+from ragas.metrics import AnswerRelevancy, ContextPrecision, ContextRecall, Faithfulness
+from ragas.metrics.base import MetricWithEmbeddings, MetricWithLLM
 
 from agents.agent import build_agent
 from config.settings import set_current_owner
@@ -30,8 +34,86 @@ from utils.vector_store import ChunkStore
 
 logger = logging.getLogger(__name__)
 
-_METRICS = [faithfulness, answer_relevancy, context_precision, context_recall]
-_METRIC_KEYS = {m.name for m in _METRICS}
+_SCORE_SKIP_KEYS = {
+    "qid",
+    "user_input",
+    "response",
+    "retrieved_contexts",
+    "reference",
+    "error",
+    "latency_ms",
+    "type",
+}
+# 单指标墙钟超时：不再走 ragas.evaluate()（Celery + nest_asyncio 易卡住，NaN 还会被我们丢掉）
+_METRIC_TIMEOUT_SEC = 90
+_LLM_TIMEOUT_SEC = 60
+_MAX_CONTEXTS = 8
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _ragas_is_finished(_response) -> bool:
+    """SiliconFlow / R1 的 finish_reason 常不是 stop，RAGAS 会当成未完成死循环重试。"""
+    return True
+
+
+def _strip_think(text: str) -> str:
+    """去掉 Qwen3 / R1 泄漏到 content 里的思考块，避免 RAGAS JSON 解析失败。"""
+    cleaned = _THINK_RE.sub("", text or "")
+    return cleaned.replace("</think>", "").strip()
+
+
+def _clean_llm_result(result):
+    for gens in getattr(result, "generations", None) or []:
+        for gen in gens:
+            if getattr(gen, "text", None):
+                gen.text = _strip_think(gen.text)
+            message = getattr(gen, "message", None)
+            content = getattr(message, "content", None)
+            if isinstance(content, str):
+                message.content = _strip_think(content)
+    return result
+
+
+class _JsonSafeLLM(LangchainLLMWrapper):
+    def generate_text(self, *args, **kwargs):
+        return _clean_llm_result(super().generate_text(*args, **kwargs))
+
+    async def agenerate_text(self, *args, **kwargs):
+        return _clean_llm_result(await super().agenerate_text(*args, **kwargs))
+
+
+def _new_metrics():
+    return [
+        Faithfulness(),
+        AnswerRelevancy(strictness=1),
+        ContextPrecision(),
+        ContextRecall(),
+    ]
+
+
+def _ragas_sample_payload(row: dict) -> dict:
+    """RAGAS 0.2 只认这四列；qid 等额外字段不要塞进 SingleTurnSample。"""
+    ctx = row.get("retrieved_contexts")
+    if not isinstance(ctx, list):
+        ctx = []
+    return {
+        "user_input": str(row.get("user_input") or ""),
+        "response": str(row.get("response") or ""),
+        "retrieved_contexts": [str(item) for item in ctx][:_MAX_CONTEXTS],
+        "reference": str(row.get("reference") or ""),
+    }
+
+
+def _run_with_timeout(fn: Callable, timeout_sec: float):
+    # 不能 wait=True 关线程池：evaluate 卡住时 shutdown 会跟着死等
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = pool.submit(fn)
+        return future.result(timeout=timeout_sec)
+    except FuturesTimeout as exc:
+        raise TimeoutError(f"RAGAS 调用超过 {timeout_sec:.0f}s 仍未返回") from exc
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def _to_sample_row(
@@ -46,6 +128,9 @@ def _to_sample_row(
     else:
         question = item.get("question") or ""
         reference = item.get("answer") or ""
+    details = dict(row.get("details") or {})
+    if "retrieved_contexts" in row:
+        details["retrieved_contexts"] = list(row.get("retrieved_contexts") or [])
     return {
         "qid": qid,
         "question": row.get("user_input") or question,
@@ -56,7 +141,34 @@ def _to_sample_row(
         "metrics": {"ragas": ragas_scores or {}},
         "latency_ms": row.get("latency_ms"),
         "error": row.get("error"),
+        "details": details,
     }
+
+
+def samples_to_ragas_rows(samples: list[dict]) -> list[dict]:
+    """把已落库的 RAG 轨迹转成 RAGAS 输入：question / contexts / answer / ground_truth。"""
+    rows: list[dict] = []
+    for sample in samples:
+        if sample.get("error"):
+            continue
+        question = str(sample.get("question") or sample.get("user_input") or "").strip()
+        answer = str(sample.get("response") or "").strip()
+        if not question or not answer:
+            continue
+        details = sample.get("details") if isinstance(sample.get("details"), dict) else {}
+        ctx = details.get("retrieved_contexts")
+        if not isinstance(ctx, list):
+            ctx = sample.get("retrieved_contexts") if isinstance(sample.get("retrieved_contexts"), list) else []
+        rows.append(
+            {
+                "qid": int(sample.get("qid") or 0),
+                "user_input": question,
+                "response": answer,
+                "retrieved_contexts": [str(item) for item in ctx],
+                "reference": str(sample.get("reference") or ""),
+            }
+        )
+    return rows
 
 
 def scorable_ragas_rows(rows: list[dict]) -> list[dict]:
@@ -80,16 +192,37 @@ def scorable_ragas_rows(rows: list[dict]) -> list[dict]:
 
 def _finite_scores(record: dict) -> dict[str, float]:
     scores: dict[str, float] = {}
-    for key in _METRIC_KEYS:
-        if key not in record:
+    for key, raw in record.items():
+        if key in _SCORE_SKIP_KEYS:
             continue
         try:
-            val = float(record[key])
+            val = float(raw)
         except (TypeError, ValueError):
             continue
         if math.isfinite(val):
-            scores[key] = val
+            scores[str(key)] = val
     return scores
+
+
+def _score_metric(metric, sample: SingleTurnSample, timeout_sec: float) -> float:
+    """在独立事件循环里打一个指标，避开 ragas.evaluate() 的 nest_asyncio / Celery 卡死。"""
+
+    def _in_thread() -> float:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(
+                asyncio.wait_for(metric.single_turn_ascore(sample), timeout=timeout_sec)
+            )
+        finally:
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
+            loop.close()
+            asyncio.set_event_loop(None)
+
+    return float(_run_with_timeout(_in_thread, timeout_sec + 15))
 
 
 def _summarize_ragas(ragas_by_qid: dict[int, dict[str, float]]) -> dict[str, float]:
@@ -106,8 +239,8 @@ def _summarize_ragas(ragas_by_qid: dict[int, dict[str, float]]) -> dict[str, flo
 def _run_ragas_batch(
     rows: list[dict],
     *,
-    on_phase: Callable[[str, int, int | None], None] | None = None,
-    on_scored: Callable[[int, dict[str, float]], None] | None = None,
+    on_phase: Callable[..., None] | None = None,
+    on_scored: Callable[..., None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     ragas_model_id: str | None = None,
     embedding_model_id: str | None = None,
@@ -122,11 +255,26 @@ def _run_ragas_batch(
     if on_phase:
         on_phase("ragas", len(scorable), 0)
 
-    # 逐题打分：整批 evaluate 遇 429 会一张分都没有
-    run_config = RunConfig(timeout=180, max_retries=2, max_wait=40, max_workers=1)
-    llm = create_chat_model(**eval_chat_model_kwargs(chat_model_id=ragas_model_id))
+    run_config = RunConfig(timeout=_LLM_TIMEOUT_SEC, max_retries=1, max_wait=15, max_workers=1)
+    llm = create_chat_model(
+        **eval_chat_model_kwargs(
+            chat_model_id=ragas_model_id,
+            extra={
+                "extra_body": {
+                    "enable_thinking": False,
+                    "chat_template_kwargs": {"enable_thinking": False},
+                }
+            },
+        ),
+        timeout=_LLM_TIMEOUT_SEC,
+        max_retries=0,
+    )
     embeddings = create_embeddings(**eval_embedding_kwargs(embedding_model_id=embedding_model_id))
-    wrapped_llm = LangchainLLMWrapper(llm, run_config=run_config)
+    wrapped_llm = _JsonSafeLLM(
+        llm,
+        run_config=run_config,
+        is_finished_parser=_ragas_is_finished,
+    )
     wrapped_emb = LangchainEmbeddingsWrapper(embeddings)
 
     ragas_by_qid: dict[int, dict[str, float]] = {}
@@ -134,32 +282,50 @@ def _run_ragas_batch(
     for index, row in enumerate(scorable):
         check_stop(should_stop)
         qid = int(row.get("qid", index))
+        logger.info("RAGAS 开始 qid=%s（%s/%s）", qid, index + 1, len(scorable))
+        if on_phase:
+            on_phase("ragas", len(scorable), index)
 
-        def _eval_one(payload: dict = row) -> dict:
-            result = evaluate(
-                EvaluationDataset.from_list([payload]),
-                metrics=_METRICS,
-                llm=wrapped_llm,
-                embeddings=wrapped_emb,
-                run_config=run_config,
-            )
-            records = result.to_pandas().to_dict(orient="records")
-            return records[0] if records else {}
+        sample = SingleTurnSample(**_ragas_sample_payload(row))
+        scores: dict[str, float] = {}
+        errors: list[str] = []
+        for metric in _new_metrics():
+            check_stop(should_stop)
+            if isinstance(metric, MetricWithLLM):
+                metric.llm = wrapped_llm
+            if isinstance(metric, MetricWithEmbeddings):
+                metric.embeddings = wrapped_emb
+            metric.init(run_config)
+            try:
+                raw = call_with_tpm_retry(lambda m=metric: _score_metric(m, sample, _METRIC_TIMEOUT_SEC))
+                val = float(raw)
+                if math.isfinite(val):
+                    scores[metric.name] = val
+                else:
+                    errors.append(f"{metric.name}: 模型输出无法解析为分数")
+            except EvalCancelled:
+                raise
+            except Exception as exc:
+                msg = f"{metric.name}: {exc}"
+                errors.append(msg)
+                logger.warning("RAGAS qid=%s %s", qid, msg)
+            if on_scored and scores:
+                try:
+                    on_scored(qid, dict(scores), "；".join(errors)[:800] if errors else None)
+                except TypeError:
+                    on_scored(qid, dict(scores))
 
-        try:
-            record = call_with_tpm_retry(_eval_one)
-        except EvalCancelled:
-            raise
-        except Exception as exc:
-            logger.warning("RAGAS 跳过 qid=%s：%s", qid, exc)
-            if on_phase:
-                on_phase("ragas", len(scorable), index + 1)
-            continue
-        scores = _finite_scores(record)
+        err_text = "；".join(errors)[:800] if errors else None
         ragas_by_qid[qid] = scores
-        detail.append(record)
-        if on_scored and scores:
-            on_scored(qid, scores)
+        detail.append({"qid": qid, **scores, "error": err_text})
+        if on_scored:
+            try:
+                on_scored(qid, scores, err_text)
+            except TypeError:
+                if scores:
+                    on_scored(qid, scores)
+        if not scores:
+            logger.warning("RAGAS 未写出分数 qid=%s：%s", qid, err_text or "全部为 NaN")
         if on_phase:
             on_phase("ragas", len(scorable), index + 1)
 
@@ -179,11 +345,18 @@ def run_ragas_eval(
     on_sample: Callable[[dict], None] | None = None,
     on_phase: Callable[[str, int, int | None], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    qids: list[int] | None = None,
+    require_success: bool = True,
 ) -> tuple[dict[str, float], list[dict], list[dict]]:
     """HotpotQA + Agent + RAGAS（原 CLI 路径）。"""
     ChunkStore().init_schema()
     items = load_hotpot_sample(n=n, split=split, seed=seed)
     indexed = list(enumerate(items))
+    if qids is not None:
+        want = {int(q) for q in qids}
+        indexed = [(qid, item) for qid, item in indexed if qid in want]
+        if not indexed:
+            raise ValueError("没有匹配的失败题可重试")
     agent = build_agent(
         system_prompt=EVAL_SYSTEM_PROMPT,
         tools=[doc_retrieval],
@@ -239,7 +412,7 @@ def run_ragas_eval(
                     done += 1
                     row_by_qid[qid] = row
                     if on_progress:
-                        on_progress(done, len(items))
+                        on_progress(done, len(indexed))
                     sample = _to_sample_row(qid, item, row)
                     if on_sample:
                         on_sample(sample)
@@ -251,29 +424,13 @@ def run_ragas_eval(
             raise
 
     check_stop(should_stop)
-    if not rows:
-        samples = [_to_sample_row(qid, item, row_by_qid.get(qid, {})) for qid, item in indexed]
+    samples = [_to_sample_row(qid, item, row_by_qid.get(qid, {})) for qid, item in indexed]
+    if require_success and not any(not s.get("error") and (s.get("response") or "").strip() for s in samples):
         raise RuntimeError("没有任何题目跑通，请检查 PG/SiliconFlow 配置")
-
-    item_by_qid = dict(indexed)
-    summary, detail, ragas_by_qid = _run_ragas_batch(
-        rows,
-        on_phase=on_phase,
-        on_scored=lambda qid, scores: on_sample
-        and on_sample(_to_sample_row(qid, item_by_qid.get(qid, {}), row_by_qid.get(qid, {}), scores)),
-        should_stop=should_stop,
-        ragas_model_id=ragas_model_id,
-        embedding_model_id=embedding_model_id,
-    )
-
-    samples = []
-    for qid, item in indexed:
-        row = row_by_qid.get(qid, {})
-        samples.append(_to_sample_row(qid, item, row, ragas_by_qid.get(qid)))
-        if on_sample:
-            on_sample(samples[-1])
-
-    return summary, detail, samples
+    if on_sample:
+        for sample in samples:
+            on_sample(sample)
+    return {}, [], samples
 
 
 def run_ragas_eval_dataset(
@@ -284,6 +441,8 @@ def run_ragas_eval_dataset(
     on_phase: Callable[[str, int, int | None], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     on_kb_created: Callable[[int, str], None] | None = None,
+    qids: list[int] | None = None,
+    require_success: bool = True,
 ) -> tuple[dict[str, float], list[dict], list[dict]]:
     """JSON/Parquet 数据集 + Agent + RAGAS。"""
     dataset = load_dataset(config.dataset_id, sample_limit=config.sample_limit)
@@ -309,6 +468,11 @@ def run_ragas_eval_dataset(
     )
 
     indexed = list(enumerate(dataset.items))
+    if qids is not None:
+        want = {int(q) for q in qids}
+        indexed = [(qid, item) for qid, item in indexed if qid in want]
+        if not indexed:
+            raise ValueError("没有匹配的失败题可重试")
     rows: list[dict] = []
     row_by_qid: dict[int, dict] = {}
     done = 0
@@ -400,26 +564,10 @@ def run_ragas_eval_dataset(
             pass
 
     check_stop(should_stop)
-    if not rows:
-        samples = [_to_sample_row(qid, item, row_by_qid.get(qid, {})) for qid, item in indexed]
+    samples = [_to_sample_row(qid, item, row_by_qid.get(qid, {})) for qid, item in indexed]
+    if require_success and not any(not s.get("error") and (s.get("response") or "").strip() for s in samples):
         raise RuntimeError("没有任何题目跑通，请检查 PG/SiliconFlow 配置")
-
-    item_by_qid = dict(indexed)
-    summary, detail, ragas_by_qid = _run_ragas_batch(
-        rows,
-        on_phase=on_phase,
-        on_scored=lambda qid, scores: on_sample
-        and on_sample(_to_sample_row(qid, item_by_qid.get(qid, {}), row_by_qid.get(qid, {}), scores)),
-        should_stop=should_stop,
-        ragas_model_id=config.ragas_model_id,
-        embedding_model_id=config.embedding_model_id,
-    )
-
-    samples = []
-    for qid, item in indexed:
-        row = row_by_qid.get(qid, {})
-        samples.append(_to_sample_row(qid, item, row, ragas_by_qid.get(qid)))
-        if on_sample:
-            on_sample(samples[-1])
-
-    return summary, detail, samples
+    if on_sample:
+        for sample in samples:
+            on_sample(sample)
+    return {}, [], samples

@@ -48,8 +48,8 @@ class DocumentRepository:
 
         process_config 只存用户显式指定的字段（omitempty 语义），None/空 =
         全部跟随知识库默认。applied_strategy 为本次实际生效的切分 tier。
-        image_refs：解析出的内嵌图片元数据（含 MinIO storage_key）；None =
-        不修改（reparse 未提供时保留旧值），显式传 [] 才会清空。
+        image_refs：解析出的内嵌图片元数据（含 MinIO storage_key）；None 时
+        新建写入 []，更新则保留旧值；显式传 [] 才会清空。
         """
         owner = owner or get_current_owner() or settings.default_owner
         image_refs_json = Jsonb(image_refs) if image_refs is not None else None
@@ -59,13 +59,13 @@ class DocumentRepository:
                 INSERT INTO documents
                     (document_id, file_name, knowledge_base_id, owner, process_config,
                      applied_strategy, image_refs, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'completed')
+                VALUES (%s, %s, %s, %s, %s, %s, COALESCE(%s, '[]'::jsonb), 'completed')
                 ON CONFLICT (document_id) DO UPDATE SET
                     file_name = EXCLUDED.file_name,
                     knowledge_base_id = EXCLUDED.knowledge_base_id,
                     process_config = COALESCE(EXCLUDED.process_config, documents.process_config),
                     applied_strategy = COALESCE(EXCLUDED.applied_strategy, documents.applied_strategy),
-                    image_refs = COALESCE(EXCLUDED.image_refs, documents.image_refs),
+                    image_refs = COALESCE(%s, documents.image_refs),
                     updated_at = now()
                 """,
                 (
@@ -75,6 +75,7 @@ class DocumentRepository:
                     owner,
                     Jsonb(process_config or {}),
                     applied_strategy,
+                    image_refs_json,
                     image_refs_json,
                 ),
             )

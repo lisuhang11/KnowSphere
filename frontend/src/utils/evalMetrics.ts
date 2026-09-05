@@ -1,6 +1,6 @@
 import type { EvalSample, EvalTask } from '@/api/evaluation'
 
-export type EvalPhase = 'pending' | 'loading' | 'ingest' | 'eval' | 'agent' | 'ragas' | 'done'
+export type EvalPhase = 'pending' | 'loading' | 'ingest' | 'eval' | 'agent' | 'ragas' | 'collect_done' | 'done'
 
 export interface MetricCardItem {
   key: string
@@ -102,6 +102,7 @@ export function taskPhase(task: EvalTask): EvalPhase | null {
     phase === 'eval' ||
     phase === 'agent' ||
     phase === 'ragas' ||
+    phase === 'collect_done' ||
     phase === 'done'
   ) {
     return phase
@@ -127,6 +128,8 @@ export function phaseLabel(phase: EvalPhase | null): string {
       return 'Agent 跑题'
     case 'ragas':
       return 'RAGAS 打分'
+    case 'collect_done':
+      return '待离线打分'
     case 'done':
       return '已完成'
     default:
@@ -180,10 +183,19 @@ export function progressLabel(task: EvalTask): string {
   if (isRagasScoring(task)) {
     const done = Number(task.metric_summary?.ragas_finished ?? 0)
     const total = Number(task.metric_summary?.ragas_total ?? 0)
+    if (total > 0 && done < total) return `RAGAS 打分中 第 ${done + 1}/${total} 题`
     return total > 0 ? `RAGAS 打分 ${done}/${total}` : 'RAGAS 打分中'
   }
   if (phase === 'agent' && task.suite === 'rag_quality') {
+    const retryTotal = Number(task.metric_summary?.retry_total ?? 0)
+    const retryDone = Number(task.metric_summary?.retry_finished ?? 0)
+    if (retryTotal > 0) return `重试失败题 ${retryDone}/${retryTotal}`
     return `Agent ${task.finished}/${task.total || '?'}`
+  }
+  if (Number(task.metric_summary?.retry_total ?? 0) > 0 && task.status === 'running') {
+    const retryTotal = Number(task.metric_summary?.retry_total ?? 0)
+    const retryDone = Number(task.metric_summary?.retry_finished ?? 0)
+    return `重试失败题 ${retryDone}/${retryTotal}`
   }
   if (task.total > 0) return `${task.finished}/${task.total} 题`
   if (task.status === 'running') return '准备中…'
@@ -224,7 +236,8 @@ export function elapsedLabel(task: EvalTask, nowMs = Date.now()): string {
     if (task.status === 'pending') return '排队中'
     return '—'
   }
-  const end = task.finished_at ? new Date(task.finished_at).getTime() : nowMs
+  const end =
+    task.status === 'running' || !task.finished_at ? nowMs : new Date(task.finished_at).getTime()
   const ms = end - new Date(task.started_at).getTime()
   if (!Number.isFinite(ms) || ms < 0) return '—'
   if (ms < 1000) return `${ms}ms`
@@ -244,6 +257,10 @@ export function etaLabel(task: EvalTask, nowMs = Date.now()): string | null {
   if (phase === 'ingest') {
     done = Number(task.metric_summary?.ingest_finished ?? 0)
     total = Number(task.metric_summary?.ingest_total ?? 0)
+  }
+  if (isRagasScoring(task)) {
+    done = Number(task.metric_summary?.ragas_finished ?? task.finished ?? 0)
+    total = Number(task.metric_summary?.ragas_total ?? task.total ?? 0)
   }
   if (!task.started_at || !total || done <= 0 || done >= total) return null
   const elapsed = nowMs - new Date(task.started_at).getTime()
@@ -308,6 +325,7 @@ export function highlightMetric(summary: Record<string, unknown> | null | undefi
     }
     return '灌库中…'
   }
+  if (phase === 'collect_done') return '待 RAGAS 打分'
   if (phase === 'ragas') return 'RAGAS 打分中…'
   if (typeof summary.ragas_error === 'string' && summary.ragas_error) {
     return 'RAGAS 打分失败'
@@ -375,6 +393,7 @@ export function formatMetricsSummary(summary: Record<string, unknown> | null | u
     if (phase === 'eval') return '跑题中…'
     if (phase === 'agent') return 'Agent 跑题中…'
     if (phase === 'ragas') return 'RAGAS 打分中…'
+    if (phase === 'collect_done') return '待 RAGAS 打分'
     return JSON.stringify(summary).slice(0, 80)
   }
   return groups
@@ -488,12 +507,15 @@ export function classifySample(row: EvalSample): SampleVerdict {
         reason: parts.join(' · ') || 'RAGAS 分数已写出。',
       }
     }
+    const ragasError = typeof row.details?.ragas_error === 'string' ? row.details.ragas_error.trim() : ''
     return {
       kind: 'unscored',
       ok: false,
       label: '未打分',
       theme: 'warning',
-      reason: 'Agent 已作答，但 RAGAS 分数还没写出（打分未完成或评分模型 429）。',
+      reason: ragasError
+        ? `RAGAS 打分失败：${ragasError}`
+        : 'Agent 已作答，尚未写出 RAGAS 分数。可在结果页选择评分模型后离线打分。',
     }
   }
 
@@ -678,7 +700,12 @@ export function estimateIssueStats(
   }
   const ragas = summary.ragas_metrics as Record<string, number> | undefined
   const ragasScored = ragas && typeof ragas.faithfulness === 'number'
-  if (!ragasScored && (summary.ragas_error || ragas)) {
+  const waitingRagas =
+    summary.phase === 'collect_done' ||
+    summary.phase === 'ragas' ||
+    Boolean(summary.ragas_error) ||
+    Boolean(ragas)
+  if (!ragasScored && waitingRagas) {
     return {
       total: sampleCount + errors || fallbackTotal,
       ok: 0,

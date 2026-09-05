@@ -60,6 +60,8 @@ interface DocMeta {
   applied_strategy?: string | null
   /** 所属知识库（重新解析需原文件 + 库配置兜底） */
   knowledge_base_id?: number | null
+  /** MinIO 原文件 key；评测灌库没有原件时为空 */
+  stored_name?: string | null
 }
 
 /** 解析状态徽标（与列表页一致的文案/主题） */
@@ -267,7 +269,7 @@ async function loadAllChunks() {
 
 // 切入合并全文视图时懒加载全量分块
 watch(viewMode, (mode) => {
-  if (mode === 'merged') loadAllChunks()
+  if (mode === 'merged' || (mode === 'preview' && !canPreviewOriginal.value)) loadAllChunks()
 })
 
 function isMarkdown(name: string): boolean {
@@ -275,10 +277,16 @@ function isMarkdown(name: string): boolean {
 }
 
 
+/** 是否有上传到对象存储的原始文件（评测灌库只有切块，没有 PDF/Word 原件） */
+const hasOriginalFile = computed(() => Boolean(docInfo.value?.stored_name))
+
 /** 是否支持「原文预览」Tab（PDF/Office/图片/文本等，对齐 WeKnora document-preview） */
-const canPreviewOriginal = computed(() =>
-  docInfo.value ? resolveAttachmentPreviewKind(docInfo.value.file_name) !== 'unsupported' : false,
-)
+const canPreviewOriginal = computed(() => {
+  if (!docInfo.value || !hasOriginalFile.value) return false
+  return resolveAttachmentPreviewKind(docInfo.value.file_name) !== 'unsupported'
+})
+
+const isEvalPassage = computed(() => documentId.startsWith('eval_passage_'))
 
 const filePreviewUrl = computed(() => documentFileUrl(documentId))
 
@@ -338,6 +346,8 @@ onMounted(async () => {
 
   if (docInfo.value && canPreviewOriginal.value) {
     viewMode.value = 'preview'
+  } else {
+    void loadAllChunks()
   }
 })
 
@@ -410,10 +420,15 @@ function handleClose() {
               size="small"
               :disabled="
                 !docInfo?.knowledge_base_id ||
+                !hasOriginalFile ||
                 docInfo?.status === 'pending' ||
                 docInfo?.status === 'processing'
               "
-              title="用新的切块配置重新解析（保留 document_id，旧分块全删重切；处理中不可操作）"
+              :title="
+                hasOriginalFile
+                  ? '用新的切块配置重新解析（保留 document_id，旧分块全删重切；处理中不可操作）'
+                  : '评测灌库没有原始文件，无法重新解析'
+              "
               @click="openReparse"
             >
               <template #icon><t-icon name="refresh" /></template>
@@ -460,8 +475,24 @@ function handleClose() {
               :active="viewMode === 'preview'"
               fill-height
             />
-            <div v-else class="empty-hint">
-              该格式暂不支持原文预览，可查看「合并全文」或「分块视图」
+            <div v-else class="doc-view-panel__scroll">
+              <div v-if="mergedLoading" class="state-block">
+                <t-loading size="small" />
+                <span>正文加载中…</span>
+              </div>
+              <div v-else-if="!mergedContent" class="empty-hint">
+                {{ isEvalPassage ? '评测灌库没有原始文件，且还没有切块。' : '该格式暂不支持原文预览，可查看「合并全文」或「分块视图」' }}
+              </div>
+              <template v-else>
+                <div class="merged-hint">
+                  {{
+                    isEvalPassage
+                      ? '评测灌库只写入切块，没有上传 PDF/Word 原件。以下是按分块还原的段落正文。'
+                      : '没有原始文件，以下为按分块还原的正文。'
+                  }}
+                </div>
+                <pre class="plain-text">{{ mergedContent }}</pre>
+              </template>
             </div>
           </div>
 

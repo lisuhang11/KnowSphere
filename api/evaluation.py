@@ -108,7 +108,7 @@ def list_evaluation_tasks(
 def create_evaluation(req: EvaluationRequest) -> dict[str, Any]:
     """创建评测任务（异步 Celery 执行）。"""
     if req.suite == "rag_quality" and req.pipeline_profile == "rag_fixed":
-        raise HTTPException(status_code=400, detail="rag_quality 仅支持 pipeline_profile=rag_agent")
+        req.pipeline_profile = "rag_agent"
     if req.suite == "intent_bench" and req.pipeline_profile not in ("intent", "rag_agent", "rag_fixed"):
         raise HTTPException(status_code=400, detail="intent_bench 将强制使用 intent pipeline")
     if req.suite in ("rag_quality", "intent_bench", "rag_bench"):
@@ -311,6 +311,122 @@ def get_evaluation_samples(
     rows = store.list_samples(task_id, limit=limit, offset=offset)
     total = store.count_samples(task_id)
     return {"success": True, "data": {"items": rows, "total": total}}
+
+
+class RagasScoreRequest(BaseModel):
+    ragas_model_id: str = Field(min_length=1, description="RAGAS 评分用对话模型 ID")
+
+
+@evaluation_router.post("/{task_id}/ragas")
+def start_ragas_score(task_id: str, req: RagasScoreRequest) -> dict[str, Any]:
+    """对已收集的 RAG 轨迹做离线 RAGAS 打分。"""
+    from api.tasks import run_ragas_score_task
+    from evals.runners.ragas_runner import samples_to_ragas_rows
+
+    store = EvalStore()
+    task = store.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task["suite"] != "rag_quality":
+        raise HTTPException(status_code=400, detail="只有 rag_quality 任务可以离线 RAGAS 打分")
+    if task["status"] == "running":
+        raise HTTPException(status_code=400, detail="任务正在运行，请等待收集完成后再打分")
+    if task["status"] not in ("success", "cancelled"):
+        raise HTTPException(status_code=400, detail=f"当前状态为 {task['status']}，无法打分")
+    rows = samples_to_ragas_rows(store.list_all_samples(task_id))
+    if not rows:
+        raise HTTPException(status_code=400, detail="没有可打分的题目：需要至少一题 Agent 成功作答")
+    try:
+        async_result = run_ragas_score_task.delay(task_id, req.ragas_model_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "RAGAS 打分入队失败，请确认 Redis 与 Celery worker 已启动。"
+                f" 原因: {exc}"
+            ),
+        ) from exc
+    prev = dict(task.get("metric_summary") or {})
+    snap = dict(task.get("config_snapshot") or {})
+    snap["ragas_model_id"] = req.ragas_model_id
+    store.update_task(
+        task_id,
+        status="running",
+        celery_task_id=async_result.id,
+        config_snapshot=snap,
+        metric_summary={
+            **prev,
+            "phase": "ragas",
+            "ragas_finished": 0,
+            "ragas_total": len(rows),
+            "ragas_error": None,
+            "ready_for_ragas": True,
+        },
+        started=True,
+        only_if_active=False,
+        clear_err_msg=True,
+    )
+    task = store.get_task(task_id)
+    return {"success": True, "data": task}
+
+
+class RetryFailedRequest(BaseModel):
+    qids: list[int] | None = None
+
+
+@evaluation_router.post("/{task_id}/retry")
+def retry_failed_evaluation(task_id: str, req: RetryFailedRequest = RetryFailedRequest()) -> dict[str, Any]:
+    """重跑失败题（运行出错，或 rag_quality 空答），写回原任务。"""
+    from api.tasks import run_eval_retry_task
+    from evals.failed import retryable_qids
+
+    store = EvalStore()
+    task = store.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task["status"] == "running":
+        raise HTTPException(status_code=400, detail="任务正在运行，请等待完成后再重试失败题")
+    if task["status"] not in ("success", "cancelled", "failed"):
+        raise HTTPException(status_code=400, detail=f"当前状态为 {task['status']}，无法重试")
+    samples = store.list_all_samples(task_id)
+    failed = retryable_qids(samples, suite=task["suite"])
+    if req.qids:
+        want = {int(q) for q in req.qids}
+        target = [q for q in failed if q in want]
+        missing = [q for q in req.qids if int(q) not in set(failed)]
+        if missing and not target:
+            raise HTTPException(status_code=400, detail="指定题目不是失败题，无需重试")
+    else:
+        target = failed
+    if not target:
+        raise HTTPException(status_code=400, detail="没有失败题可重试")
+    try:
+        async_result = run_eval_retry_task.delay(task_id, target)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "失败题重试入队失败，请确认 Redis 与 Celery worker 已启动。"
+                f" 原因: {exc}"
+            ),
+        ) from exc
+    prev = dict(task.get("metric_summary") or {})
+    store.update_task(
+        task_id,
+        status="running",
+        celery_task_id=async_result.id,
+        metric_summary={
+            **prev,
+            "phase": "agent" if task["suite"] == "rag_quality" else "eval",
+            "retry_finished": 0,
+            "retry_total": len(target),
+        },
+        started=True,
+        only_if_active=False,
+        clear_err_msg=True,
+    )
+    updated = store.get_task(task_id)
+    return {"success": True, "data": updated}
 
 
 @evaluation_router.delete("/{task_id}")

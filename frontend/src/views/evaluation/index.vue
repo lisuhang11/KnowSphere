@@ -5,6 +5,8 @@ import {
   cancelEvalTask,
   createEvalTask,
   produceEvalResults,
+  startRagasScore,
+  retryEvalFailed,
   deleteEvalDataset,
   deleteEvalTask,
   getEvalDataset,
@@ -123,6 +125,11 @@ const activeTasks = computed(() => tasks.value.filter((t) => isActiveTask(t)))
 const resultTasks = computed(() => tasks.value.filter((t) => !isActiveTask(t)))
 const cancellingIds = ref<Record<string, boolean>>({})
 const producingIds = ref<Record<string, boolean>>({})
+const scoringIds = ref<Record<string, boolean>>({})
+const retryingIds = ref<Record<string, boolean>>({})
+const scoreVisible = ref(false)
+const scoreTarget = ref<EvalTask | null>(null)
+const scoreModelId = ref<string | undefined>()
 
 const statusTheme = (s: string, partial = false) => {
   if (s === 'success') return partial ? 'warning' : 'success'
@@ -145,12 +152,56 @@ const statusLabel = (s: string, partial = false) => {
   return map[s] || s
 }
 
+function hasRagasMetrics(t: EvalTask) {
+  const rag = t.metric_summary?.ragas_metrics
+  return Boolean(rag && typeof rag === 'object' && Object.keys(rag as object).length)
+}
+
+function canScoreRagas(t: EvalTask) {
+  if (t.suite !== 'rag_quality') return false
+  if (t.status === 'running' || t.status === 'pending') return false
+  const n = Number(t.metric_summary?.sample_count ?? t.metric_summary?.ragas_pending ?? t.finished ?? 0)
+  return n > 0
+}
+
+function isRetryableSample(task: EvalTask | null | undefined, row: EvalSample): boolean {
+  if (row.error) return true
+  if (task?.suite === 'rag_quality' && !(row.response || '').trim()) return true
+  return false
+}
+
+function retryableCount(task: EvalTask, samples?: EvalSample[]): number {
+  if (samples?.length) return samples.filter((row) => isRetryableSample(task, row)).length
+  return Number(task.metric_summary?.error_count ?? 0)
+}
+
+function canRetryFailed(t: EvalTask, samples?: EvalSample[]) {
+  if (t.status === 'running' || t.status === 'pending') return false
+  return retryableCount(t, samples) > 0
+}
+
+function taskStatusLabel(t: EvalTask) {
+  if (t.status === 'success' && t.suite === 'rag_quality' && !hasRagasMetrics(t)) return '待 RAGAS 打分'
+  return statusLabel(t.status, isPartialResult(t))
+}
+
+function taskStatusTheme(t: EvalTask) {
+  if (taskStatusLabel(t) === '待 RAGAS 打分') return 'warning'
+  return statusTheme(t.status, isPartialResult(t))
+}
+
 function isPartialResult(t: EvalTask) {
   return Boolean(t.metric_summary?.partial)
 }
 
 function canProduceResult(t: EvalTask) {
+  if (t.suite === 'rag_quality') return false
   return t.status === 'running' || t.status === 'cancelled' || (t.status === 'pending' && t.finished > 0)
+}
+
+function sampleContexts(row: EvalSample): string[] {
+  const ctx = row.details?.retrieved_contexts
+  return Array.isArray(ctx) ? ctx.filter((item) => typeof item === 'string' && item.trim()) : []
 }
 
 const suiteLabel = (s: string) => {
@@ -168,9 +219,9 @@ const createDatasetHint = computed(() => {
   }
   if (form.value.suite === 'rag_quality') {
     if (form.value.dataset_id === 'hotpot') {
-      return 'RAGAS 将在线加载 HotpotQA（需网络）。建议抽样 10–50 题。答题用系统默认对话模型；RAGAS 打分用下面单独选的模型。'
+      return '先跑 RAG 收集 question / 检索片段 / 回答 / 标准答案（需网络加载 HotpotQA）。收集完成后再选评分模型做离线 RAGAS。建议抽样 10–50 题。'
     }
-    return 'RAGAS 将对所选 JSON 数据集跑 Agent 检索并打分。答题用系统默认对话模型；RAGAS 打分用下面单独选的模型。'
+    return '先跑 RAG 收集 question / 检索片段 / 回答 / 标准答案。收集完成后再到结果页选择评分模型，离线打 RAGAS 分。'
   }
   return ''
 })
@@ -268,7 +319,9 @@ const filteredSamples = computed(() => {
 })
 
 function sampleRowClassName({ row }: { row: EvalSample }) {
-  return sampleVerdict(row).ok ? '' : 'sample-row-issue'
+  const verdict = sampleVerdict(row)
+  if (verdict.ok || verdict.kind === 'unscored') return ''
+  return 'sample-row-issue'
 }
 
 function setSampleFilter(filter: SampleFilter) {
@@ -276,20 +329,27 @@ function setSampleFilter(filter: SampleFilter) {
 }
 
 const sampleEmptyText = computed(() => {
+  if (sampleFilter.value === 'unscored' && sampleTotal.value) {
+    return '没有未打分的题目。可点「全部」查看逐题明细。'
+  }
   if (sampleFilter.value === 'issues' && sampleTotal.value) {
     return '这批题里没有答错的。可点「全部」查看逐题明细。'
   }
   return '暂无逐题明细'
 })
 
-const sampleColumns = [
-  { colKey: 'qid', title: '#', width: 48 },
-  { colKey: 'verdict', title: '判定', width: 132 },
-  { colKey: 'question', title: '问题', minWidth: 140, ellipsis: true },
-  { colKey: 'answers', title: '正确答案 / 系统答案', minWidth: 180 },
-  { colKey: 'latency', title: '耗时', width: 80 },
-  { colKey: 'sampleMetrics', title: '指标', width: 180 },
-]
+const sampleColumns = computed(() => {
+  const intent = detailTask.value?.suite === 'intent_bench'
+  return [
+    { colKey: 'qid', title: '#', width: 48 },
+    { colKey: 'verdict', title: '判定', width: 132 },
+    { colKey: 'question', title: '问题', minWidth: 140, ellipsis: true },
+    { colKey: 'gold', title: intent ? '标注意图' : '正确答案', minWidth: 140 },
+    { colKey: 'pred', title: intent ? '识别结果' : '系统答案', minWidth: 180 },
+    { colKey: 'latency', title: '耗时', width: 80 },
+    { colKey: 'sampleMetrics', title: '指标', width: 160 },
+  ]
+})
 
 const pagedSamples = computed(() => {
   const start = (samplePage.value - 1) * samplePageSize.value
@@ -340,7 +400,8 @@ function snapshotModelLabel(task: EvalTask, key: 'chat_model_id' | 'embedding_mo
   return rec ? modelDisplayName(rec) : id
 }
 
-function formatSampleMetrics(metrics: Record<string, unknown> | null | undefined): string {
+function formatSampleMetrics(row: EvalSample): string {
+  const metrics = row.metrics
   if (!metrics) return '—'
   const rag = metrics.ragas as Record<string, number> | undefined
   const ret = metrics.retrieval as Record<string, number> | undefined
@@ -369,7 +430,8 @@ function formatSampleMetrics(metrics: Record<string, unknown> | null | undefined
         .join(' '),
     )
   } else if (metrics.ragas && typeof metrics.ragas === 'object') {
-    parts.push('RAGAS 未打分')
+    const err = row.details?.ragas_error
+    parts.push(err ? `RAGAS 失败：${err}` : 'RAGAS 未打分')
   }
   return parts.join(' · ') || JSON.stringify(metrics).slice(0, 60)
 }
@@ -445,9 +507,7 @@ async function submitCreate() {
     if (payload.suite === 'rag_quality' && !payload.sample_limit) {
       payload.sample_limit = 10
     }
-    if (payload.suite !== 'rag_quality' || !payload.ragas_model_id) {
-      delete payload.ragas_model_id
-    }
+    delete payload.ragas_model_id
     delete payload.chat_model_id
     delete payload.embedding_model_id
     await createEvalTask(payload)
@@ -736,6 +796,81 @@ async function produceResult(row: EvalTask) {
   }
 }
 
+function openScoreDialog(row: EvalTask) {
+  scoreTarget.value = row
+  const fromSnap = row.config_snapshot?.ragas_model_id
+  scoreModelId.value =
+    (typeof fromSnap === 'string' && fromSnap) ||
+    form.value.ragas_model_id ||
+    selectInitialModelId(evalModels.value, 'KnowledgeQA') ||
+    undefined
+  scoreVisible.value = true
+}
+
+async function submitScore() {
+  const row = scoreTarget.value
+  if (!row) return
+  if (!scoreModelId.value) {
+    MessagePlugin.warning('请选择 RAGAS 评分模型')
+    return
+  }
+  scoringIds.value = { ...scoringIds.value, [row.id]: true }
+  try {
+    const updated = await startRagasScore(row.id, scoreModelId.value)
+    upsertTask(updated)
+    scoreVisible.value = false
+    MessagePlugin.success('已开始离线 RAGAS 打分，请确保 Celery worker 已启动')
+    activeTab.value = 'tasks'
+    await loadTasks({ silent: true })
+    startPolling()
+    startClock()
+    if (detailTask.value?.id === row.id) detailTask.value = updated
+  } catch (e) {
+    MessagePlugin.error((e as Error).message)
+  } finally {
+    const next = { ...scoringIds.value }
+    delete next[row.id]
+    scoringIds.value = next
+  }
+}
+
+async function retryFailed(row: EvalTask, qids?: number[]) {
+  retryingIds.value = { ...retryingIds.value, [row.id]: true }
+  try {
+    const updated = await retryEvalFailed(row.id, qids)
+    upsertTask(updated)
+    MessagePlugin.success(
+      qids?.length === 1 ? '已开始重试本题，请确保 Celery worker 已启动' : '已开始重试失败题，请确保 Celery worker 已启动',
+    )
+    activeTab.value = 'tasks'
+    await loadTasks({ silent: true })
+    startPolling()
+    startClock()
+    if (detailTask.value?.id === row.id) detailTask.value = updated
+  } catch (e) {
+    MessagePlugin.error((e as Error).message)
+  } finally {
+    const next = { ...retryingIds.value }
+    delete next[row.id]
+    retryingIds.value = next
+  }
+}
+
+function confirmRetryFailed(row: EvalTask, qids?: number[]) {
+  const count = qids?.length || retryableCount(row, detailTask.value?.id === row.id ? detailSamples.value : undefined)
+  const dlg = DialogPlugin.confirm({
+    header: qids?.length === 1 ? '重试本题' : '重试失败题',
+    body: qids?.length === 1
+      ? '将按原配置重新跑这一题，成功后覆盖原来的失败结果。'
+      : `将按原配置重跑 ${count} 道失败题（运行出错${row.suite === 'rag_quality' ? '或空答' : ''}），成功后覆盖原来的失败结果。`,
+    confirmBtn: { content: '开始重试', theme: 'primary' },
+    onConfirm: () => {
+      dlg.destroy()
+      void retryFailed(row, qids)
+    },
+  })
+}
+
 function confirmProduceResult(row: EvalTask) {
   if (row.status === 'running' || row.status === 'pending') {
     const dlg = DialogPlugin.confirm({
@@ -755,7 +890,8 @@ function confirmProduceResult(row: EvalTask) {
 async function onRowClick(ctx: { row: EvalTask }) {
   const id = ctx.row.id
   detailVisible.value = true
-  sampleFilter.value = 'issues'
+  sampleFilter.value =
+    ctx.row.suite === 'rag_quality' && !hasRagasMetrics(ctx.row) ? 'unscored' : 'issues'
   samplePage.value = 1
   expandedQids.value = []
   detailTask.value = ctx.row
@@ -894,7 +1030,7 @@ onUnmounted(() => {
 
       <t-tab-panel value="tasks" :label="activeTasks.length ? `测评任务 (${activeTasks.length})` : '测评任务'">
         <t-alert theme="info" class="tip">
-          进行中的评测显示在这里。跑完或点「产出结果」后会出现在「评测结果」。
+          进行中的评测显示在这里。rag_quality 收集完成后会出现在「评测结果」，再选评分模型做离线 RAGAS。
           <code>celery -A api.celery_app.celery worker -B --loglevel=info</code>
         </t-alert>
         <div v-if="activeTasks.length" class="live-panel">
@@ -962,7 +1098,7 @@ onUnmounted(() => {
 
       <t-tab-panel value="results" :label="resultTasks.length ? `评测结果 (${resultTasks.length})` : '评测结果'">
         <t-alert theme="info" class="tip">
-          跑完、中断或手动「产出结果」后会出现在这里。卡片会先标出答错题数；点进去默认只看出错的题目。
+          跑完、中断或手动「产出结果」后会出现在这里。rag_quality 先收集 RAG 轨迹，再点「RAGAS 打分」选评分模型。
         </t-alert>
         <div v-if="resultTasks.length" class="result-list">
           <article
@@ -977,8 +1113,8 @@ onUnmounted(() => {
           >
             <div class="live-card-top">
               <div class="live-card-title">
-                <t-tag :theme="statusTheme(t.status, isPartialResult(t))" variant="light" size="small">
-                  {{ statusLabel(t.status, isPartialResult(t)) }}
+                <t-tag :theme="taskStatusTheme(t)" variant="light" size="small">
+                  {{ taskStatusLabel(t) }}
                 </t-tag>
                 <strong>{{ t.dataset_id }}</strong>
                 <span class="muted">{{ suiteLabel(t.suite) }} · {{ t.pipeline_profile }}</span>
@@ -996,6 +1132,24 @@ onUnmounted(() => {
             <p class="result-card-id mono">{{ t.id }}</p>
             <div class="live-card-actions" @click.stop>
               <t-button size="small" variant="outline" @click="onRowClick({ row: t })">查看明细</t-button>
+              <t-button
+                v-if="canRetryFailed(t)"
+                size="small"
+                theme="warning"
+                :loading="Boolean(retryingIds[t.id])"
+                @click="confirmRetryFailed(t)"
+              >
+                重试失败题
+              </t-button>
+              <t-button
+                v-if="canScoreRagas(t)"
+                size="small"
+                theme="primary"
+                :loading="Boolean(scoringIds[t.id])"
+                @click="openScoreDialog(t)"
+              >
+                {{ hasRagasMetrics(t) ? '重新 RAGAS 打分' : 'RAGAS 打分' }}
+              </t-button>
               <t-button
                 v-if="canProduceResult(t)"
                 size="small"
@@ -1032,7 +1186,7 @@ onUnmounted(() => {
           <t-radio-group v-model="form.suite">
             <t-radio value="rag_bench">rag_bench（快）</t-radio>
             <t-radio value="intent_bench">intent_bench（意图）</t-radio>
-            <t-radio value="rag_quality">rag_quality（RAGAS，慢）</t-radio>
+            <t-radio value="rag_quality">rag_quality（先收集，再离线 RAGAS）</t-radio>
           </t-radio-group>
         </t-form-item>
         <t-form-item v-if="form.suite === 'rag_bench'" label="Pipeline">
@@ -1040,14 +1194,6 @@ onUnmounted(() => {
             <t-radio value="rag_fixed">rag_fixed</t-radio>
             <t-radio value="rag_agent">rag_agent</t-radio>
           </t-radio-group>
-        </t-form-item>
-        <t-form-item v-if="form.suite === 'rag_quality'" label="RAGAS 评分模型">
-          <ModelSelector
-            v-model:selected-model-id="form.ragas_model_id"
-            model-type="KnowledgeQA"
-            :all-models="evalModels"
-            placeholder="用于忠实度、相关性等打分"
-          />
         </t-form-item>
         <t-form-item :label="form.dataset_id.startsWith('squad') ? '抽样题数（按段）' : '抽样题数'">
           <t-input-number v-model="form.sample_limit" :min="1" :max="500" placeholder="全部" theme="normal" />
@@ -1057,7 +1203,7 @@ onUnmounted(() => {
           <p class="muted form-hint">
             {{
               form.suite === 'rag_quality'
-                ? 'RAGAS 每题会多次调用模型，并行度建议 1。遇到 429/TPM 会自动等 30–90 秒后重试。'
+                ? '这是收集 RAG 回答时的并行度，建议 1。RAGAS 打分在结果收集完成后再单独发起。'
                 : '遇到供应商 429/TPM 限额时请降到 1；评测会自动等待后重试。'
             }}
           </p>
@@ -1095,6 +1241,29 @@ onUnmounted(() => {
         </t-form-item>
         <t-form-item label="来源">
           <t-input v-model="editForm.source" />
+        </t-form-item>
+      </t-form>
+    </t-dialog>
+
+    <t-dialog
+      v-model:visible="scoreVisible"
+      header="离线 RAGAS 打分"
+      :confirm-on-enter="false"
+      :confirm-btn="{ content: '开始打分', theme: 'primary', loading: Boolean(scoreTarget && scoringIds[scoreTarget.id]) }"
+      @confirm="submitScore"
+    >
+      <p class="muted form-hint">
+        使用已收集的 question、检索片段、系统回答和标准答案打分。运行失败或空答的题目不会送进 RAGAS。
+        不要用 DeepSeek-R1 这类思考模型打分，会极慢甚至卡住；选普通对话模型（如 V3 / Qwen）。
+      </p>
+      <t-form label-width="110px">
+        <t-form-item label="评分模型" required>
+          <ModelSelector
+            v-model:selected-model-id="scoreModelId"
+            model-type="KnowledgeQA"
+            :all-models="evalModels"
+            placeholder="用于忠实度、相关性、上下文精确度/召回"
+          />
         </t-form-item>
       </t-form>
     </t-dialog>
@@ -1239,11 +1408,11 @@ onUnmounted(() => {
           <t-descriptions-item label="Pipeline">{{ detailTask.pipeline_profile }}</t-descriptions-item>
           <t-descriptions-item label="对话模型">系统默认</t-descriptions-item>
           <t-descriptions-item v-if="detailTask.suite === 'rag_quality'" label="RAGAS 评分模型">
-            {{ snapshotModelLabel(detailTask, 'ragas_model_id') }}
+            {{ snapshotModelLabel(detailTask, 'ragas_model_id') === '系统默认' ? '尚未选择（打分时再选）' : snapshotModelLabel(detailTask, 'ragas_model_id') }}
           </t-descriptions-item>
           <t-descriptions-item label="状态">
-            <t-tag :theme="statusTheme(detailTask.status, isPartialResult(detailTask))">
-              {{ statusLabel(detailTask.status, isPartialResult(detailTask)) }}
+            <t-tag :theme="taskStatusTheme(detailTask)">
+              {{ taskStatusLabel(detailTask) }}
             </t-tag>
           </t-descriptions-item>
           <t-descriptions-item label="耗时">{{ taskDurationLabel(detailTask) }}</t-descriptions-item>
@@ -1262,6 +1431,26 @@ onUnmounted(() => {
           </t-descriptions-item>
         </t-descriptions>
 
+        <div v-if="canRetryFailed(detailTask, detailSamples) && !isActiveTask(detailTask)" class="detail-produce">
+          <t-button
+            theme="warning"
+            :loading="Boolean(retryingIds[detailTask.id])"
+            @click="confirmRetryFailed(detailTask)"
+          >
+            重试失败题（{{ retryableCount(detailTask, detailSamples) }}）
+          </t-button>
+          <span class="muted">只重跑运行出错{{ detailTask.suite === 'rag_quality' ? '或空答' : '' }}的题目，已成功的题不会动。</span>
+        </div>
+        <div v-if="canScoreRagas(detailTask) && !isActiveTask(detailTask)" class="detail-produce">
+          <t-button
+            theme="primary"
+            :loading="Boolean(scoringIds[detailTask.id])"
+            @click="openScoreDialog(detailTask)"
+          >
+            {{ hasRagasMetrics(detailTask) ? '重新 RAGAS 打分' : '开始 RAGAS 打分' }}
+          </t-button>
+          <span class="muted">用已收集的 question / 检索片段 / 回答 / 标准答案离线打分，失败题不会送进 RAGAS。</span>
+        </div>
         <div v-if="canProduceResult(detailTask) && !isActiveTask(detailTask)" class="detail-produce">
           <t-button
             theme="primary"
@@ -1318,14 +1507,17 @@ onUnmounted(() => {
               {{ sampleVerdict(row).label }}
             </t-tag>
           </template>
-          <template #answers="{ row }">
-            <span class="clip">{{ formatGoldLabel(row) }} → {{ formatPredLabel(row) }}</span>
+          <template #gold="{ row }">
+            <span class="clip">{{ formatGoldLabel(row) }}</span>
+          </template>
+          <template #pred="{ row }">
+            <span class="clip">{{ formatPredLabel(row) }}</span>
           </template>
           <template #latency="{ row }">
             {{ row.latency_ms != null ? `${row.latency_ms}ms` : '—' }}
           </template>
           <template #sampleMetrics="{ row }">
-            <span class="mono clip">{{ formatSampleMetrics(row.metrics) }}</span>
+            <span class="mono clip">{{ formatSampleMetrics(row) }}</span>
           </template>
           <template #expanded-row="{ row }">
             <div class="expand-block">
@@ -1351,6 +1543,23 @@ onUnmounted(() => {
                 <span v-if="retrievalHit(row) === true" class="hit-ok"> · 已命中</span>
                 <span v-else-if="retrievalHit(row) === false" class="hit-miss"> · 未命中</span>
               </p>
+              <p v-if="isRetryableSample(detailTask, row)" class="expand-retry">
+                <t-button
+                  size="small"
+                  theme="warning"
+                  variant="outline"
+                  :loading="Boolean(retryingIds[detailTask.id])"
+                  @click="confirmRetryFailed(detailTask, [row.qid])"
+                >
+                  重试本题
+                </t-button>
+              </p>
+              <div v-if="sampleContexts(row).length" class="expand-contexts">
+                <strong>检索片段（{{ sampleContexts(row).length }}）：</strong>
+                <ol>
+                  <li v-for="(ctx, idx) in sampleContexts(row)" :key="idx">{{ ctx }}</li>
+                </ol>
+              </div>
             </div>
           </template>
         </t-table>
@@ -1938,6 +2147,23 @@ onUnmounted(() => {
   gap: 8px;
   margin-bottom: 8px !important;
   color: var(--td-text-color-primary);
+}
+
+.expand-retry {
+  margin: 8px 0 6px;
+}
+
+.expand-contexts ol {
+  margin: 6px 0 0;
+  padding-left: 1.2em;
+  color: var(--td-text-color-secondary);
+  line-height: 1.5;
+}
+
+.expand-contexts li {
+  margin-bottom: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .hit-ok {

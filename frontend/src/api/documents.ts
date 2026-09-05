@@ -20,6 +20,8 @@ export interface DocumentInfo {
   applied_strategy?: string | null
   /** 文档所属知识库（getDocumentMeta 返回） */
   knowledge_base_id?: number | null
+  /** MinIO 原文件 key；评测灌库等只有切块时为空 */
+  stored_name?: string | null
   /** 解析出的内嵌图片元数据（含 MinIO storage_key），列表/详情据此展示图片预览 */
   image_refs?: ImageRefInfo[] | null
 }
