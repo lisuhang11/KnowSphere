@@ -196,6 +196,7 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
         )
         return result
 
+    asker_background = str(state.get("asker_background") or "")
     system_prompt, user_prompt = build_query_understand_prompts(
         query=current_query,
         history_pairs=history_pairs,
@@ -206,6 +207,7 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
         session_summary=str(state.get("session_summary") or ""),
         working_memory=state.get("working_memory") if isinstance(state.get("working_memory"), dict) else None,
         language=language,
+        asker_background=asker_background,
     )
 
     rewrite = current_query
@@ -267,6 +269,8 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
     thinking_extra = ""
     if result.get("image_description"):
         thinking_extra = "\n已生成图片描述（VLM）"
+    if asker_background:
+        thinking_extra += "\n已注入跨会话背景（asker_background）"
 
     _emit_thinking(
         "【1/5 查询理解】\n"

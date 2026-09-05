@@ -35,7 +35,7 @@ evaluation_router = APIRouter(prefix="/evaluation", tags=["evaluation"])
 class EvaluationRequest(BaseModel):
     dataset_id: str = "campus_demo"
     suite: Literal["rag_bench", "rag_quality", "intent_bench"] = "rag_bench"
-    pipeline_profile: Literal["rag_fixed", "rag_agent", "intent"] = "rag_fixed"
+    pipeline_profile: Literal["rag_agent", "intent"] = "rag_agent"
     sample_limit: int | None = Field(default=None, ge=1, le=500)
     kb_template_id: int | None = None
     chat_model_id: str | None = None
@@ -76,11 +76,9 @@ def _build_config(req: EvaluationRequest) -> EvalConfig:
     if req.rerank_model_id:
         overrides.setdefault("rerank_model", req.rerank_model_id)
     if req.suite == "intent_bench":
-        profile: Literal["rag_fixed", "rag_agent", "intent"] = "intent"
-    elif req.suite == "rag_quality":
-        profile = "rag_agent"
+        profile: Literal["rag_agent", "intent"] = "intent"
     else:
-        profile = req.pipeline_profile
+        profile = "rag_agent"
     return EvalConfig(
         dataset_id=req.dataset_id,
         suite=req.suite,
@@ -111,10 +109,6 @@ def list_evaluation_tasks(
 @evaluation_router.post("")
 def create_evaluation(req: EvaluationRequest) -> dict[str, Any]:
     """创建评测任务（异步 Celery 执行）。"""
-    if req.suite == "rag_quality" and req.pipeline_profile == "rag_fixed":
-        req.pipeline_profile = "rag_agent"
-    if req.suite == "intent_bench" and req.pipeline_profile not in ("intent", "rag_agent", "rag_fixed"):
-        raise HTTPException(status_code=400, detail="intent_bench 将强制使用 intent pipeline")
     if req.suite in ("rag_quality", "intent_bench", "rag_bench"):
         try:
             from evals.datasets import load_dataset

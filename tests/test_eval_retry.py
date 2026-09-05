@@ -3,7 +3,12 @@ import time
 import pytest
 
 from evals.failed import is_retryable_sample, retryable_qids
-from evals.runners.ragas_runner import _ragas_is_finished, _run_with_timeout
+from evals.runners.ragas_runner import (
+    _ragas_is_finished,
+    _run_with_timeout,
+    select_dataset_retry_items,
+)
+from evals.schemas import QAPair
 
 
 def test_retryable_samples_errors_and_empty_rag_quality():
@@ -27,6 +32,18 @@ def test_retryable_samples_bench_only_errors():
     ]
     assert retryable_qids(samples, suite="rag_bench") == [10, 12]
     assert retryable_qids(samples, suite="intent_bench") == [10, 12]
+
+
+def test_select_dataset_retry_items_matches_qid_or_index():
+    items = [
+        QAPair(qid=10, question="a", pids=[], passages=[], answer=""),
+        QAPair(qid=20, question="b", pids=[], passages=[], answer=""),
+    ]
+    by_qid = select_dataset_retry_items(items, [20])
+    assert [q for q, _ in by_qid] == [20]
+    by_idx = select_dataset_retry_items(items, [0])
+    assert [q for q, it in by_idx] == [0]
+    assert by_idx[0][1].question == "a"
 
 
 def test_ragas_is_finished_never_blocks_on_vendor_finish_reason():

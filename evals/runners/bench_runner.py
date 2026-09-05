@@ -15,7 +15,6 @@ from evals.corpus import ingest_passages
 from evals.datasets import load_dataset
 from evals.metrics.aggregate import average_metrics, sample_metrics_to_dict
 from evals.pipelines.agent import run_rag_agent
-from evals.pipelines.fixed import run_rag_fixed
 from evals.schemas import EvalConfig, SampleResult
 from utils.vector_store import ChunkStore
 
@@ -23,37 +22,31 @@ logger = logging.getLogger(__name__)
 
 
 def _make_runner(config: EvalConfig):
+    """rag_bench / rag_quality 只跑产品 LangGraph（rag_agent）。"""
     layers = config.metric_layers
     kwargs = eval_chat_model_kwargs(config)
 
-    if config.pipeline_profile == "rag_agent":
-        from agents.agent import build_agent
-        from evals.pipelines.agent import eval_system_prompt
-        from tools.retrieval.doc_retrieval import doc_retrieval
+    from agents.agent import build_agent
+    from evals.pipelines.agent import eval_system_prompt
+    from tools.retrieval.doc_retrieval import doc_retrieval
 
-        agent = build_agent(
-            system_prompt=eval_system_prompt(layers),
-            tools=[doc_retrieval],
+    agent = build_agent(
+        system_prompt=eval_system_prompt(layers),
+        tools=[doc_retrieval],
+        chat_model_kwargs=kwargs,
+    )
+
+    def _run(item, kb_id: int, owner: str) -> SampleResult:
+        set_current_owner(owner)
+        return run_rag_agent(
+            item,
+            kb_id=kb_id,
+            agent=agent,
+            metric_layers=layers,
             chat_model_kwargs=kwargs,
         )
 
-        def _run(item, kb_id: int, owner: str) -> SampleResult:
-            set_current_owner(owner)
-            return run_rag_agent(
-                item,
-                kb_id=kb_id,
-                agent=agent,
-                metric_layers=layers,
-                chat_model_kwargs=kwargs,
-            )
-
-        return _run
-
-    def _run_fixed(item, kb_id: int, owner: str) -> SampleResult:
-        set_current_owner(owner)
-        return run_rag_fixed(item, kb_id=kb_id, chat_model_kwargs=kwargs, metric_layers=layers)
-
-    return _run_fixed
+    return _run
 
 
 def run_bench(

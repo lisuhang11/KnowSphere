@@ -1,23 +1,65 @@
 {
   "summary": {
-    "sample_count": 5,
+    "sample_count": 50,
     "error_count": 0,
     "intent_metrics": {
-      "accuracy": 0.6,
-      "routing_accuracy": 0.6,
-      "macro_f1": 0.37499999999999994,
+      "accuracy": 0.94,
+      "routing_accuracy": 1.0,
+      "macro_f1": 0.918840579710145,
       "per_class": {
+        "chitchat": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 6
+        },
+        "clarification": {
+          "precision": 1.0,
+          "recall": 0.25,
+          "f1": 0.4,
+          "support": 4
+        },
+        "doc_only": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 4
+        },
+        "follow_up": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 6
+        },
         "greeting": {
-          "precision": 0.0,
-          "recall": 0.0,
-          "f1": 0.0,
-          "support": 2
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 5
+        },
+        "image_only": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 4
         },
         "kb_search": {
-          "precision": 0.6,
+          "precision": 0.7692307692307693,
           "recall": 1.0,
-          "f1": 0.7499999999999999,
-          "support": 3
+          "f1": 0.8695652173913044,
+          "support": 10
+        },
+        "summarize": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 5
+        },
+        "web_search": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 6
         }
       }
     }
@@ -27,100 +69,1000 @@
       "qid": 0,
       "question": "你好",
       "reference": "greeting",
-      "response": "kb_search",
+      "response": "greeting",
       "retrieval_ids": [],
       "retrieval_gt": [],
       "metrics": {
         "intent": {
-          "correct": 0.0,
-          "routing_correct": 0.0,
-          "pred_intent": "kb_search",
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "greeting",
           "intent_gt": "greeting",
           "rewrite_pred": "你好",
           "kb_selected": true
         }
       },
-      "latency_ms": 2263,
+      "latency_ms": 3085,
       "error": null
     },
     {
       "qid": 1,
-      "question": "谢谢你的帮助",
+      "question": "谢谢",
       "reference": "greeting",
+      "response": "greeting",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "greeting",
+          "intent_gt": "greeting",
+          "rewrite_pred": "谢谢",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 3080,
+      "error": null
+    },
+    {
+      "qid": 2,
+      "question": "再见",
+      "reference": "greeting",
+      "response": "greeting",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "greeting",
+          "intent_gt": "greeting",
+          "rewrite_pred": "再见",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 3087,
+      "error": null
+    },
+    {
+      "qid": 3,
+      "question": "早上好",
+      "reference": "greeting",
+      "response": "greeting",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "greeting",
+          "intent_gt": "greeting",
+          "rewrite_pred": "早上好",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 3089,
+      "error": null
+    },
+    {
+      "qid": 4,
+      "question": "辛苦了，感谢你的帮助",
+      "reference": "greeting",
+      "response": "greeting",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "greeting",
+          "intent_gt": "greeting",
+          "rewrite_pred": "辛苦了，感谢你的帮助",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 2066,
+      "error": null
+    },
+    {
+      "qid": 5,
+      "question": "总结一下我们刚才的对话",
+      "reference": "summarize",
+      "response": "summarize",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "summarize",
+          "intent_gt": "summarize",
+          "rewrite_pred": "总结一下我们刚才的对话",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 2081,
+      "error": null
+    },
+    {
+      "qid": 6,
+      "question": "回顾一下我们聊了什么",
+      "reference": "summarize",
+      "response": "summarize",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "summarize",
+          "intent_gt": "summarize",
+          "rewrite_pred": "回顾一下我们聊了什么",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 2081,
+      "error": null
+    },
+    {
+      "qid": 7,
+      "question": "把上面的讨论整理成要点",
+      "reference": "summarize",
+      "response": "summarize",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "summarize",
+          "intent_gt": "summarize",
+          "rewrite_pred": "把关于年假怎么休的讨论整理成要点",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 2230,
+      "error": null
+    },
+    {
+      "qid": 8,
+      "question": "总结一下这次会话",
+      "reference": "summarize",
+      "response": "summarize",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "summarize",
+          "intent_gt": "summarize",
+          "rewrite_pred": "总结一下这次会话",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1559,
+      "error": null
+    },
+    {
+      "qid": 9,
+      "question": "我们刚才说的内容你帮我概括一下",
+      "reference": "summarize",
+      "response": "summarize",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "summarize",
+          "intent_gt": "summarize",
+          "rewrite_pred": "我们刚才说的内容你帮我概括一下",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1648,
+      "error": null
+    },
+    {
+      "qid": 10,
+      "question": "今天天气怎么样",
+      "reference": "web_search",
+      "response": "web_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "web_search",
+          "intent_gt": "web_search",
+          "rewrite_pred": "今天天气怎么样",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1722,
+      "error": null
+    },
+    {
+      "qid": 11,
+      "question": "最新的新闻有哪些",
+      "reference": "web_search",
+      "response": "web_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "web_search",
+          "intent_gt": "web_search",
+          "rewrite_pred": "最新的新闻有哪些",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1289,
+      "error": null
+    },
+    {
+      "qid": 12,
+      "question": "今天热搜是什么",
+      "reference": "web_search",
+      "response": "web_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "web_search",
+          "intent_gt": "web_search",
+          "rewrite_pred": "今天的热搜是什么",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1476,
+      "error": null
+    },
+    {
+      "qid": 13,
+      "question": "你知道最近比较火的景甜代孕相关事件吗",
+      "reference": "web_search",
+      "response": "web_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "web_search",
+          "intent_gt": "web_search",
+          "rewrite_pred": "最近比较火的景甜代孕相关事件是什么",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1641,
+      "error": null
+    },
+    {
+      "qid": 14,
+      "question": "昨晚刚发生的足球比赛比分是多少",
+      "reference": "web_search",
+      "response": "web_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "web_search",
+          "intent_gt": "web_search",
+          "rewrite_pred": "昨晚刚发生的足球比赛比分是多少",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1488,
+      "error": null
+    },
+    {
+      "qid": 15,
+      "question": "美元兑人民币现在的实时汇率",
+      "reference": "web_search",
+      "response": "web_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "web_search",
+          "intent_gt": "web_search",
+          "rewrite_pred": "美元兑人民币现在的实时汇率",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1415,
+      "error": null
+    },
+    {
+      "qid": 16,
+      "question": "报销流程是什么",
+      "reference": "kb_search",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "kb_search",
+          "rewrite_pred": "报销流程是什么",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1307,
+      "error": null
+    },
+    {
+      "qid": 17,
+      "question": "访客怎么登记",
+      "reference": "kb_search",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "kb_search",
+          "rewrite_pred": "访客登记的流程是什么",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1341,
+      "error": null
+    },
+    {
+      "qid": 18,
+      "question": "食堂在哪",
+      "reference": "kb_search",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "kb_search",
+          "rewrite_pred": "食堂的位置在哪里",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1270,
+      "error": null
+    },
+    {
+      "qid": 19,
+      "question": "帮我查一下考勤制度",
+      "reference": "kb_search",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "kb_search",
+          "rewrite_pred": "考勤制度的相关内容是什么",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1302,
+      "error": null
+    },
+    {
+      "qid": 20,
+      "question": "什么是RAG架构",
+      "reference": "kb_search",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "kb_search",
+          "rewrite_pred": "什么是RAG架构",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1454,
+      "error": null
+    },
+    {
+      "qid": 21,
+      "question": "李稣航是谁",
+      "reference": "kb_search",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "kb_search",
+          "rewrite_pred": "李稣航是谁",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1299,
+      "error": null
+    },
+    {
+      "qid": 22,
+      "question": "整理知识库中的数据",
+      "reference": "kb_search",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "kb_search",
+          "rewrite_pred": "知识库中的数据整理",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1294,
+      "error": null
+    },
+    {
+      "qid": 23,
+      "question": "列出知识库里所有文档",
+      "reference": "kb_search",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "kb_search",
+          "rewrite_pred": "列出知识库中所有文档",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1304,
+      "error": null
+    },
+    {
+      "qid": 24,
+      "question": "年假申请需要走哪些步骤",
+      "reference": "kb_search",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "kb_search",
+          "rewrite_pred": "年假申请需要走哪些步骤",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1367,
+      "error": null
+    },
+    {
+      "qid": 25,
+      "question": "这个话题还有什么相关的内容",
+      "reference": "kb_search",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "kb_search",
+          "rewrite_pred": "报销流程还有哪些相关内容",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1302,
+      "error": null
+    },
+    {
+      "qid": 26,
+      "question": "那个怎么弄",
+      "reference": "clarification",
+      "response": "clarification",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "clarification",
+          "intent_gt": "clarification",
+          "rewrite_pred": "您提到的方法具体怎么操作",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1263,
+      "error": null
+    },
+    {
+      "qid": 27,
+      "question": "这个呢",
+      "reference": "clarification",
       "response": "kb_search",
       "retrieval_ids": [],
       "retrieval_gt": [],
       "metrics": {
         "intent": {
           "correct": 0.0,
-          "routing_correct": 0.0,
+          "routing_correct": 1.0,
           "pred_intent": "kb_search",
-          "intent_gt": "greeting",
-          "rewrite_pred": "谢谢你的帮助",
+          "intent_gt": "clarification",
+          "rewrite_pred": "这个话题有什么相关内容",
           "kb_selected": true
         }
       },
-      "latency_ms": 1314,
+      "latency_ms": 1204,
       "error": null
     },
     {
-      "qid": 2,
-      "question": "员工手册里年假怎么规定？",
-      "reference": "kb_search",
+      "qid": 28,
+      "question": "帮我查一下",
+      "reference": "clarification",
       "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 0.0,
+          "routing_correct": 1.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "clarification",
+          "rewrite_pred": "帮我查一下",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1355,
+      "error": null
+    },
+    {
+      "qid": 29,
+      "question": "还有吗",
+      "reference": "clarification",
+      "response": "kb_search",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 0.0,
+          "routing_correct": 1.0,
+          "pred_intent": "kb_search",
+          "intent_gt": "clarification",
+          "rewrite_pred": "这个话题还有什么相关的内容",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1383,
+      "error": null
+    },
+    {
+      "qid": 30,
+      "question": "上面第三点展开讲讲",
+      "reference": "follow_up",
+      "response": "follow_up",
       "retrieval_ids": [],
       "retrieval_gt": [],
       "metrics": {
         "intent": {
           "correct": 1.0,
           "routing_correct": 1.0,
-          "pred_intent": "kb_search",
-          "intent_gt": "kb_search",
-          "rewrite_pred": "员工手册里年假怎么规定？",
+          "pred_intent": "follow_up",
+          "intent_gt": "follow_up",
+          "rewrite_pred": "报销要注意的第三点主管先批是什么意思",
           "kb_selected": true
         }
       },
-      "latency_ms": 1419,
+      "latency_ms": 1472,
       "error": null
     },
     {
-      "qid": 3,
-      "question": "出差报销流程是什么？",
-      "reference": "kb_search",
-      "response": "kb_search",
+      "qid": 31,
+      "question": "你刚才说的那个方案再详细说说",
+      "reference": "follow_up",
+      "response": "follow_up",
       "retrieval_ids": [],
       "retrieval_gt": [],
       "metrics": {
         "intent": {
           "correct": 1.0,
           "routing_correct": 1.0,
-          "pred_intent": "kb_search",
-          "intent_gt": "kb_search",
-          "rewrite_pred": "出差报销流程是什么？",
+          "pred_intent": "follow_up",
+          "intent_gt": "follow_up",
+          "rewrite_pred": "混合检索加 rerank 的优化方案再详细说说",
           "kb_selected": true
         }
       },
-      "latency_ms": 1622,
+      "latency_ms": 1502,
       "error": null
     },
     {
-      "qid": 4,
-      "question": "整理知识库里的体检指标",
-      "reference": "kb_search",
-      "response": "kb_search",
+      "qid": 32,
+      "question": "第二点是什么意思",
+      "reference": "follow_up",
+      "response": "follow_up",
       "retrieval_ids": [],
       "retrieval_gt": [],
       "metrics": {
         "intent": {
           "correct": 1.0,
           "routing_correct": 1.0,
-          "pred_intent": "kb_search",
-          "intent_gt": "kb_search",
-          "rewrite_pred": "整理知识库里的体检指标",
+          "pred_intent": "follow_up",
+          "intent_gt": "follow_up",
+          "rewrite_pred": "入职材料中的学历证明是什么意思",
           "kb_selected": true
         }
       },
-      "latency_ms": 1503,
+      "latency_ms": 1670,
+      "error": null
+    },
+    {
+      "qid": 33,
+      "question": "刚才那个例子再用大白话解释一下",
+      "reference": "follow_up",
+      "response": "follow_up",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "follow_up",
+          "intent_gt": "follow_up",
+          "rewrite_pred": "用大白话再解释一下刚才关于向量检索的例子",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1803,
+      "error": null
+    },
+    {
+      "qid": 34,
+      "question": "图里那个红色框是什么意思",
+      "reference": "follow_up",
+      "response": "follow_up",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "follow_up",
+          "intent_gt": "follow_up",
+          "rewrite_pred": "架构图中红色框标出的检索服务是什么意思",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1693,
+      "error": null
+    },
+    {
+      "qid": 35,
+      "question": "这份文件里你提到的第三节再讲细一点",
+      "reference": "follow_up",
+      "response": "follow_up",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "follow_up",
+          "intent_gt": "follow_up",
+          "rewrite_pred": "这份文件里关于权限模型和审批流的第三节再讲细一点",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1712,
+      "error": null
+    },
+    {
+      "qid": 36,
+      "question": "这张图片是什么",
+      "reference": "image_only",
+      "response": "image_only",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "image_only",
+          "intent_gt": "image_only",
+          "rewrite_pred": "这张图片是什么",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 2598,
+      "error": null
+    },
+    {
+      "qid": 37,
+      "question": "描述一下图片内容",
+      "reference": "image_only",
+      "response": "image_only",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "image_only",
+          "intent_gt": "image_only",
+          "rewrite_pred": "描述一下图片内容",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 3937,
+      "error": null
+    },
+    {
+      "qid": 38,
+      "question": "翻译图中文字",
+      "reference": "image_only",
+      "response": "image_only",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "image_only",
+          "intent_gt": "image_only",
+          "rewrite_pred": "翻译图中文字",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 2207,
+      "error": null
+    },
+    {
+      "qid": 39,
+      "question": "这张图是什么意思",
+      "reference": "image_only",
+      "response": "image_only",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "image_only",
+          "intent_gt": "image_only",
+          "rewrite_pred": "这张图是什么意思",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 2625,
+      "error": null
+    },
+    {
+      "qid": 40,
+      "question": "总结一下这个文档",
+      "reference": "doc_only",
+      "response": "doc_only",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "doc_only",
+          "intent_gt": "doc_only",
+          "rewrite_pred": "总结一下这个文档",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1358,
+      "error": null
+    },
+    {
+      "qid": 41,
+      "question": "这份文件讲了什么",
+      "reference": "doc_only",
+      "response": "doc_only",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "doc_only",
+          "intent_gt": "doc_only",
+          "rewrite_pred": "这份文件讲了什么",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 2760,
+      "error": null
+    },
+    {
+      "qid": 42,
+      "question": "把附件内容提炼成要点",
+      "reference": "doc_only",
+      "response": "doc_only",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "doc_only",
+          "intent_gt": "doc_only",
+          "rewrite_pred": "把附件内容提炼成要点",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 2432,
+      "error": null
+    },
+    {
+      "qid": 43,
+      "question": "翻译这份文件",
+      "reference": "doc_only",
+      "response": "doc_only",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "doc_only",
+          "intent_gt": "doc_only",
+          "rewrite_pred": "翻译这份文件",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 16395,
+      "error": null
+    },
+    {
+      "qid": 44,
+      "question": "你是谁",
+      "reference": "chitchat",
+      "response": "chitchat",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "chitchat",
+          "intent_gt": "chitchat",
+          "rewrite_pred": "你是谁",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1487,
+      "error": null
+    },
+    {
+      "qid": 45,
+      "question": "讲个笑话",
+      "reference": "chitchat",
+      "response": "chitchat",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "chitchat",
+          "intent_gt": "chitchat",
+          "rewrite_pred": "讲个笑话",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1673,
+      "error": null
+    },
+    {
+      "qid": 46,
+      "question": "你喜欢什么颜色",
+      "reference": "chitchat",
+      "response": "chitchat",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "chitchat",
+          "intent_gt": "chitchat",
+          "rewrite_pred": "你喜欢什么颜色",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1570,
+      "error": null
+    },
+    {
+      "qid": 47,
+      "question": "你会唱歌吗",
+      "reference": "chitchat",
+      "response": "chitchat",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "chitchat",
+          "intent_gt": "chitchat",
+          "rewrite_pred": "你会唱歌吗",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1388,
+      "error": null
+    },
+    {
+      "qid": 48,
+      "question": "陪我闲聊几句",
+      "reference": "chitchat",
+      "response": "chitchat",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "chitchat",
+          "intent_gt": "chitchat",
+          "rewrite_pred": "陪我闲聊几句",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1702,
+      "error": null
+    },
+    {
+      "qid": 49,
+      "question": "今天心情怎么样",
+      "reference": "chitchat",
+      "response": "chitchat",
+      "retrieval_ids": [],
+      "retrieval_gt": [],
+      "metrics": {
+        "intent": {
+          "correct": 1.0,
+          "routing_correct": 1.0,
+          "pred_intent": "chitchat",
+          "intent_gt": "chitchat",
+          "rewrite_pred": "今天心情怎么样",
+          "kb_selected": true
+        }
+      },
+      "latency_ms": 1593,
       "error": null
     }
   ]

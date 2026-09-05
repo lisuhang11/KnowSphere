@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from api.chat import get_agent, get_checkpointer
-from config.settings import settings
+from config.settings import get_current_owner, settings
 from services.stream_manager import SessionRun, SessionRunBusy, get_stream_manager
 from skills.catalog import ordered_skill_names
 from skills.must_use import inject_must_use_messages
@@ -1024,6 +1024,7 @@ async def stream_session_run(session_id: str, body: SessionStreamRequest) -> Str
         "kb_ids": kb_ids,
         "web_search_enabled": web_on,
         "graph_enabled": graph_on,
+        "owner": get_current_owner() or settings.default_owner,
     }
     if chat_model_id:
         configurable["chat_model_id"] = chat_model_id

@@ -222,8 +222,10 @@ def test_default_metric_layers_and_prompt():
     assert default_metric_layers("rag_bench", "campus_demo") == ["retrieval", "generation"]
     prompt = eval_system_prompt(["retrieval", "squad"])
     assert "unanswerable" not in prompt
+    assert "未找到相关信息" in prompt
     assert "Evidence-First" in prompt
     assert "doc_retrieval" in prompt
+    assert "Refuse without evidence" in prompt
     assert "unanswerable" not in eval_system_prompt(["retrieval", "generation"])
 
 

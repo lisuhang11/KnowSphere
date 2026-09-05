@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 SuiteName = Literal["rag_bench", "rag_quality", "intent_bench"]
-PipelineProfile = Literal["rag_fixed", "rag_agent", "intent"]
+PipelineProfile = Literal["rag_agent", "intent"]
 TaskStatus = Literal["pending", "running", "success", "failed", "cancelled"]
 
 @dataclass
@@ -88,7 +88,7 @@ class SampleMetrics:
 class EvalConfig:
     dataset_id: str
     suite: SuiteName = "rag_bench"
-    pipeline_profile: PipelineProfile = "rag_fixed"
+    pipeline_profile: PipelineProfile = "rag_agent"
     sample_limit: int | None = None
     kb_template_id: int | None = None
     chat_model_id: str | None = None

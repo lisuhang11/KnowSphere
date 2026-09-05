@@ -218,10 +218,12 @@ def _eval_config_from_task(task: dict) -> "EvalConfig":
     from evals.schemas import EvalConfig
 
     snap = task["config_snapshot"] or {}
+    suite = snap.get("suite", task["suite"])
+    profile = "intent" if suite == "intent_bench" else "rag_agent"
     return EvalConfig(
         dataset_id=task["dataset_id"],
-        suite=snap.get("suite", task["suite"]),
-        pipeline_profile=snap.get("pipeline_profile", task["pipeline_profile"]),
+        suite=suite,
+        pipeline_profile=profile,
         sample_limit=snap.get("sample_limit"),
         kb_template_id=snap.get("kb_template_id"),
         chat_model_id=snap.get("chat_model_id"),
@@ -798,26 +800,48 @@ def run_eval_retry_task(self, task_id: str, qids: list[int] | None = None) -> di
     def _on_kb_created(kb_id: int, _name: str) -> None:
         store.update_task(task_id, eval_kb_id=kb_id, only_if_active=True)
 
+    retry_n = len(target)
+
     def _prog_simple(done: int, total: int, summary: dict | None = None) -> None:
         payload = dict(prev)
         if isinstance(summary, dict):
             payload.update(summary)
-        payload["phase"] = payload.get("phase") or ("agent" if config.suite == "rag_quality" else "eval")
-        payload["retry_finished"] = done
-        payload["retry_total"] = total
+        phase = str(payload.get("phase") or ("agent" if config.suite == "rag_quality" else "eval"))
+        payload["phase"] = phase
+        payload["retry_total"] = retry_n
+        if phase == "ingest":
+            if "ingest_finished" not in (summary or {}):
+                payload["ingest_finished"] = int(done)
+                payload["ingest_total"] = int(total)
+            payload["retry_finished"] = 0
+            store.update_task(
+                task_id,
+                finished=0,
+                total=retry_n,
+                metric_summary=payload,
+                only_if_active=True,
+            )
+            return
+        payload["retry_finished"] = int(done)
         store.update_task(
             task_id,
-            finished=done,
-            total=total,
+            finished=int(done),
+            total=retry_n,
             metric_summary=payload,
             only_if_active=True,
         )
 
     def _prog_ragas(done: int, total: int) -> None:
-        _prog_simple(done, total, {"phase": "agent"})
+        _prog_simple(done, retry_n, {"phase": "agent"})
 
     def _phase(phase: str, count: int, finished: int | None = None) -> None:
-        _prog_simple(int(finished or 0), count, {"phase": phase})
+        extra = {"phase": phase}
+        if phase == "ingest":
+            extra["ingest_finished"] = int(finished or 0)
+            extra["ingest_total"] = int(count)
+            _prog_simple(0, retry_n, extra)
+            return
+        _prog_simple(int(finished or 0), retry_n, extra)
 
     try:
         if config.suite == "intent_bench":

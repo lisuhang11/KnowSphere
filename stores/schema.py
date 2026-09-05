@@ -193,4 +193,49 @@ def init_schema(dsn: str) -> None:
               )
             """
         )
+        # 长期记忆：跨会话画像 / 兴趣 / 常查资料（对齐 WeKnora memory_items + memory_doc_affinity）
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memory_items (
+                id                TEXT PRIMARY KEY,
+                owner             TEXT NOT NULL,
+                kind              TEXT NOT NULL,
+                content           TEXT NOT NULL,
+                normalized_key    TEXT NOT NULL DEFAULT '',
+                origin            TEXT NOT NULL DEFAULT 'explicit',
+                status            TEXT NOT NULL DEFAULT 'active',
+                importance        INT  NOT NULL DEFAULT 3,
+                source_session_id TEXT NOT NULL DEFAULT '',
+                created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS memory_items_owner_status "
+            "ON memory_items (owner, status, importance DESC)"
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS memory_items_owner_kind_key
+            ON memory_items (owner, kind, normalized_key)
+            WHERE status = 'active' AND normalized_key <> ''
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memory_doc_affinity (
+                owner       TEXT NOT NULL,
+                document_id TEXT NOT NULL,
+                title       TEXT NOT NULL DEFAULT '',
+                hits        INT  NOT NULL DEFAULT 0,
+                updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (owner, document_id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS memory_doc_affinity_owner_hits "
+            "ON memory_doc_affinity (owner, hits DESC)"
+        )
         conn.commit()

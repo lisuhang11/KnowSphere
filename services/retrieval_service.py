@@ -312,8 +312,9 @@ class RetrievalService:
         def _to_list(e: Any) -> list[float] | None:
             if e is None:
                 return None
-            if hasattr(e, "to_list"):
-                return e.to_list
+            to_list = getattr(e, "to_list", None)
+            if callable(to_list):
+                return list(to_list())
             return list(e)
 
         valid = [r for r in rows if _to_list(r.get("embedding")) is not None]
@@ -329,7 +330,7 @@ class RetrievalService:
             )
 
         scores = np.array([float(r["score"]) for r in valid])
-        lo, hi = scores.min, scores.max
+        lo, hi = float(scores.min()), float(scores.max())
         rel = (scores - lo) / (hi - lo + 1e-12)
 
         n = len(valid)
@@ -348,7 +349,7 @@ class RetrievalService:
 
         if len(selected) >= 2:
             sub = cross[np.ix_(selected, selected)]
-            avg_red = float(sub[np.triu_indices(len(selected), 1)].mean)
+            avg_red = float(sub[np.triu_indices(len(selected), 1)].mean())
             logger.info(
                 "MMR 选取 %d 条（候选 %d，λ=%.2f，jaccard_w=%.2f），平均成对冗余 %.3f",
                 len(selected),

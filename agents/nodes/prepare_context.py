@@ -59,6 +59,7 @@ def _empty_turn(
         "context_block": "",
         "retrieval_note": "",
         "agent_has_tools": agent_has_tools,
+        "asker_background": "",
     }
 
 

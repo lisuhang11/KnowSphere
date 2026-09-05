@@ -104,19 +104,19 @@ python -m evals.run_eval --n 100 --seed 7     # 自定义抽样
 # 从官方 dev-v2.0.json 抽出 Normans 一篇（只需做一次）
 python -m evals.datasets.squad --title Normans --id squad_normans --overwrite
 
-# 冒烟：段落共享灌库 + rag_fixed
-python -m evals.run_bench --dataset squad_normans --profile rag_fixed --workers 4
+# 冒烟：段落共享灌库 + 产品 LangGraph（rag_agent）
+python -m evals.run_bench --dataset squad_normans --workers 4
 
 # 也可用本地 parquet（HuggingFace squad_v2 validation）
 python -m evals.datasets.squad --source /path/to/validation.parquet --title Normans --overwrite
 
 # 全量 validation 抽样（在线加载 HuggingFace squad_v2）
-python -m evals.run_bench --dataset squad_v2 --limit 200 --profile rag_agent
+python -m evals.run_bench --dataset squad_v2 --limit 200
 ```
 
 - 数据：每个 Wikipedia 段落作为 passage，`corpus_mode=shared`；`meta.is_impossible` 标记不可答题
 - 指标：Overall EM/F1、HasAns EM/F1、NoAns Acc、Span Hit（gold span 是否出现在自由回答中）、检索 recall
-- 评测使用与产品相同的 WeKnora 风格系统提示词（不再单独要求回复 `unanswerable`）
+- 评测使用与产品相同的 WeKnora 风格系统提示词；证据不足时要求拒答（如「未找到相关信息」），不强制英文 token `unanswerable`
 - 也可在前端「评测」页选择 `squad_normans` / `squad_v2` 走 rag_bench
 
 ## 关键设计说明

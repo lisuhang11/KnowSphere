@@ -3,7 +3,8 @@
 系统/用户模板照搬 Tencent/WeKnora `config/prompt_templates/rewrite.yaml`
 的 `default_rewrite`（content + user）。占位符在运行时替换：
 {{language}} / {{conversation}} / {{query}} / {{current_time}} / {{current_week}}。
-附件存在性标记对齐 WeKnora `buildPrompts`。
+附件存在性标记对齐 WeKnora `buildPrompts`；
+长期记忆以 `<asker_background>` 追加在问句后（对齐 `memoryBackground`）。
 """
 
 from __future__ import annotations
@@ -181,7 +182,11 @@ def format_rewrite_conversation(
 
 
 def _query_with_attachment_tags(
-    query: str, *, has_images: bool, has_attachments: bool
+    query: str,
+    *,
+    has_images: bool,
+    has_attachments: bool,
+    asker_background: str = "",
 ) -> str:
     """在问句后打上附件存在性标记（对齐 WeKnora buildPrompts）。"""
     content = query.strip()
@@ -193,6 +198,9 @@ def _query_with_attachment_tags(
         content += "\n<document_attached />"
     else:
         content += "\n<no_document_attached />"
+    extra = (asker_background or "").strip()
+    if extra:
+        content += extra if extra.startswith("\n") else "\n" + extra
     return content
 
 
@@ -207,6 +215,7 @@ def build_query_understand_prompts(
     session_summary: str = "",
     working_memory: dict | None = None,
     language: str | None = None,
+    asker_background: str = "",
 ) -> tuple[str, str]:
     from utils.language import answer_language_for_query, apply_answer_language
 
@@ -233,7 +242,10 @@ def build_query_understand_prompts(
         .replace(
             "{{query}}",
             _query_with_attachment_tags(
-                query, has_images=has_images, has_attachments=has_attachments
+                query,
+                has_images=has_images,
+                has_attachments=has_attachments,
+                asker_background=asker_background,
             ),
         )
     )

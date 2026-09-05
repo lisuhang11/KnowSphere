@@ -48,6 +48,7 @@ class TurnState(TypedDict, total=False):
     context_block: str
     retrieval_note: str
     agent_has_tools: bool
+    asker_background: str
 
 
 class OverallState(InputState, OutputState, TurnState):
@@ -74,6 +75,7 @@ class AgentConfig(TypedDict, total=False):
     agent_id: str  # 本轮智能体（工具 + 提示词）
     web_search_enabled: bool  # 本轮输入框联网开关（管理员总开关仍生效）
     graph_enabled: bool  # 所选知识库是否已开图谱且 Neo4j 可用
+    owner: str  # 长期记忆隔离键（对齐 WeKnora subject；默认 default_owner）
 
 
 __all__ = [

@@ -13,7 +13,6 @@ from evals.schemas import EvalConfig
 def main() -> None:
     parser = argparse.ArgumentParser(description="KnowSphere rag_bench 评测")
     parser.add_argument("--dataset", default="campus_demo")
-    parser.add_argument("--profile", choices=["rag_fixed", "rag_agent"], default="rag_fixed")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument(
@@ -29,7 +28,7 @@ def main() -> None:
     config = EvalConfig(
         dataset_id=args.dataset,
         suite="rag_bench",
-        pipeline_profile=args.profile,
+        pipeline_profile="rag_agent",
         sample_limit=args.limit,
         metric_layers=layers,
         workers=args.workers,

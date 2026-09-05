@@ -5,6 +5,7 @@ from __future__ import annotations
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from utils.citation import citation_payload_from_source_dicts
+from utils.long_term_memory import RetrievalContext
 from utils.short_term_memory import (
     COMPACT_RETRIEVAL,
     build_memory_view,
@@ -171,6 +172,11 @@ def test_manage_memory_writes_summary_when_archive_exists():
     with (
         patch("agents.nodes.manage_memory.create_chat_model", return_value=mock_llm),
         patch("agents.nodes.manage_memory.settings") as st,
+        patch("agents.nodes.manage_memory.remember_explicit", return_value=None),
+        patch(
+            "agents.nodes.manage_memory.retrieval_context_for",
+            return_value=RetrievalContext(),
+        ),
     ):
         st.stm_max_context_tokens = 32000
         st.stm_keep_turns = 2
@@ -240,7 +246,14 @@ def test_manage_memory_skips_llm_on_short_history():
 
     from agents.nodes.manage_memory import manage_memory
 
-    with patch("agents.nodes.manage_memory.create_chat_model") as mock_llm:
+    with (
+        patch("agents.nodes.manage_memory.create_chat_model") as mock_llm,
+        patch("agents.nodes.manage_memory.remember_explicit", return_value=None),
+        patch(
+            "agents.nodes.manage_memory.retrieval_context_for",
+            return_value=RetrievalContext(),
+        ),
+    ):
         out = manage_memory(
             {"messages": [HumanMessage(content="你好", id="h1")]},
             {"configurable": {}},

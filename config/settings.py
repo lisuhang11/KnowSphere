@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     stm_redact_old_retrieval: bool = True
     stm_working_memory_max_chars: int = 1200
 
+    # 长期记忆（跨会话；对齐 WeKnora RetrievalContextFor → asker_background）
+    memory_enabled: bool = True
+    memory_retrieval_conditioning: bool = True
+
     # 会话图片
     chat_images_enabled: bool = True
     chat_vlm_model_id: str = ""  # 空 = 使用 models 表默认 VLLM

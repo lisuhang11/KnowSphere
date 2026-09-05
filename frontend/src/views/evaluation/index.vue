@@ -86,7 +86,7 @@ const squadSyncing = ref(false)
 const form = ref<CreateEvalPayload>({
   dataset_id: 'campus_demo',
   suite: 'rag_bench',
-  pipeline_profile: 'rag_fixed',
+  pipeline_profile: 'rag_agent',
   sample_limit: undefined,
   workers: 2,
   ragas_model_id: undefined,
@@ -449,7 +449,7 @@ watch(
       if (intentDs) form.value.dataset_id = intentDs.id
       form.value.pipeline_profile = 'intent'
     } else if (form.value.pipeline_profile === 'intent') {
-      form.value.pipeline_profile = 'rag_fixed'
+      form.value.pipeline_profile = 'rag_agent'
     }
     if (suite === 'rag_quality') {
       form.value.workers = 1
@@ -498,12 +498,7 @@ async function submitCreate() {
   try {
     const payload: CreateEvalPayload = {
       ...form.value,
-      pipeline_profile:
-        form.value.suite === 'rag_quality'
-          ? 'rag_agent'
-          : form.value.suite === 'intent_bench'
-            ? 'intent'
-            : form.value.pipeline_profile,
+      pipeline_profile: form.value.suite === 'intent_bench' ? 'intent' : 'rag_agent',
     }
     if (payload.suite === 'rag_quality' && !payload.sample_limit) {
       payload.sample_limit = 10
@@ -562,7 +557,7 @@ function useDataset(d: EvalDatasetInfo) {
     form.value.pipeline_profile = 'intent'
   } else if (form.value.suite === 'intent_bench') {
     form.value.suite = 'rag_bench'
-    form.value.pipeline_profile = 'rag_fixed'
+    form.value.pipeline_profile = 'rag_agent'
   }
   createVisible.value = true
 }
@@ -1211,12 +1206,6 @@ onUnmounted(() => {
             <t-radio value="rag_bench">rag_bench（快）</t-radio>
             <t-radio value="intent_bench">intent_bench（意图）</t-radio>
             <t-radio value="rag_quality">rag_quality（先收集，再离线 RAGAS）</t-radio>
-          </t-radio-group>
-        </t-form-item>
-        <t-form-item v-if="form.suite === 'rag_bench'" label="Pipeline">
-          <t-radio-group v-model="form.pipeline_profile">
-            <t-radio value="rag_fixed">rag_fixed</t-radio>
-            <t-radio value="rag_agent">rag_agent</t-radio>
           </t-radio-group>
         </t-form-item>
         <t-form-item :label="form.dataset_id.startsWith('squad') ? '抽样题数（按段）' : '抽样题数'">

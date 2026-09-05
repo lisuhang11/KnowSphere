@@ -15,10 +15,22 @@ from prompts import build_system_prompt
 from tools.retrieval.doc_retrieval import doc_retrieval
 
 
+_SQUAD_ABSTAIN = (
+    "\n\n### Evaluation abstain rule\n"
+    "Some questions cannot be answered from the retrieved documents "
+    "(the gold answer is empty). If the documents do not contain the answer, "
+    "reply that the information was not found (e.g. 未找到相关信息 / "
+    "The documents do not contain the answer). Do not invent a short span."
+)
+
+
 def eval_system_prompt(metric_layers: list[str] | None = None) -> str:
     """评测与产品共用 WeKnora 风格 Agent 系统提示（仅绑定检索工具）。"""
-    _ = metric_layers
-    return build_system_prompt(enable_citation=False, tool_names=["doc_retrieval"])
+    text = build_system_prompt(enable_citation=False, tool_names=["doc_retrieval"])
+    layers = {str(x) for x in (metric_layers or [])}
+    if "squad" in layers:
+        text = text.rstrip() + _SQUAD_ABSTAIN
+    return text
 
 
 EVAL_SYSTEM_PROMPT = eval_system_prompt()

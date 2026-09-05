@@ -1,4 +1,4 @@
-"""manage_memory：滚动摘要 + 工作记忆。在 query_understand 之前运行。"""
+"""manage_memory：短期滚动摘要 + 长期记忆召回。在 query_understand 之前运行。"""
 
 from __future__ import annotations
 
@@ -10,8 +10,13 @@ from config.settings import settings
 from models import create_chat_model
 from states import KnowSphereState
 from tools.events import emit_thinking
+from utils.long_term_memory import (
+    format_asker_background,
+    remember_explicit,
+    retrieval_context_for,
+)
 from utils.message_content import message_text
-from utils.run_config import chat_model_kwargs_from_config
+from utils.run_config import chat_model_kwargs_from_config, thread_id_from_config
 from utils.short_term_memory import (
     SUMMARY_SYSTEM_PROMPT,
     build_memory_view,
@@ -69,6 +74,16 @@ def manage_memory(state: KnowSphereState, config: RunnableConfig) -> dict:
         "working_memory": extract_working_memory(messages),
         "history_pairs": view.history_pairs,
     }
+    current_query = str(state.get("current_query") or "").strip()
+    session_id = thread_id_from_config(config) or ""
+    if current_query:
+        remembered = remember_explicit(
+            current_query, config=config, session_id=session_id
+        )
+        if remembered:
+            emit_thinking("已记下跨会话记忆，供后续改写与意图识别使用。")
+    asker = format_asker_background(retrieval_context_for(config=config))
+    updates["asker_background"] = asker
 
     if not view.needs_consolidation or not view.archive_messages:
         return updates

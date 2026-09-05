@@ -433,6 +433,23 @@ def run_ragas_eval(
     return {}, [], samples
 
 
+def select_dataset_retry_items(
+    items: list[QAPair], qids: list[int] | None
+) -> list[tuple[int, QAPair]]:
+    """按 item.qid 选题；旧任务若存的是 enumerate 下标也能对上。"""
+    if qids is None:
+        return [(int(item.qid), item) for item in items]
+    want = {int(q) for q in qids}
+    picked: list[tuple[int, QAPair]] = []
+    for idx, item in enumerate(items):
+        item_qid = int(item.qid)
+        if item_qid in want:
+            picked.append((item_qid, item))
+        elif idx in want:
+            picked.append((idx, item))
+    return picked
+
+
 def run_ragas_eval_dataset(
     config: EvalConfig,
     *,
@@ -460,6 +477,8 @@ def run_ragas_eval_dataset(
     kb_id = eval_kb["id"]
     if on_kb_created:
         on_kb_created(kb_id, kb_name)
+    if on_phase:
+        on_phase("ingest", len(dataset.passages), 0)
 
     agent = build_agent(
         system_prompt=EVAL_SYSTEM_PROMPT,
@@ -467,12 +486,9 @@ def run_ragas_eval_dataset(
         chat_model_kwargs=eval_chat_model_kwargs(config),
     )
 
-    indexed = list(enumerate(dataset.items))
-    if qids is not None:
-        want = {int(q) for q in qids}
-        indexed = [(qid, item) for qid, item in indexed if qid in want]
-        if not indexed:
-            raise ValueError("没有匹配的失败题可重试")
+    indexed = select_dataset_retry_items(dataset.items, qids)
+    if qids is not None and not indexed:
+        raise ValueError("没有匹配的失败题可重试")
     rows: list[dict] = []
     row_by_qid: dict[int, dict] = {}
     done = 0
@@ -519,8 +535,6 @@ def run_ragas_eval_dataset(
             last_ingest_report[0] = done
             if on_phase:
                 on_phase("ingest", ingest_total, done)
-            if on_progress:
-                on_progress(done, max(ingest_total, 1))
 
         if on_phase:
             on_phase("ingest", n_passages, 0)

@@ -1,7 +1,7 @@
 import request from './request'
 
 export type EvalSuite = 'rag_bench' | 'rag_quality' | 'intent_bench'
-export type PipelineProfile = 'rag_fixed' | 'rag_agent' | 'intent'
+export type PipelineProfile = 'rag_agent' | 'intent'
 export type EvalStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled'
 
 export interface EvalDatasetInfo {
