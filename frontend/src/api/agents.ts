@@ -31,6 +31,8 @@ export interface AgentInfo {
   is_builtin: boolean
   is_default: boolean
   status: 'active' | 'disabled' | string
+  audio_upload_enabled?: boolean
+  asr_model_id?: string
   created_at?: string | null
   updated_at?: string | null
 }
@@ -44,6 +46,8 @@ export interface AgentPayload {
   max_iterations?: number
   is_default?: boolean
   status?: string
+  audio_upload_enabled?: boolean
+  asr_model_id?: string
 }
 
 export const LAST_AGENT_KEY = 'knowsphere_last_agent_id'

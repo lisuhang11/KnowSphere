@@ -53,6 +53,7 @@ def _build_builtin_engine() -> ParserEngineRegistry:
     from ingestion.parser.docx2_parser import Docx2Parser
     from ingestion.parser.excel_parser import ExcelParser
     from ingestion.parser.html_parser import HTMLParser
+    from ingestion.parser.audio_parser import AudioParser
     from ingestion.parser.image_parser import ImageParser
     from ingestion.parser.markdown_parser import MarkdownParser
     from ingestion.parser.pdf_parser import PDFParser
@@ -67,6 +68,7 @@ def _build_builtin_engine() -> ParserEngineRegistry:
     registry.register(MarkdownParser, ["md", "markdown", "txt"])
     registry.register(HTMLParser, ["html", "htm"])
     registry.register(ImageParser, ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "webp"])
+    registry.register(AudioParser, ["mp3", "wav", "m4a", "flac", "ogg", "aac"])
     return registry
 
 

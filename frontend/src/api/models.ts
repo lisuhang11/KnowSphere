@@ -74,6 +74,7 @@ export interface DebugResult {
 export interface ModelDebugPayload {
   prompt?: string
   image_base64?: string
+  audio_base64?: string
 }
 
 export interface OllamaStatus {

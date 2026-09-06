@@ -19,6 +19,13 @@ import {
 } from '@/api/temporaryAttachments'
 import { useChatStore } from '@/stores/chat'
 import {
+  AGENT_AUDIO_DISABLED_HINT,
+  NO_ASR_AUDIO_UPLOAD_HINT,
+  hasUsableAsr,
+  isAgentAudioUploadEnabled,
+  isChatAudioFile,
+} from '@/utils/audio'
+import {
   CHAT_IMAGE_MAX_COUNT,
   NO_VLM_IMAGE_UPLOAD_HINT,
   hasUsableVlm,
@@ -131,12 +138,23 @@ export function useChatPageResources() {
     }
 
     const vlmReady = hasUsableVlm(allModels.value)
+    const asrReady = hasUsableAsr(allModels.value)
+    const currentAgent = agents.value.find((a) => a.id === chatStore.currentAgentId)
+    const audioEnabled = isAgentAudioUploadEnabled(currentAgent)
     const files = selected.slice(0, room)
     const imageFiles = files.filter(isChatImageFile)
-    const otherFiles = files.filter((f) => !isChatImageFile(f))
+    const audioFiles = files.filter(isChatAudioFile)
+    const otherFiles = files.filter((f) => !isChatImageFile(f) && !isChatAudioFile(f))
     if (imageFiles.length && !vlmReady) {
       MessagePlugin.warning(NO_VLM_IMAGE_UPLOAD_HINT)
-      if (!otherFiles.length) return
+      if (!otherFiles.length && !audioFiles.length) return
+    }
+    if (audioFiles.length && !asrReady) {
+      MessagePlugin.warning(NO_ASR_AUDIO_UPLOAD_HINT)
+      if (!otherFiles.length && !(vlmReady && imageFiles.length)) return
+    } else if (audioFiles.length && !audioEnabled) {
+      MessagePlugin.warning(AGENT_AUDIO_DISABLED_HINT)
+      if (!otherFiles.length && !(vlmReady && imageFiles.length)) return
     }
 
     let threadId = chatStore.currentThreadId
@@ -151,7 +169,11 @@ export function useChatPageResources() {
     }
     if (!threadId) return
 
-    const accepted = vlmReady ? files : otherFiles
+    const accepted = files.filter((f) => {
+      if (isChatImageFile(f) && !vlmReady) return false
+      if (isChatAudioFile(f) && (!asrReady || !audioEnabled)) return false
+      return true
+    })
     for (const file of accepted) {
       const err = validateChatAttachmentFile(file)
       if (err) {

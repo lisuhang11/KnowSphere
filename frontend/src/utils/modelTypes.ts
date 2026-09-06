@@ -33,7 +33,7 @@ export const TYPE_DESCRIPTIONS: Record<ModelType, string> = {
   Embedding: '文档向量化与检索',
   Rerank: '检索结果精排',
   VLLM: '聊天图片 / 附件 OCR 与多模态理解',
-  ASR: '语音转写（预留）',
+  ASR: '音频转写：知识库入库与对话附件语音识别',
 }
 
 export const TYPE_ICONS: Record<ModelType, string> = {

@@ -2,7 +2,7 @@
 
 - POST/GET /models          创建 / 列表
 - GET/PUT/DELETE /models/{id}  详情 / 更新 / 删除（内置、默认、被 KB 引用者不可删）
-- POST /models/{id}/debug   测试连接（chat/embedding/rerank 实际调用；ASR 仅校验配置）
+- POST /models/{id}/debug   测试连接（chat/embedding/rerank/VLM/ASR 实际调用）
 - PUT /models/{id}/credentials           更新凭证（api_key 等）
 - DELETE /models/{id}/credentials/{field} 清空凭证字段
 - GET /models/providers     远程厂商目录（source=remote 时选用）
@@ -20,7 +20,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from models import create_chat_model, create_embeddings, create_reranker, create_vlm_model
+from models import create_asr_model, create_chat_model, create_embeddings, create_reranker, create_vlm_model
 from models.ollama import fetch_ollama_status, list_ollama_models
 from models.openai_compat import ollama_openai_base_url
 from models.providers import (
@@ -145,6 +145,10 @@ class ModelDebugRequest(BaseModel):
     image_base64: str | None = Field(
         default=None,
         description="VLLM 调试可选测试图（data URI 或纯 base64）",
+    )
+    audio_base64: str | None = Field(
+        default=None,
+        description="ASR 调试可选测试音频（data URI 或纯 base64；空则用内置静音 WAV）",
     )
 
 _DEBUG_TINY_PNG = (
@@ -314,7 +318,7 @@ def clear_credential_field(model_id: str, field: str) -> dict:
 
 @router.post("/models/{model_id}/debug")
 def debug_model(model_id: str, body: ModelDebugRequest | None = None) -> dict:
-    """测试连接。VLLM 使用多模态请求；ASR 仅校验配置完整性。"""
+    """测试连接。VLLM 使用多模态请求；ASR 调用 /audio/transcriptions。"""
     req = body or ModelDebugRequest
     rec = _store.get_model(model_id)
     if rec is None:
@@ -360,10 +364,13 @@ def debug_model(model_id: str, body: ModelDebugRequest | None = None) -> dict:
             result = reranker.rerank("ping", ["a", "b"], top_n=1)
             message = f"连接成功，返回 {len(result)} 条重排结果"
         elif mtype == "ASR":
-            missing = [f for f in ("base_url",) if not params.get(f)]
-            if missing:
-                raise ValueError(f"缺少必填参数: {', '.join(missing)}")
-            message = "配置校验通过（ASR 不做网络测试，请以实际识别为准）"
+            from models.asr import decode_audio_base64
+
+            client = create_asr_model(model=model_id)
+            audio_bytes, audio_name = decode_audio_base64(req.audio_base64)
+            result = client.transcribe(audio_bytes, audio_name)
+            snippet = (result.text or "").strip()[:200]
+            message = f"语音识别连接成功，转写: {snippet or '（空回复）'}"
         else:
             raise HTTPException(status_code=400, detail=f"不支持的模型类型: {mtype}")
     except HTTPException:

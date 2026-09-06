@@ -117,6 +117,11 @@ class Settings(BaseSettings):
     chat_attachment_ttl_hours: int = 24
     chat_attachment_wait_sec: int = 60
 
+    # 会话音频（ASR 转写；知识库 / 智能体各自还有开关）
+    chat_audio_enabled: bool = True
+    chat_asr_model_id: str = ""  # 空 = 使用 models 表默认 ASR
+    asr_model: str = ""  # 可选：启动时 seed 为内置 ASR 记录
+
     # 本地 query expansion：首次召回不足时并行补搜（无 LLM）
     query_expansion_enabled: bool = True
     query_expansion_max_variants: int = 5

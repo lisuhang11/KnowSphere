@@ -59,10 +59,13 @@ class IngestionService:
     def __init__(self, store: ChunkStore | None = None) -> None:
         self.store = store or ChunkStore()
 
-    def _parse_document(self, path: str) -> tuple[str, list]:
+    def _parse_document(self, path: str, kb: dict | None = None) -> tuple[str, list]:
         from ingestion.parser import MARKDOWN_IMAGE_LINE_RE, parse_document
+        from utils.audio import is_audio_filename
 
         parse_options = {"file_name": Path(path).name, "ocr_enabled": settings.ocr_enabled}
+        if kb and is_audio_filename(path):
+            parse_options["asr_model_id"] = (kb.get("asr_model_id") or "").strip()
         result = parse_document(path, parse_options=parse_options)
         lines = [
             ln for ln in result.markdown.splitlines()
@@ -191,7 +194,7 @@ class IngestionService:
         document_id = document_id or uuid.uuid4().hex[:12]
 
         self.store.update_stage(document_id, "parsing", owner)
-        text, image_refs = self._parse_document(path)
+        text, image_refs = self._parse_document(path, kb)
         image_refs = self._upload_parse_images(image_refs, kb_id, document_id)
 
         count, applied_tier, extra = self._chunk_embed_and_store(
@@ -243,7 +246,7 @@ class IngestionService:
         file_name = file_name or Path(path).name
 
         self.store.update_stage(document_id, "parsing", owner)
-        text, image_refs = self._parse_document(path)
+        text, image_refs = self._parse_document(path, kb)
         image_refs = self._upload_parse_images(image_refs, kb_id, document_id)
         count, applied_tier, extra = self._chunk_embed_and_store(
             text=text,

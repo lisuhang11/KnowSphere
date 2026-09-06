@@ -18,6 +18,8 @@ export interface KnowledgeBase {
   parent_chunk_size: number
   child_chunk_size: number
   graph_enabled?: boolean
+  asr_enabled?: boolean
+  asr_model_id?: string
   created_at: string | null
   updated_at: string | null
   document_count?: number
@@ -36,6 +38,8 @@ export interface KBCreatePayload {
   parent_chunk_size?: number
   child_chunk_size?: number
   graph_enabled?: boolean
+  asr_enabled?: boolean
+  asr_model_id?: string
 }
 
 export interface KBUpdatePayload {
@@ -49,6 +53,8 @@ export interface KBUpdatePayload {
   parent_chunk_size?: number
   child_chunk_size?: number
   graph_enabled?: boolean
+  asr_enabled?: boolean
+  asr_model_id?: string
 }
 
 export async function listKnowledgeBases(): Promise<KnowledgeBase[]> {

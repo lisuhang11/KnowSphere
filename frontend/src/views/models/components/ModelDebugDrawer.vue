@@ -18,6 +18,8 @@ const running = ref(false)
 const resultText = ref('')
 const prompt = ref('请简要描述这张图片的内容。')
 const imageDataUri = ref('')
+const audioDataUri = ref('')
+const audioFileName = ref('')
 
 const grouped = computed(() =>
   MODEL_TYPE_ORDER.map((type) => ({
@@ -33,6 +35,8 @@ watch(
     if (!open) {
       resultText.value = ''
       imageDataUri.value = ''
+      audioDataUri.value = ''
+      audioFileName.value = ''
       return
     }
     const first = props.models.find((m) => m.status !== 'disabled')
@@ -40,11 +44,14 @@ watch(
     resultText.value = ''
     prompt.value = '请简要描述这张图片的内容。'
     imageDataUri.value = ''
+    audioDataUri.value = ''
+    audioFileName.value = ''
   },
 )
 
 const selected = computed(() => props.models.find((m) => m.id === selectedId.value))
 const isVllm = computed(() => selected.value?.type === 'VLLM')
+const isAsr = computed(() => selected.value?.type === 'ASR')
 
 async function onImagePick(ev: Event) {
   const input = ev.target as HTMLInputElement
@@ -57,6 +64,23 @@ async function onImagePick(ev: Event) {
   const reader = new FileReader()
   reader.onload = () => {
     imageDataUri.value = typeof reader.result === 'string' ? reader.result : ''
+  }
+  reader.readAsDataURL(file)
+  input.value = ''
+}
+
+async function onAudioPick(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (!file.type.startsWith('audio/') && !/\.(mp3|wav|m4a|flac|ogg|aac)$/i.test(file.name)) {
+    MessagePlugin.warning('请选择音频文件')
+    return
+  }
+  const reader = new FileReader()
+  reader.onload = () => {
+    audioDataUri.value = typeof reader.result === 'string' ? reader.result : ''
+    audioFileName.value = file.name
   }
   reader.readAsDataURL(file)
   input.value = ''
@@ -76,7 +100,9 @@ async function run() {
             prompt: prompt.value.trim() || '请简要描述这张图片的内容。',
             image_base64: imageDataUri.value || undefined,
           }
-        : { prompt: prompt.value.trim() || 'ping' }
+        : isAsr.value
+          ? { audio_base64: audioDataUri.value || undefined }
+          : { prompt: prompt.value.trim() || 'ping' }
     const r = await debugModel(selectedId.value, payload)
     resultText.value = r.ok
       ? `成功（${r.latency_ms}ms）\n${r.message}`
@@ -104,7 +130,7 @@ function close() {
     @update:visible="(v: boolean) => emit('update:visible', v)"
   >
     <p class="hint">
-      选择已配置的模型并测试 API 连通性。VLLM 支持上传测试图片。
+      选择已配置的模型并测试 API 连通性。VLLM 支持上传测试图片，ASR 支持上传测试音频。
     </p>
 
     <t-form label-align="top">
@@ -136,13 +162,18 @@ function close() {
         <t-tag v-if="selected.is_default" size="small" theme="success" variant="light">默认</t-tag>
       </div>
 
-      <t-form-item :label="isVllm ? '视觉提示词' : '测试提示词'">
+      <t-form-item v-if="!isAsr" :label="isVllm ? '视觉提示词' : '测试提示词'">
         <t-textarea v-model="prompt" :autosize="{ minRows: 2, maxRows: 4 }" />
       </t-form-item>
 
       <t-form-item v-if="isVllm" label="测试图片（可选，不上传则使用内置小图）">
         <input type="file" accept="image/*" @change="onImagePick" />
         <p v-if="imageDataUri" class="field-hint">已选择测试图片</p>
+      </t-form-item>
+
+      <t-form-item v-if="isAsr" label="测试音频（可选，不上传则使用内置静音 WAV）">
+        <input type="file" accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg,.aac" @change="onAudioPick" />
+        <p v-if="audioDataUri" class="field-hint">已选择 {{ audioFileName || '测试音频' }}</p>
       </t-form-item>
     </t-form>
 

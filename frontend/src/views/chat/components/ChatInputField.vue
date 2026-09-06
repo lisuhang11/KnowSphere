@@ -8,11 +8,16 @@ import ChatKnowledgeBaseSelector from '@/components/chat/ChatKnowledgeBaseSelect
 import ChatInputModelDropdown from '@/components/chat/ChatInputModelDropdown.vue'
 import ChatInputAgentDropdown from '@/components/chat/ChatInputAgentDropdown.vue'
 import {
-  CHAT_ATTACHMENT_ACCEPT,
-  CHAT_DOCUMENT_ACCEPT,
+  AGENT_AUDIO_DISABLED_HINT,
+  NO_ASR_AUDIO_UPLOAD_HINT,
+  hasUsableAsr,
+  isAgentAudioUploadEnabled,
+} from '@/utils/audio'
+import {
   CHAT_IMAGE_ACCEPT,
   CHAT_IMAGE_MAX_COUNT,
   NO_VLM_IMAGE_UPLOAD_HINT,
+  chatAttachmentAccept,
   hasUsableVlm,
   type PendingChatAttachment,
 } from '@/utils/chatImages'
@@ -286,14 +291,24 @@ const hasSelectedTags = computed(
 )
 const selectedKbCount = computed(() => selectedKbs.value.length)
 const vlmReady = computed(() => hasUsableVlm(props.allModels))
+const asrReady = computed(() => hasUsableAsr(props.allModels))
+const audioUploadEnabled = computed(() => isAgentAudioUploadEnabled(selectedAgent.value))
+const audioReady = computed(() => asrReady.value && audioUploadEnabled.value)
 const imageUploadDisabled = computed(
   () => props.streaming || props.pendingAttachments.length >= CHAT_IMAGE_MAX_COUNT || !vlmReady.value,
 )
 const fileUploadDisabled = computed(
   () => props.streaming || props.pendingAttachments.length >= CHAT_IMAGE_MAX_COUNT,
 )
-const attachmentAccept = computed(() => (vlmReady.value ? CHAT_ATTACHMENT_ACCEPT : CHAT_DOCUMENT_ACCEPT))
+const attachmentAccept = computed(() =>
+  chatAttachmentAccept({ vlmReady: vlmReady.value, audioReady: audioReady.value }),
+)
 const imageUploadTooltip = computed(() => (vlmReady.value ? '上传图片' : NO_VLM_IMAGE_UPLOAD_HINT))
+const fileUploadTooltip = computed(() => {
+  if (!asrReady.value) return `${NO_ASR_AUDIO_UPLOAD_HINT}（文档仍可上传）`
+  if (!audioUploadEnabled.value) return `${AGENT_AUDIO_DISABLED_HINT}（文档仍可上传）`
+  return '上传文档或音频'
+})
 
 function attachmentStatusLabel(item: PendingChatAttachment): string {
   if (item.status === 'uploading') return '上传中…'
@@ -532,7 +547,7 @@ defineExpose({
             </div>
           </t-tooltip>
 
-          <t-tooltip content="上传文档附件" placement="top" theme="light">
+          <t-tooltip :content="fileUploadTooltip" placement="top" theme="light">
             <div
               class="control-btn attachment-upload-btn"
               :class="{

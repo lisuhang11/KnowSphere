@@ -32,6 +32,7 @@ _MODEL_TYPE_BY_CAPABILITY = {
     "embeddings": "Embedding",
     "rerank": "Rerank",
     "vlm": "VLLM",
+    "asr": "ASR",
 }
 
 
@@ -130,6 +131,28 @@ def create_vlm_model(provider: str | None = None, **kwargs) -> BaseChatModel:
     if resolved:
         kwargs, provider = _apply_resolved(kwargs, resolved, ref)
     return _create(provider or settings.chat_provider, "chat", **kwargs)
+
+
+def create_asr_model(provider: str | None = None, **kwargs):
+    """创建 ASR 转写客户端（OpenAI 兼容 /audio/transcriptions）。"""
+    from models.asr import ASRClient
+
+    ref = kwargs.get("model") if isinstance(kwargs.get("model"), str) else None
+    resolved = _resolve_from_db("asr", ref)
+    if resolved:
+        kwargs, _provider = _apply_resolved(kwargs, resolved, ref)
+    model = kwargs.get("model")
+    if not model:
+        raise ValueError("ASR 模型名为空")
+    base_url = (kwargs.get("base_url") or "").strip()
+    if not base_url:
+        raise ValueError("ASR 缺少 base_url")
+    return ASRClient(
+        model=str(model),
+        api_key=kwargs.get("api_key") or "",
+        base_url=base_url,
+        language=str(kwargs.get("language") or ""),
+    )
 
 
 def create_embeddings(provider: str | None = None, **kwargs) -> Embeddings:

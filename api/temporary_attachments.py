@@ -14,6 +14,7 @@ from fastapi.responses import Response
 from api.sessions import _db_get_session, _to_uuid
 from api.tasks import parse_temporary_attachment_task
 from config.settings import settings
+from utils.audio import ensure_chat_can_accept_audio, is_audio_upload
 from utils.chat_images import NO_VLM_IMAGE_UPLOAD_DETAIL
 from utils.model_store import ModelStore
 from utils.object_store import ObjectStoreError, inline_content_disposition, require_object_store
@@ -47,13 +48,18 @@ async def upload_temporary_attachment(
     file: UploadFile = File(...),
 ) -> dict:
     """上传临时附件，异步解析。"""
-    if not settings.chat_images_enabled:
-        raise HTTPException(status_code=400, detail="附件上传未启用")
     sid = _to_uuid(session_id)
     _ensure_session_exists(sid)
 
     file_name = (file.filename or "upload").strip()
-    if is_image_upload(file_name, file.content_type or "") and not ModelStore().has_usable_vlm():
+    if is_audio_upload(file_name, file.content_type or ""):
+        try:
+            ensure_chat_can_accept_audio(str(sid))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    elif not settings.chat_images_enabled:
+        raise HTTPException(status_code=400, detail="附件上传未启用")
+    elif is_image_upload(file_name, file.content_type or "") and not ModelStore().has_usable_vlm():
         raise HTTPException(status_code=400, detail=NO_VLM_IMAGE_UPLOAD_DETAIL)
 
     data = await file.read()

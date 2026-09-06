@@ -22,6 +22,19 @@ router = APIRouter(tags=["agents"])
 _store = AgentStore()
 
 
+def _validate_agent_asr(asr_model_id: str | None, *, required: bool) -> str:
+    mid = (asr_model_id or "").strip()
+    if not mid:
+        if required:
+            raise HTTPException(status_code=400, detail="开启音频上传需选择 ASR 模型")
+        return ""
+    from utils.model_store import ModelStore
+
+    if not ModelStore().is_asr_model_id_valid(mid):
+        raise HTTPException(status_code=400, detail="ASR 模型不存在、已禁用或类型不匹配")
+    return mid
+
+
 class AgentCreateRequest(BaseModel):
     name: str
     description: str = ""
@@ -30,6 +43,8 @@ class AgentCreateRequest(BaseModel):
     skill_names: list[str] = Field(default_factory=list)
     max_iterations: int | None = None
     is_default: bool = False
+    audio_upload_enabled: bool = False
+    asr_model_id: str = ""
 
 
 class AgentUpdateRequest(BaseModel):
@@ -41,6 +56,8 @@ class AgentUpdateRequest(BaseModel):
     max_iterations: int | None = None
     is_default: bool | None = None
     status: str | None = None
+    audio_upload_enabled: bool | None = None
+    asr_model_id: str | None = None
 
 
 def _http(exc: ValueError) -> HTTPException:
@@ -95,6 +112,9 @@ def list_agents() -> list[dict[str, Any]]:
 @router.post("/agents")
 def create_agent(body: AgentCreateRequest) -> dict[str, Any]:
     try:
+        asr_model_id = _validate_agent_asr(
+            body.asr_model_id, required=body.audio_upload_enabled
+        )
         return _store.create_agent(
             name=body.name,
             description=body.description,
@@ -103,6 +123,8 @@ def create_agent(body: AgentCreateRequest) -> dict[str, Any]:
             skill_names=body.skill_names,
             max_iterations=body.max_iterations,
             is_default=body.is_default,
+            audio_upload_enabled=body.audio_upload_enabled,
+            asr_model_id=asr_model_id,
         )
     except ValueError as exc:
         raise _http(exc) from exc
@@ -119,6 +141,11 @@ def get_agent(agent_id: str) -> dict[str, Any]:
 @router.put("/agents/{agent_id}")
 def update_agent(agent_id: str, body: AgentUpdateRequest) -> dict[str, Any]:
     try:
+        asr_model_id = None
+        if body.audio_upload_enabled is True:
+            asr_model_id = _validate_agent_asr(body.asr_model_id, required=True)
+        elif body.asr_model_id is not None:
+            asr_model_id = _validate_agent_asr(body.asr_model_id, required=False)
         return _store.update_agent(
             agent_id,
             name=body.name,
@@ -129,6 +156,8 @@ def update_agent(agent_id: str, body: AgentUpdateRequest) -> dict[str, Any]:
             max_iterations=body.max_iterations,
             is_default=body.is_default,
             status=body.status,
+            audio_upload_enabled=body.audio_upload_enabled,
+            asr_model_id=asr_model_id,
         )
     except ValueError as exc:
         raise _http(exc) from exc

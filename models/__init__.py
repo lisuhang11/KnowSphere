@@ -1,6 +1,7 @@
 """模型工厂对外入口：按目录注册 Chat / Embedding / Rerank builder。"""
 
 from models.base import (
+    create_asr_model,
     create_chat_model,
     create_embeddings,
     create_reranker,
@@ -31,6 +32,7 @@ for _spec in PROVIDERS:
     )
 
 __all__ = [
+    "create_asr_model",
     "create_chat_model",
     "create_embeddings",
     "create_reranker",

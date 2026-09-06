@@ -35,6 +35,8 @@ const form = ref({
   embedding_model_id: '',
   summary_model_id: '',
   graph_enabled: false,
+  asr_enabled: false,
+  asr_model_id: '',
   chunking: {
     strategy: 'auto',
     chunkSize: CHUNK_DEFAULTS.chunkSize,
@@ -80,6 +82,8 @@ function openCreate() {
     embedding_model_id: defaultEmbeddingId(),
     summary_model_id: defaultSummaryId(),
     graph_enabled: false,
+    asr_enabled: false,
+    asr_model_id: '',
     chunking: {
       strategy: 'auto',
       chunkSize: CHUNK_DEFAULTS.chunkSize,
@@ -100,6 +104,8 @@ function openEdit(kb: KnowledgeBase) {
     embedding_model_id: kb.embedding_model_id,
     summary_model_id: kb.summary_model_id || defaultSummaryId(),
     graph_enabled: Boolean(kb.graph_enabled),
+    asr_enabled: Boolean(kb.asr_enabled),
+    asr_model_id: kb.asr_model_id || '',
     chunking: {
       strategy: kb.chunk_strategy || 'auto',
       chunkSize: kb.chunk_size,
@@ -123,6 +129,10 @@ async function saveKb() {
     MessagePlugin.warning(chunkErr)
     return
   }
+  if (form.value.asr_enabled && !form.value.asr_model_id) {
+    MessagePlugin.warning('开启语音识别需选择 ASR 模型')
+    return
+  }
   saving.value = true
   try {
     const c = form.value.chunking
@@ -138,6 +148,8 @@ async function saveKb() {
         parent_chunk_size: c.parentChunkSize,
         child_chunk_size: c.childChunkSize,
         graph_enabled: form.value.graph_enabled,
+        asr_enabled: form.value.asr_enabled,
+        asr_model_id: form.value.asr_model_id || '',
       })
       MessagePlugin.success('知识库已更新')
     } else {
@@ -158,6 +170,8 @@ async function saveKb() {
         parent_chunk_size: c.parentChunkSize,
         child_chunk_size: c.childChunkSize,
         graph_enabled: form.value.graph_enabled,
+        asr_enabled: form.value.asr_enabled,
+        asr_model_id: form.value.asr_model_id || '',
       })
       MessagePlugin.success('知识库已创建')
     }
@@ -332,6 +346,11 @@ onMounted(() => {
                       <t-icon name="relation" size="14px" />
                     </div>
                   </t-tooltip>
+                  <t-tooltip v-if="kb.asr_enabled" content="语音识别入库" placement="top">
+                    <div class="feature-badge asr">
+                      <t-icon name="sound" size="14px" />
+                    </div>
+                  </t-tooltip>
                   <t-tooltip
                     :content="kb.enable_parent_child
                       ? `父子分块 parent ${kb.parent_chunk_size} / child ${kb.child_chunk_size} · ${strategyLabel(kb.chunk_strategy || 'auto')}`
@@ -395,6 +414,20 @@ onMounted(() => {
           help="开启后，文档入库会抽取实体关系写入 Neo4j（需 .env 中 NEO4J_ENABLE=true 并启动 neo4j 服务）。已有文档需重新解析才会建图。"
         >
           <t-switch v-model="form.graph_enabled" />
+        </t-form-item>
+        <t-form-item
+          label="语音识别"
+          help="开启后可上传 mp3/wav/m4a 等音频，入库前用 ASR 转写成文字再切块。"
+        >
+          <t-switch v-model="form.asr_enabled" />
+        </t-form-item>
+        <t-form-item v-if="form.asr_enabled" label="ASR 模型" help="用于音频转写的语音识别模型">
+          <ModelSelector
+            v-model:selected-model-id="form.asr_model_id"
+            model-type="ASR"
+            :all-models="allModels"
+            placeholder="选择 ASR 模型"
+          />
         </t-form-item>
         <t-form-item
           label="切块策略"
@@ -753,6 +786,11 @@ onMounted(() => {
   &.kg {
     background: rgba(124, 77, 255, 0.08);
     color: #7c4dff;
+  }
+
+  &.asr {
+    background: rgba(0, 168, 112, 0.1);
+    color: #00a870;
   }
 
   .badge-count {

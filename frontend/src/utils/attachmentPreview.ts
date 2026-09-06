@@ -9,6 +9,7 @@ export type AttachmentPreviewKind =
   | 'markdown'
   | 'html'
   | 'text'
+  | 'audio'
   | 'unsupported'
 
 const IMAGE_EXTS = new Set([
@@ -22,6 +23,7 @@ const TEXT_EXTS = new Set([
 ])
 
 const EXCEL_EXTS = new Set(['xlsx', 'xls', 'csv', 'tsv', 'tab'])
+const AUDIO_EXTS = new Set(['mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac'])
 
 export type ChatAttachmentLike = {
   id?: string
@@ -50,6 +52,7 @@ export function resolveAttachmentPreviewKind(fileName?: string, fileType?: strin
   if (ext === 'md' || ext === 'markdown') return 'markdown'
   if (ext === 'html' || ext === 'htm' || ext === 'xhtml') return 'html'
   if (IMAGE_EXTS.has(ext)) return 'image'
+  if (AUDIO_EXTS.has(ext)) return 'audio'
   if (TEXT_EXTS.has(ext)) return 'text'
   return 'unsupported'
 }

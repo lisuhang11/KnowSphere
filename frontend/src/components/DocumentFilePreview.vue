@@ -125,6 +125,7 @@ async function loadPreview() {
       case 'pdf':
       case 'html':
       case 'image':
+      case 'audio':
         blobUrl.value = URL.createObjectURL(blob)
         break
       case 'docx':
@@ -186,6 +187,13 @@ onUnmounted(cleanup)
         :alt="fileName"
         class="doc-file-preview__image"
       />
+      <audio
+        v-else-if="kind === 'audio'"
+        :src="blobUrl"
+        :title="fileName"
+        controls
+        class="doc-file-preview__audio"
+      />
       <div v-else-if="kind === 'docx'" ref="docxContainer" class="doc-file-preview__docx docx-container" />
       <div v-else-if="kind === 'pptx' && pptxData" class="doc-file-preview__pptx">
         <VueOfficePptx :src="pptxData" />
@@ -239,7 +247,8 @@ onUnmounted(cleanup)
   .doc-file-preview__pptx,
   .doc-file-preview__excel,
   .doc-file-preview__markdown,
-  .doc-file-preview__text {
+  .doc-file-preview__text,
+  .doc-file-preview__audio {
     flex: 1;
     min-height: 0;
     max-height: none;
@@ -300,6 +309,12 @@ onUnmounted(cleanup)
   margin: 0 auto;
   object-fit: contain;
   border-radius: @border-radius;
+}
+
+.doc-file-preview__audio {
+  width: 100%;
+  margin: 24px auto;
+  padding: 16px;
 }
 
 .doc-file-preview__docx {

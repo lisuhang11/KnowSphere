@@ -152,6 +152,11 @@ def parse_temporary_attachment_task(self, attachment_id: str, session_id: str) -
     from services.document_task_service import run_with_materialized_path
     from utils.attachment_images import persist_attachment_parse
     from utils.attachment_vlm import maybe_vlm_enrich_attachment
+    from utils.audio import (
+        NO_ASR_AUDIO_UPLOAD_DETAIL,
+        is_audio_filename,
+        resolve_session_asr_model_id,
+    )
     from utils.temporary_attachments import (
         STATUS_UPLOADED,
         TemporaryAttachmentStore,
@@ -178,6 +183,11 @@ def parse_temporary_attachment_task(self, attachment_id: str, session_id: str) -
                 "file_name": Path(file_name).name,
                 "ocr_enabled": settings.ocr_enabled,
             }
+            if is_audio_filename(file_name):
+                asr_id = resolve_session_asr_model_id(session_id)
+                if not asr_id:
+                    raise ValueError(NO_ASR_AUDIO_UPLOAD_DETAIL)
+                parse_options["asr_model_id"] = asr_id
             parsed = None
             try:
                 parsed = parse_document(
@@ -192,6 +202,17 @@ def parse_temporary_attachment_task(self, attachment_id: str, session_id: str) -
                 content, image_refs = persist_attachment_parse(
                     session_id, attachment_id, parsed, file_name=file_name
                 )
+
+            if is_audio_filename(file_name):
+                if not content:
+                    content = "（未能识别语音内容）"
+                store.mark_ready(
+                    attachment_id,
+                    content=content,
+                    image_description="",
+                    image_refs=image_refs,
+                )
+                return
 
             content, image_description = maybe_vlm_enrich_attachment(
                 content=content,

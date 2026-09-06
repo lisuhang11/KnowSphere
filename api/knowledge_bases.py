@@ -30,6 +30,8 @@ class KBCreateRequest(BaseModel):
     parent_chunk_size: int | None = Field(default=None, ge=64, le=8192)
     child_chunk_size: int | None = Field(default=None, ge=64, le=2048)
     graph_enabled: bool = Field(default=False, description="启用知识图谱抽取（需 NEO4J_ENABLE=true）")
+    asr_enabled: bool = Field(default=False, description="启用音频入库与 ASR 转写")
+    asr_model_id: str | None = Field(default=None, max_length=200, description="ASR 模型 ID")
 
 class KBUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
@@ -46,6 +48,8 @@ class KBUpdateRequest(BaseModel):
     parent_chunk_size: int | None = Field(default=None, ge=64, le=8192)
     child_chunk_size: int | None = Field(default=None, ge=64, le=2048)
     graph_enabled: bool | None = None
+    asr_enabled: bool | None = None
+    asr_model_id: str | None = Field(default=None, max_length=200)
 
 class DocMoveRequest(BaseModel):
     kb_id: int
@@ -84,6 +88,23 @@ def _validate_summary_ref(model_id: str | None) -> str | None:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return model_id
 
+
+def _validate_asr_ref(model_id: str | None, *, required: bool) -> str:
+    mid = (model_id or "").strip()
+    if not mid:
+        if required:
+            raise HTTPException(status_code=400, detail="开启语音识别需选择 ASR 模型")
+        return ""
+    if not mid.startswith("model-"):
+        raise HTTPException(
+            status_code=400,
+            detail="asr_model_id 须为模型管理中的 ASR 模型 ID（model-...）",
+        )
+    if not ModelStore().is_asr_model_id_valid(mid):
+        raise HTTPException(status_code=400, detail="ASR 模型不存在、已禁用或类型不匹配")
+    return mid
+
+
 @router.post("/knowledge-bases")
 def create_knowledge_base(
     body: KBCreateRequest,
@@ -91,6 +112,7 @@ def create_knowledge_base(
 ) -> dict:
     embedding_id = _validate_embedding_ref(body.embedding_model_id or settings.embedding_model)
     summary_id = _validate_summary_ref(body.summary_model_id)
+    asr_model_id = _validate_asr_ref(body.asr_model_id, required=body.asr_enabled)
     try:
         dim = resolve_embedding_dim(embedding_id)
     except ValueError as exc:
@@ -109,6 +131,8 @@ def create_knowledge_base(
             parent_chunk_size=body.parent_chunk_size,
             child_chunk_size=body.child_chunk_size,
             graph_enabled=body.graph_enabled,
+            asr_enabled=body.asr_enabled,
+            asr_model_id=asr_model_id,
         )
     except Exception as exc:
         raise map_service_error(exc, default_status=500, default_prefix="创建知识库失败") from exc
@@ -144,6 +168,11 @@ def update_knowledge_base(
             summary_id = ""
         else:
             summary_id = _validate_summary_ref(body.summary_model_id)
+    asr_model_id: str | None = None
+    if body.asr_enabled is True:
+        asr_model_id = _validate_asr_ref(body.asr_model_id, required=True)
+    elif body.asr_model_id is not None:
+        asr_model_id = _validate_asr_ref(body.asr_model_id, required=False)
     try:
         return kb_svc.update(
             kb_id,
@@ -157,6 +186,8 @@ def update_knowledge_base(
             parent_chunk_size=body.parent_chunk_size,
             child_chunk_size=body.child_chunk_size,
             graph_enabled=body.graph_enabled,
+            asr_enabled=body.asr_enabled,
+            asr_model_id=asr_model_id,
         )
     except Exception as exc:
         raise map_service_error(exc, default_status=500, default_prefix="更新失败") from exc

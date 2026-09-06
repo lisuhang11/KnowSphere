@@ -1,6 +1,15 @@
+import { CHAT_AUDIO_ACCEPT } from '@/utils/audio'
+
 export const CHAT_IMAGE_ACCEPT = 'image/jpeg,image/png,image/gif,image/webp'
 export const CHAT_DOCUMENT_ACCEPT = '.pdf,.docx,.doc,.pptx,.xlsx,.md,.txt,.html'
 export const CHAT_ATTACHMENT_ACCEPT = `${CHAT_IMAGE_ACCEPT},${CHAT_DOCUMENT_ACCEPT}`
+
+export function chatAttachmentAccept(opts: { vlmReady: boolean; audioReady: boolean }): string {
+  const parts = [CHAT_DOCUMENT_ACCEPT]
+  if (opts.vlmReady) parts.push(CHAT_IMAGE_ACCEPT)
+  if (opts.audioReady) parts.push(CHAT_AUDIO_ACCEPT)
+  return parts.join(',')
+}
 export const CHAT_IMAGE_MAX_COUNT = 5
 export const CHAT_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 export const CHAT_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024

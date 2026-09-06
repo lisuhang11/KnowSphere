@@ -44,6 +44,8 @@ class KnowledgeBaseRepository:
         parent_chunk_size: int | None = None,
         child_chunk_size: int | None = None,
         graph_enabled: bool | None = None,
+        asr_enabled: bool | None = None,
+        asr_model_id: str | None = None,
     ) -> dict[str, Any]:
         """创建知识库。分块/嵌入参数缺省时用全局配置；embedding 创建后不可修改。
 
@@ -63,6 +65,8 @@ class KnowledgeBaseRepository:
         parent_chunk_size = parent_chunk_size or settings.parent_chunk_size
         child_chunk_size = child_chunk_size or settings.child_chunk_size
         graph_enabled = bool(graph_enabled) if graph_enabled is not None else False
+        asr_enabled = bool(asr_enabled) if asr_enabled is not None else False
+        asr_model_id = (asr_model_id or "").strip()
         if embedding_dim > MAX_HNSW_DIM:
             raise ValueError(
                 f"维度 {embedding_dim} 超过 pgvector HNSW 索引上限 {MAX_HNSW_DIM}，"
@@ -74,14 +78,16 @@ class KnowledgeBaseRepository:
                 INSERT INTO knowledge_bases
                     (name, description, owner, chunk_size, chunk_overlap,
                      embedding_model_id, embedding_dim, chunk_strategy, summary_model_id,
-                     enable_parent_child, parent_chunk_size, child_chunk_size, graph_enabled)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     enable_parent_child, parent_chunk_size, child_chunk_size, graph_enabled,
+                     asr_enabled, asr_model_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING {KB_COLS}
                 """,
                 (
                     name, description, owner, chunk_size, chunk_overlap,
                     embedding_model_id, embedding_dim, chunk_strategy, summary_model_id,
                     enable_parent_child, parent_chunk_size, child_chunk_size, graph_enabled,
+                    asr_enabled, asr_model_id,
                 ),
             ).fetchone()
             conn.commit()
@@ -169,6 +175,8 @@ class KnowledgeBaseRepository:
         parent_chunk_size: int | None = None,
         child_chunk_size: int | None = None,
         graph_enabled: bool | None = None,
+        asr_enabled: bool | None = None,
+        asr_model_id: str | None = None,
     ) -> dict[str, Any] | None:
         """更新知识库名称/描述/分块参数/摘要模型/图谱开关（None 表示不修改）。不存在返回 None。
 
@@ -199,6 +207,8 @@ class KnowledgeBaseRepository:
                         parent_chunk_size = COALESCE(%s, parent_chunk_size),
                         child_chunk_size = COALESCE(%s, child_chunk_size),
                         graph_enabled = COALESCE(%s, graph_enabled),
+                        asr_enabled = COALESCE(%s, asr_enabled),
+                        asr_model_id = COALESCE(%s, asr_model_id),
                         {summary_sql}
                         updated_at = now()
                     WHERE id = %s AND owner = %s
@@ -214,6 +224,8 @@ class KnowledgeBaseRepository:
                         parent_chunk_size,
                         child_chunk_size,
                         graph_enabled,
+                        asr_enabled,
+                        asr_model_id,
                         summary_arg,
                         kb_id,
                         owner,
@@ -232,6 +244,8 @@ class KnowledgeBaseRepository:
                         parent_chunk_size = COALESCE(%s, parent_chunk_size),
                         child_chunk_size = COALESCE(%s, child_chunk_size),
                         graph_enabled = COALESCE(%s, graph_enabled),
+                        asr_enabled = COALESCE(%s, asr_enabled),
+                        asr_model_id = COALESCE(%s, asr_model_id),
                         summary_model_id = NULL,
                         updated_at = now()
                     WHERE id = %s AND owner = %s
@@ -240,7 +254,7 @@ class KnowledgeBaseRepository:
                     (
                         name, description, chunk_size, chunk_overlap, chunk_strategy,
                         enable_parent_child, parent_chunk_size, child_chunk_size,
-                        graph_enabled, kb_id, owner,
+                        graph_enabled, asr_enabled, asr_model_id, kb_id, owner,
                     ),
                 ).fetchone()
             else:
@@ -256,6 +270,8 @@ class KnowledgeBaseRepository:
                         parent_chunk_size = COALESCE(%s, parent_chunk_size),
                         child_chunk_size = COALESCE(%s, child_chunk_size),
                         graph_enabled = COALESCE(%s, graph_enabled),
+                        asr_enabled = COALESCE(%s, asr_enabled),
+                        asr_model_id = COALESCE(%s, asr_model_id),
                         updated_at = now()
                     WHERE id = %s AND owner = %s
                     RETURNING {KB_COLS}
@@ -263,7 +279,7 @@ class KnowledgeBaseRepository:
                     (
                         name, description, chunk_size, chunk_overlap, chunk_strategy,
                         enable_parent_child, parent_chunk_size, child_chunk_size,
-                        graph_enabled, kb_id, owner,
+                        graph_enabled, asr_enabled, asr_model_id, kb_id, owner,
                     ),
                 ).fetchone()
             conn.commit()

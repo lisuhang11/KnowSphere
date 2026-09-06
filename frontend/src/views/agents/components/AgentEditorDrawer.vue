@@ -10,6 +10,8 @@ import {
   type SkillSpec,
   type ToolSpec,
 } from '@/api/agents'
+import { listModels, type ModelInfo } from '@/api/models'
+import ModelSelector from '@/components/ModelSelector.vue'
 import { SKILL_ICON } from '@/utils/skillMention'
 
 const props = defineProps<{
@@ -32,7 +34,10 @@ const form = ref<AgentPayload>({
   skill_names: [],
   max_iterations: 25,
   is_default: false,
+  audio_upload_enabled: false,
+  asr_model_id: '',
 })
+const allModels = ref<ModelInfo[]>([])
 const saving = ref(false)
 const addOpen = ref(false)
 const addSkillOpen = ref(false)
@@ -113,6 +118,8 @@ function reset() {
     skill_names: [],
     max_iterations: 25,
     is_default: false,
+    audio_upload_enabled: false,
+    asr_model_id: '',
   }
   addOpen.value = false
   addSkillOpen.value = false
@@ -135,10 +142,17 @@ watch(
         skill_names: [...(editing.skill_names || [])],
         max_iterations: editing.max_iterations || 25,
         is_default: editing.is_default,
+        audio_upload_enabled: Boolean(editing.audio_upload_enabled),
+        asr_model_id: editing.asr_model_id || '',
       }
     } else {
       reset()
     }
+    void listModels().then((models) => {
+      allModels.value = models
+    }).catch(() => {
+      allModels.value = []
+    })
   },
 )
 
@@ -183,6 +197,10 @@ async function save() {
     MessagePlugin.warning('请至少添加一个工具')
     return
   }
+  if (form.value.audio_upload_enabled && !form.value.asr_model_id) {
+    MessagePlugin.warning('开启音频上传时必须选择 ASR 模型')
+    return
+  }
   saving.value = true
   try {
     const payload: AgentPayload = {
@@ -191,6 +209,8 @@ async function save() {
       system_prompt: form.value.system_prompt || '',
       max_iterations: form.value.max_iterations || 25,
       is_default: form.value.is_default,
+      audio_upload_enabled: Boolean(form.value.audio_upload_enabled),
+      asr_model_id: form.value.asr_model_id || '',
     }
     if (!toolsLocked.value) payload.tool_names = form.value.tool_names || []
     payload.skill_names = form.value.skill_names || []
@@ -318,6 +338,20 @@ async function save() {
         <span class="field-label">最大推理步数</span>
         <t-input-number v-model="form.max_iterations" :min="4" :max="80" theme="column" />
       </label>
+      <div class="field">
+        <div class="field-label-row">
+          <span class="field-label">语音上传</span>
+          <t-switch v-model="form.audio_upload_enabled" />
+        </div>
+        <p class="hint">启用后用户可在对话中上传音频，系统用 ASR 自动转写为文字。</p>
+        <ModelSelector
+          v-if="form.audio_upload_enabled"
+          model-type="ASR"
+          v-model:selected-model-id="form.asr_model_id"
+          :all-models="allModels"
+          placeholder="请选择 ASR 模型"
+        />
+      </div>
       <t-checkbox v-model="form.is_default">设为默认智能体</t-checkbox>
     </div>
     <template #footer>

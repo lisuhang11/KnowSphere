@@ -23,9 +23,12 @@ import {
 } from '@/api/knowledgeBases'
 import UploadConfirmDialog from './components/UploadConfirmDialog.vue'
 import ParentChildChunkingFields from '@/components/ParentChildChunkingFields.vue'
+import { listModels, type ModelInfo } from '@/api/models'
+import ModelSelector from '@/components/ModelSelector.vue'
 import { STRATEGY_OPTIONS, strategyLabel as strategyOptionLabel, CHUNK_DEFAULTS } from '@/constants/chunking'
 import type { ChunkingFormState } from '@/utils/chunkingConfig'
 import { validateChunkingForm } from '@/utils/chunkingConfig'
+import { KB_ASR_REQUIRED_HINT, isChatAudioFile, kbUploadAccept } from '@/utils/audio'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,6 +37,8 @@ const kbId = computed(() => Number(route.params.kbId))
 const kb = ref<KnowledgeBase | null>(null)
 const loading = ref(false)
 const docs = ref<DocumentInfo[]>([])
+const allModels = ref<ModelInfo[]>([])
+const uploadAccept = computed(() => kbUploadAccept(Boolean(kb.value?.asr_enabled)))
 
 const columns = [
   { colKey: 'file_name', title: '文件名', ellipsis: true },
@@ -85,6 +90,13 @@ async function load() {
   try {
     kb.value = await getKnowledgeBase(kbId.value)
     docs.value = await listDocuments(kbId.value)
+    if (!allModels.value.length) {
+      try {
+        allModels.value = await listModels()
+      } catch {
+        allModels.value = []
+      }
+    }
   } catch (e) {
     MessagePlugin.error(`加载知识库失败: ${(e as Error).message}`)
   } finally {
@@ -129,7 +141,12 @@ function onFileInputChange(e: Event) {
   const files = input.files ? Array.from(input.files) : []
   if (!files.length) return
   const seen = new Set(selectedFiles.value.map((f) => `${f.name}-${f.size}-${f.lastModified}`))
+  let skippedAudio = false
   for (const f of files) {
+    if (isChatAudioFile(f) && !kb.value?.asr_enabled) {
+      skippedAudio = true
+      continue
+    }
     const key = `${f.name}-${f.size}-${f.lastModified}`
     if (!seen.has(key)) {
       seen.add(key)
@@ -137,6 +154,7 @@ function onFileInputChange(e: Event) {
     }
   }
   input.value = '' // 允许再次选择同一文件
+  if (skippedAudio) MessagePlugin.warning(KB_ASR_REQUIRED_HINT)
   if (selectedFiles.value.length) uploadVisible.value = true
 }
 
@@ -283,6 +301,8 @@ const editVisible = ref(false)
 const editForm = ref({
   name: '',
   description: '',
+  asr_enabled: false,
+  asr_model_id: '',
   chunking: {
     strategy: 'auto',
     chunkSize: CHUNK_DEFAULTS.chunkSize,
@@ -299,6 +319,8 @@ function openEdit() {
   editForm.value = {
     name: kb.value.name,
     description: kb.value.description,
+    asr_enabled: Boolean(kb.value.asr_enabled),
+    asr_model_id: kb.value.asr_model_id || '',
     chunking: {
       strategy: kb.value.chunk_strategy || 'auto',
       chunkSize: kb.value.chunk_size,
@@ -322,6 +344,10 @@ async function saveEdit() {
     MessagePlugin.warning(chunkErr)
     return
   }
+  if (editForm.value.asr_enabled && !editForm.value.asr_model_id) {
+    MessagePlugin.warning('开启语音识别需选择 ASR 模型')
+    return
+  }
   saving.value = true
   try {
     const c = editForm.value.chunking
@@ -334,6 +360,8 @@ async function saveEdit() {
       enable_parent_child: c.enableParentChild,
       parent_chunk_size: c.parentChunkSize,
       child_chunk_size: c.childChunkSize,
+      asr_enabled: editForm.value.asr_enabled,
+      asr_model_id: editForm.value.asr_model_id || '',
     })
     MessagePlugin.success('知识库已更新（分块参数与策略仅影响之后上传的文档）')
     editVisible.value = false
@@ -409,6 +437,7 @@ onMounted(load)
           <t-tag v-if="kb" size="small" variant="light" theme="success" :title="`embedding 维度 ${kb.embedding_dim}`">
             {{ kb.embedding_model_id }}
           </t-tag>
+          <t-tag v-if="kb?.asr_enabled" size="small" variant="light" theme="success">语音识别</t-tag>
         </div>
         <p class="header-subtitle">{{ kb?.description || '上传文档到本知识库，自动切块向量化入库，供对话检索引用' }}</p>
       </div>
@@ -425,7 +454,7 @@ onMounted(load)
           ref="fileInputRef"
           type="file"
           multiple
-          accept=".pdf,.docx,.doc,.pptx,.xlsx,.md,.txt,.html,.htm,.jpg,.jpeg,.png,.gif,.bmp,.tiff,.webp"
+          :accept="uploadAccept"
           class="hidden-file-input"
           @change="onFileInputChange"
         />
@@ -536,6 +565,20 @@ onMounted(load)
             v-model="editForm.description"
             :maxlength="500"
             :autosize="{ minRows: 2, maxRows: 4 }"
+          />
+        </t-form-item>
+        <t-form-item
+          label="语音识别"
+          help="开启后可上传音频，入库前用 ASR 转写成文字再切块。"
+        >
+          <t-switch v-model="editForm.asr_enabled" />
+        </t-form-item>
+        <t-form-item v-if="editForm.asr_enabled" label="ASR 模型">
+          <ModelSelector
+            v-model:selected-model-id="editForm.asr_model_id"
+            model-type="ASR"
+            :all-models="allModels"
+            placeholder="选择 ASR 模型"
           />
         </t-form-item>
         <t-form-item label="切块策略" help="只影响之后上传的文档">

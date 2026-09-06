@@ -15,6 +15,7 @@ import {
 import type { KnowledgeBase } from '@/api/knowledgeBases'
 import ParentChildChunkingFields from '@/components/ParentChildChunkingFields.vue'
 import { STRATEGY_OPTIONS, tierLabel } from '@/constants/chunking'
+import { KB_ASR_REQUIRED_HINT, isChatAudioFile } from '@/utils/audio'
 import {
   buildProcessConfig,
   kbToChunkingForm,
@@ -66,8 +67,12 @@ function fileIcon(name: string): string {
   const ext = name.split('.').pop()?.toLowerCase()
   if (ext === 'pdf') return 'file-pdf'
   if (ext === 'md') return 'file-markdown'
+  if (['mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac'].includes(ext || '')) return 'sound'
   return 'file'
 }
+
+const hasAudioFiles = computed(() => localFiles.value.some((f) => isChatAudioFile(f)))
+const asrReady = computed(() => Boolean(props.kb?.asr_enabled && props.kb?.asr_model_id))
 
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -127,6 +132,10 @@ function previewStatsLine(result: ChunkingPreviewResult): string {
 
 function confirmUpload() {
   if (!props.kb || !localFiles.value.length) return
+  if (hasAudioFiles.value && !asrReady.value) {
+    MessagePlugin.warning(KB_ASR_REQUIRED_HINT)
+    return
+  }
   const err = validateChunkingForm(form.value)
   if (err) {
     MessagePlugin.warning(err)
@@ -160,6 +169,9 @@ function confirmUpload() {
       <section class="file-panel">
         <div class="panel-title">待上传文件</div>
         <p class="panel-hint">一次配置作用于整批，如个别文件需单独配置请分次上传</p>
+        <p v-if="hasAudioFiles && !asrReady" class="panel-hint" style="color: var(--td-error-color)">
+          {{ KB_ASR_REQUIRED_HINT }}
+        </p>
         <ul class="file-list">
           <li v-for="f in localFiles" :key="`${f.name}-${f.size}`" class="file-row">
             <t-icon :name="fileIcon(f.name)" size="18px" class="file-icon" />

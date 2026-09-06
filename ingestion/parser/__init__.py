@@ -1,9 +1,10 @@
 """文档解析引擎（内嵌库形态）。
 
 统一把各类文档解析为 Markdown，并提取内嵌图片（base64 字典）。
-支持格式（Q2 核心办公格式 + Q11 图片直传）：
+支持格式（Q2 核心办公格式 + Q11 图片直传 + 音频 ASR）：
     .pdf .docx .doc .pptx .xlsx .md .txt .html
     .jpg .jpeg .png .gif .bmp .tiff .webp
+    .mp3 .wav .m4a .flac .ogg .aac
 
 架构：引擎注册表 + 链式解析器（FirstParser/PipelineParser），
 扫描 PDF 逐页路由（文本页直出 / 扫描页渲染后走 OCR），doc/ppt 老格式经
@@ -20,6 +21,7 @@ import logging
 from pathlib import Path
 
 from ingestion.parser.base_parser import BaseParser, ParserError, ParseResult
+from ingestion.parser.audio_parser import AudioParser
 from ingestion.parser.image_parser import ImageParser
 from ingestion.parser.registry import ParserEngineRegistry, get_parser_engine
 
@@ -30,6 +32,7 @@ ALLOWED_EXTENSIONS = {
     ".pdf", ".docx", ".doc", ".pptx", ".xlsx",
     ".md", ".txt", ".html",
     ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp",
+    ".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac",
 }
 # markdown 图片行正则（切块前剔除，防止 embedding 被图片路径污染）
 MARKDOWN_IMAGE_LINE_RE = r"^!\[[^\]]*\]\([^)]*\)\s*$"
@@ -77,6 +80,7 @@ __all__ = [
     "ParserError",
     "ParseResult",
     "ImageParser",
+    "AudioParser",
     "ParserEngineRegistry",
     "get_parser_engine",
     "parse_document",

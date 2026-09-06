@@ -56,7 +56,14 @@ class DocumentService:
     ) -> dict[str, Any]:
         """写入 MinIO + documents(pending)。失败时回滚对象存储。"""
         self.validate_extension(file_name)
-        self.get_kb_for_upload(kb_id, owner=owner)
+        kb = self.get_kb_for_upload(kb_id, owner=owner)
+        from utils.audio import ensure_kb_can_accept_audio, is_audio_filename
+
+        if is_audio_filename(file_name):
+            try:
+                ensure_kb_can_accept_audio(kb)
+            except ValueError as exc:
+                raise BadRequestError(str(exc)) from exc
 
         try:
             object_store = require_object_store()

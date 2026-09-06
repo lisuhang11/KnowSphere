@@ -98,6 +98,14 @@ class AgentStore:
                 "JSONB NOT NULL DEFAULT '[]'::jsonb"
             )
             conn.execute(
+                "ALTER TABLE agents ADD COLUMN IF NOT EXISTS audio_upload_enabled "
+                "BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+            conn.execute(
+                "ALTER TABLE agents ADD COLUMN IF NOT EXISTS asr_model_id "
+                "TEXT NOT NULL DEFAULT ''"
+            )
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_agents_default ON agents (is_default) WHERE is_default"
             )
             self._migrate_legacy_toolkit_bindings(conn)
@@ -281,6 +289,8 @@ class AgentStore:
             "is_builtin": bool(row.get("is_builtin")),
             "is_default": bool(row.get("is_default")),
             "status": row.get("status") or "active",
+            "audio_upload_enabled": bool(row.get("audio_upload_enabled")),
+            "asr_model_id": row.get("asr_model_id") or "",
             "created_at": created.isoformat() if created else None,
             "updated_at": updated.isoformat() if updated else None,
         }
@@ -360,6 +370,8 @@ class AgentStore:
         is_default: bool = False,
         is_builtin: bool = False,
         agent_id: str | None = None,
+        audio_upload_enabled: bool = False,
+        asr_model_id: str = "",
     ) -> dict[str, Any]:
         cleaned_name = (name or "").strip()
         if not cleaned_name:
@@ -380,9 +392,10 @@ class AgentStore:
                 """
                     INSERT INTO agents (
                         id, name, description, system_prompt, tool_names, skill_names,
-                        max_iterations, is_builtin, is_default
+                        max_iterations, is_builtin, is_default,
+                        audio_upload_enabled, asr_model_id
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                 (
                     aid,
@@ -394,6 +407,8 @@ class AgentStore:
                     iterations,
                     is_builtin,
                     is_default,
+                    bool(audio_upload_enabled),
+                    (asr_model_id or "").strip(),
                 ),
             )
         rec = self.get_agent(aid)
@@ -413,6 +428,8 @@ class AgentStore:
         max_iterations: int | None = None,
         is_default: bool | None = None,
         status: str | None = None,
+        audio_upload_enabled: bool | None = None,
+        asr_model_id: str | None = None,
     ) -> dict[str, Any]:
         rec = self.get_agent(agent_id)
         if rec is None:
@@ -456,6 +473,12 @@ class AgentStore:
         if is_default is not None:
             sets.append("is_default = %s")
             args.append(bool(is_default))
+        if audio_upload_enabled is not None:
+            sets.append("audio_upload_enabled = %s")
+            args.append(bool(audio_upload_enabled))
+        if asr_model_id is not None:
+            sets.append("asr_model_id = %s")
+            args.append(asr_model_id.strip())
         if not sets:
             return rec
         sets.append("updated_at = now()")

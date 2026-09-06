@@ -64,6 +64,14 @@ def init_schema(dsn: str) -> None:
             "BOOLEAN NOT NULL DEFAULT FALSE"
         )
         conn.execute(
+            "ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS asr_enabled "
+            "BOOLEAN NOT NULL DEFAULT FALSE"
+        )
+        conn.execute(
+            "ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS asr_model_id "
+            "TEXT NOT NULL DEFAULT ''"
+        )
+        conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS chunks (
                 id          BIGSERIAL PRIMARY KEY,

@@ -978,7 +978,7 @@ async def stream_session_run(session_id: str, body: SessionStreamRequest) -> Str
     if not attachment_ids and not query_text and not body.images and not body.input:
         raise HTTPException(status_code=400, detail="message、attachment_ids 或 images 不能为空")
 
-    if attachment_ids and not settings.chat_images_enabled:
+    if attachment_ids and not (settings.chat_images_enabled or settings.chat_audio_enabled):
         raise HTTPException(status_code=400, detail="附件上传未启用")
 
     if body.images:

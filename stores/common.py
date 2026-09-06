@@ -12,9 +12,10 @@ KB_COLS = (
     "id, name, description, chunk_size, chunk_overlap, "
     "embedding_model_id, embedding_dim, chunk_strategy, summary_model_id, "
     "enable_parent_child, parent_chunk_size, child_chunk_size, graph_enabled, "
+    "asr_enabled, asr_model_id, "
     "created_at, updated_at"
 )
-KB_COL_COUNT = 15
+KB_COL_COUNT = 17
 
 # 混合检索只命中可检索子块（parent_text 仅用于上下文回捞）
 RETRIEVABLE_CHUNK_WHERE = "chunk_type = 'text'"
@@ -53,6 +54,8 @@ def kb_row_to_dict(row) -> dict[str, Any]:
         "parent_chunk_size": row[10],
         "child_chunk_size": row[11],
         "graph_enabled": bool(row[12]),
-        "created_at": row[13].isoformat() if row[13] else None,
-        "updated_at": row[14].isoformat() if row[14] else None,
+        "asr_enabled": bool(row[13]),
+        "asr_model_id": row[14] or "",
+        "created_at": row[15].isoformat() if row[15] else None,
+        "updated_at": row[16].isoformat() if row[16] else None,
     }

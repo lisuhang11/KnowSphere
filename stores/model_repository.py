@@ -149,6 +149,10 @@ class ModelStore():
             entries.append(
                 (settings.vlm_model, "VLLM", settings.siliconflow_base_url, settings.siliconflow_api_key)
             )
+        if settings.asr_model:
+            entries.append(
+                (settings.asr_model, "ASR", settings.siliconflow_base_url, settings.siliconflow_api_key)
+            )
 
         for name, mtype, base_url, api_key in entries:
             existing = self.get_model_by_name_type(name, mtype)
@@ -426,13 +430,17 @@ class ModelStore():
         if rec["is_default"]:
             raise ValueError("默认模型不可删除，请先设置其他模型为默认")
         refs = self.count_model_references(model_id)
-        total = refs["embedding"] + refs["summary"]
+        total = refs["embedding"] + refs["summary"] + refs.get("asr_kb", 0) + refs.get("asr_agent", 0)
         if total:
             parts = []
             if refs["embedding"]:
                 parts.append(f"{refs['embedding']} 个知识库 embedding")
             if refs["summary"]:
                 parts.append(f"{refs['summary']} 个知识库摘要/对话")
+            if refs.get("asr_kb"):
+                parts.append(f"{refs['asr_kb']} 个知识库 ASR")
+            if refs.get("asr_agent"):
+                parts.append(f"{refs['asr_agent']} 个智能体 ASR")
             raise ValueError(f"模型正被引用（{', '.join(parts)}），不可删除")
         with self._conn() as conn:
             conn.execute(
@@ -467,6 +475,34 @@ class ModelStore():
             and rec.get("status") not in ("deleted", "disabled")
         )
 
+    def is_asr_model_id_valid(self, model_id: str) -> bool:
+        rec = self.get_model(model_id)
+        return (
+            rec is not None
+            and rec["type"] == "ASR"
+            and rec.get("status") not in ("deleted", "disabled")
+        )
+
+    def resolve_asr_model_id(self, explicit: str | None = None) -> str | None:
+        """智能体/知识库指定 > 全局 chat_asr_model_id > 默认 ASR > 目录中第一个可用。"""
+        mid = (explicit or "").strip()
+        if mid and self.is_asr_model_id_valid(mid):
+            return mid
+        sid = (settings.chat_asr_model_id or "").strip()
+        if sid and self.is_asr_model_id_valid(sid):
+            return sid
+        rec = self.get_default_model("ASR")
+        if rec and rec.get("status") not in ("deleted", "disabled"):
+            return rec["id"]
+        for m in self.list_models(type_="ASR"):
+            if m.get("status") not in ("deleted", "disabled"):
+                return m["id"]
+        return None
+
+    def has_usable_asr(self) -> bool:
+        """是否存在可用于音频转写的 ASR。"""
+        return self.resolve_asr_model_id() is not None
+
     def has_usable_vlm(self) -> bool:
         """是否存在可用于聊天图片理解的 VLLM（对齐 WeKnora：无 VLM 不允许传图）。"""
         sid = (settings.chat_vlm_model_id or "").strip()
@@ -490,9 +526,19 @@ class ModelStore():
                 "SELECT COUNT(*) AS c FROM knowledge_bases WHERE summary_model_id = %s",
                 (model_id,),
             ).fetchone()
+            asr_kb = conn.execute(
+                "SELECT COUNT(*) AS c FROM knowledge_bases WHERE asr_model_id = %s",
+                (model_id,),
+            ).fetchone()
+            asr_agent = conn.execute(
+                "SELECT COUNT(*) AS c FROM agents WHERE asr_model_id = %s",
+                (model_id,),
+            ).fetchone()
         return {
             "embedding": int(emb["c"] or 0) if emb else 0,
             "summary": int(summary["c"] or 0) if summary else 0,
+            "asr_kb": int(asr_kb["c"] or 0) if asr_kb else 0,
+            "asr_agent": int(asr_agent["c"] or 0) if asr_agent else 0,
         }
 
     def resolve_embedding_model_name(self, model_id: str) -> Optional[str]:
