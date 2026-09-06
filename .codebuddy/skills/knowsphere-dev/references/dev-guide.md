@@ -17,9 +17,8 @@
 
 | 目录 | 职责 |
 |---|---|
-| `agents/` | 单智能体组装（create_react_agent，支持传入 checkpointer） |
+| `agents/` | 图核心：`state.py` / `context.py` / `graph.py` / `nodes/` |
 | `api/sessions.py` | 会话 CRUD + SSE（`/sessions`）；`api/chat.py` 仅 Agent 运行时 |
-| `graph/graph.py` | 图编译导出（langgraph.json 指向，仅 Studio 调试用） |
 | `models/` | 模型工厂（SiliconFlow） |
 | `prompts/` | 系统提示词 |
 | `tools/retrieval/doc_retrieval.py` | 混合检索工具 |

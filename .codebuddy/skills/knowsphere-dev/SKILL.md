@@ -108,5 +108,5 @@ uv run python -m evals.run_eval --n 20          # 默认 n=50
 ## 注意事项
 
 - `.codebuddy/` 目录存放项目数据，不要删除。
-- `langgraph.json` 与 `graph/graph.py` 仍保留：需要 LangGraph Studio 图调试时可选 `uv run langgraph dev`（须先停掉 8000 端口冲突无，二者独立端口，仅注意 checkpoint 不同存储），但日常开发不需要。
+- `langgraph.json` 指向 `agents/graph.py:build_agent`：需要 LangGraph Studio 图调试时可选 `uv run langgraph dev`（与 FastAPI 8000 端口独立，仅注意 checkpoint 存储不同），但日常开发不需要。
 - 修改 `pyproject.toml` 依赖后执行 `uv sync`；无网络时可用 `uv sync --offline`。

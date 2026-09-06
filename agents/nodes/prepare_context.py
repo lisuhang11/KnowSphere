@@ -5,9 +5,9 @@ from __future__ import annotations
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 
+from agents.state import KnowSphereState
 from config.settings import settings
 from schemas.query import fallback_intent
-from states import KnowSphereState
 from utils.agent_runtime import resolve_agent_tool_names
 from utils.language import ANSWER_LANGUAGE_EN, answer_language_for_query
 from utils.message_content import (

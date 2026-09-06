@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from agents.agent import build_agent
+from agents.graph import build_agent
 from evals.config import eval_invoke_config
 from evals.corpus import map_retrieval_ids
 from evals.metrics.aggregate import compute_sample_metrics, metric_input_from_item

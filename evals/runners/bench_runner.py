@@ -26,7 +26,7 @@ def _make_runner(config: EvalConfig):
     layers = config.metric_layers
     kwargs = eval_chat_model_kwargs(config)
 
-    from agents.agent import build_agent
+    from agents.graph import build_agent
     from evals.pipelines.agent import eval_system_prompt
     from tools.retrieval.doc_retrieval import doc_retrieval
 

@@ -8,9 +8,9 @@ from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 from agents.nodes.generate import _inject_image_description
+from agents.state import KnowSphereState
 from models import create_chat_model
 from skills.catalog import any_skill_has_scripts
-from states import KnowSphereState
 from tools.catalog import get_tool_spec
 from tools.events import emit_thinking
 from tools.skills import SKILL_RUNTIME_TOOL_NAMES
@@ -19,8 +19,8 @@ from utils.agent_runtime import (
     resolve_agent_tool_names,
     resolve_system_prompt,
 )
-from utils.language import ANSWER_LANGUAGE_EN, answer_language_from_state, apply_answer_language
 from utils.citation import citation_payload_from_source_dicts
+from utils.language import ANSWER_LANGUAGE_EN, answer_language_from_state, apply_answer_language
 from utils.run_config import (
     chat_model_kwargs_from_config,
     graph_enabled_from_config,

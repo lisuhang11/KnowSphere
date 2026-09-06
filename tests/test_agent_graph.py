@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
-from agents.agent import build_agent
+from agents.graph import build_agent
 from agents.nodes.agent import tools_for_state
 from agents.nodes.sources import collect_sources
 from config.settings import settings

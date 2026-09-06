@@ -11,6 +11,7 @@ from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
+from agents.context import context_from_config
 from config.settings import settings
 from utils.run_config import agent_id_from_config
 
@@ -47,14 +48,11 @@ def resolve_agent_tool_names(config: RunnableConfig | None) -> frozenset[str] | 
 def resolve_agent_skill_names(config: RunnableConfig | None) -> list[str]:
     """当前智能体绑定的技能名。空列表 = 未启用 Skill。"""
     from skills.catalog import ordered_skill_names
-    from utils.run_config import _configurable
 
-    cfg = _configurable(config)
-    if "skill_names" in cfg:
-        raw = cfg.get("skill_names")
-        names = raw if isinstance(raw, (list, tuple)) else []
-        return ordered_skill_names([str(n) for n in names])
-    agent_id = agent_id_from_config(config)
+    ctx = context_from_config(config)
+    if ctx.skill_names is not None:
+        return ordered_skill_names(ctx.skill_names)
+    agent_id = ctx.agent_id or None
     if not agent_id:
         return []
     rec = load_agent(agent_id)

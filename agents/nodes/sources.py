@@ -8,7 +8,7 @@ import logging
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 
-from states import KnowSphereState
+from agents.state import KnowSphereState
 from utils.long_term_memory import record_answer_sources
 from utils.short_term_memory import turn_ranges
 

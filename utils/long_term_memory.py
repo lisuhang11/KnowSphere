@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
+from agents.context import context_from_config
 from config.settings import get_current_owner, settings
 
 logger = logging.getLogger(__name__)
@@ -87,9 +89,9 @@ def retrieval_conditioning_enabled() -> bool:
 
 def resolve_memory_owner(config: RunnableConfig | None = None) -> str:
     if config:
-        raw = (config.get("configurable") or {}).get("owner")
-        if isinstance(raw, str) and raw.strip():
-            return raw.strip()
+        owner = context_from_config(config).owner
+        if owner:
+            return owner
     return (get_current_owner() or settings.default_owner or "default").strip() or "default"
 
 

@@ -56,7 +56,7 @@ async def init_agent_runtime() -> None:
 
         _checkpointer = MemorySaver()
 
-    from agents.agent import build_agent
+    from agents.graph import build_agent
 
     _agent = build_agent(checkpointer=_checkpointer)
     logger.info("嵌入式 LangGraph agent 已编译（FastAPI 进程内运行）")

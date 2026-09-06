@@ -1,4 +1,4 @@
-"""从 LangGraph configurable 读取本轮模型选择。"""
+"""从 RunnableConfig 读取本轮配置（委托 agents.context.Context）。"""
 
 from __future__ import annotations
 
@@ -6,129 +6,70 @@ from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
-
-def _configurable(config: RunnableConfig | None) -> dict[str, Any]:
-    if not config:
-        return {}
-    raw = config.get("configurable") or {}
-    return raw if isinstance(raw, dict) else {}
+from agents.context import Context, _configurable, context_from_config
 
 
 def kb_ids_from_config(config: RunnableConfig | None) -> list[int]:
-    configurable = _configurable(config)
-    raw = configurable.get("kb_ids")
-    if not isinstance(raw, (list, tuple)):
-        return []
-    out: list[int] = []
-    for v in raw:
-        if isinstance(v, bool):
-            continue
-        if isinstance(v, int):
-            out.append(v)
-            continue
-        if isinstance(v, str):
-            s = v.strip()
-            if s.isdigit():
-                out.append(int(s))
-    return out
+    return context_from_config(config).kb_ids
+
 
 def web_search_enabled_from_config(config: RunnableConfig | None) -> bool:
-    """本轮是否绑定联网工具。管理员 WEB_SEARCH_ENABLED=false 为总开关。
-
-    configurable 未传 web_search_enabled 时默认开启（兼容测试/评测）。
-    """
-    from config.settings import settings
-
-    if not settings.web_search_enabled:
-        return False
-    configurable = _configurable(config)
-    if "web_search_enabled" not in configurable:
-        return True
-    return bool(configurable["web_search_enabled"])
+    """本轮是否绑定联网工具。管理员 WEB_SEARCH_ENABLED=false 为总开关。"""
+    return context_from_config(config).resolved_web_search_enabled()
 
 
 def graph_enabled_from_config(config: RunnableConfig | None) -> bool:
-    """本轮是否绑定知识图谱工具。
-
-    生产会话会显式写入 graph_enabled；测试只传 kb_ids 时视为可用。
-    """
-    if not kb_ids_from_config(config):
-        return False
-    configurable = _configurable(config)
-    if "graph_enabled" not in configurable:
-        return True
-    return bool(configurable["graph_enabled"])
+    """本轮是否绑定知识图谱工具。"""
+    return context_from_config(config).resolved_graph_enabled()
 
 
 def thread_id_from_config(config: RunnableConfig | None) -> str | None:
-    configurable = _configurable(config)
-    raw = configurable.get("thread_id")
-    if raw is None:
-        return None
-    ident = str(raw).strip()
+    ident = context_from_config(config).thread_id
     return ident or None
 
 
 def agent_id_from_config(config: RunnableConfig | None) -> str | None:
-    configurable = _configurable(config)
-    raw = configurable.get("agent_id")
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    return raw.strip()
+    ident = context_from_config(config).agent_id
+    return ident or None
 
 
 def attachment_ids_from_config(config: RunnableConfig | None) -> list[str]:
-    configurable = _configurable(config)
-    raw = configurable.get("attachment_ids")
-    if not isinstance(raw, (list, tuple)):
-        return []
-    out: list[str] = []
-    seen: set[str] = set()
-    for item in raw:
-        ident = str(item or "").strip()
-        if not ident or ident in seen:
-            continue
-        seen.add(ident)
-        out.append(ident)
-    return out
+    return context_from_config(config).attachment_ids
 
 
 def pinned_skill_names_from_config(config: RunnableConfig | None) -> list[str]:
-    configurable = _configurable(config)
-    raw = configurable.get("pinned_skill_names")
-    if not isinstance(raw, (list, tuple)):
-        return []
-    out: list[str] = []
-    seen: set[str] = set()
-    for item in raw:
-        name = str(item or "").strip()
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        out.append(name)
-    return out
+    return context_from_config(config).pinned_skill_names
 
 
 def chat_model_id_from_config(config: RunnableConfig | None) -> str | None:
-    configurable = _configurable(config)
-    raw = configurable.get("chat_model_id")
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    return raw.strip()
+    ident = context_from_config(config).chat_model_id
+    return ident or None
+
 
 def vlm_model_id_from_config(config: RunnableConfig | None) -> str | None:
-    configurable = _configurable(config)
-    raw = configurable.get("vlm_model_id")
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    return raw.strip()
+    ident = context_from_config(config).vlm_model_id
+    return ident or None
+
 
 def chat_model_kwargs_from_config(
     config: RunnableConfig | None,
     base: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    kw = dict(base or {})
-    cid = chat_model_id_from_config(config)
-    if cid:
-        kw["model"] = cid
-    return kw
+    return context_from_config(config).chat_model_kwargs(base)
+
+
+__all__ = [
+    "Context",
+    "_configurable",
+    "agent_id_from_config",
+    "attachment_ids_from_config",
+    "chat_model_id_from_config",
+    "chat_model_kwargs_from_config",
+    "context_from_config",
+    "graph_enabled_from_config",
+    "kb_ids_from_config",
+    "pinned_skill_names_from_config",
+    "thread_id_from_config",
+    "vlm_model_id_from_config",
+    "web_search_enabled_from_config",
+]

@@ -17,21 +17,22 @@
 
 ```
 KnowSphere/
-├── langgraph.json        # Studio 调试入口（可选）
+├── langgraph.json        # Studio 调试入口（指向 agents.graph:build_agent）
 ├── pyproject.toml        # uv 依赖
 ├── docker-compose.yml    # pgvector + api（graph 内嵌）
-├── agents/               # 单智能体组装
-├── graph/                # 图编译导出（langgraph.json 指向这里，仅调试用）
-├── models/               # 大模型工厂（SiliconFlow 实现）
+├── agents/               # 图核心：state / context / graph / nodes
+├── models/               # 大模型工厂
 ├── prompts/              # 提示词（git 管理，不上 Hub）
-├── states/               # 状态/配置类型
 ├── schemas/              # Pydantic schema（来源引用等）
-├── tools/                # doc_retrieval 检索工具
+├── tools/                # 检索 / 联网 / 技能工具
+├── services/             # 领域服务（摄取、会话、检索）
+├── stores/               # 持久化
 ├── ingestion/            # 摄取管道（CLI + API 共用）
-├── api/                  # 上传端点 + 嵌入式对话路由（api/chat.py）
+├── api/                  # FastAPI（api/chat.py 内嵌编译 graph）
 ├── evals/                # RAGAS + HotpotQA 评测
+├── frontend/             # Vue 控制台
 ├── config/               # 环境配置
-└── utils/                # pgvector 存储层等
+└── utils/                # 跨切面工具
 ```
 
 ## 快速开始

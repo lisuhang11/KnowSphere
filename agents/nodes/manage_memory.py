@@ -6,9 +6,9 @@ import logging
 
 from langchain_core.runnables import RunnableConfig
 
+from agents.state import KnowSphereState
 from config.settings import settings
 from models import create_chat_model
-from states import KnowSphereState
 from tools.events import emit_thinking
 from utils.long_term_memory import (
     format_asker_background,

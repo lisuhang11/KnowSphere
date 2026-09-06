@@ -7,6 +7,7 @@ import logging
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
+from agents.state import KnowSphereState
 from config.settings import settings
 from models import create_chat_model, create_vlm_model
 from prompts.intent_prompts import intent_system_prompt
@@ -19,7 +20,6 @@ from schemas.query import (
     parse_query_understand_json,
     sanitize_rewrite_query,
 )
-from states import KnowSphereState
 from tools.retrieval.doc_retrieval import _emit_thinking
 from utils.language import answer_language_from_state
 from utils.message_content import message_text
@@ -27,7 +27,11 @@ from utils.query_understand_images import (
     build_multimodal_user_content,
     load_image_data_uris_from_message,
 )
-from utils.run_config import chat_model_kwargs_from_config, vlm_model_id_from_config
+from utils.run_config import (
+    chat_model_kwargs_from_config,
+    thread_id_from_config,
+    vlm_model_id_from_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +159,7 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
     history_pairs = list(state.get("history_pairs") or [])
     has_images = bool(state.get("has_images"))
     has_attachments = bool(state.get("has_attachments"))
-    session_id = str((config.get("configurable") or {}).get("thread_id") or "")
+    session_id = thread_id_from_config(config) or ""
 
     result: dict = {
         "rewrite_query": current_query,

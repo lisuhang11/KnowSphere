@@ -18,7 +18,7 @@ from ragas.llms import LangchainLLMWrapper
 from ragas.metrics import AnswerRelevancy, ContextPrecision, ContextRecall, Faithfulness
 from ragas.metrics.base import MetricWithEmbeddings, MetricWithLLM
 
-from agents.agent import build_agent
+from agents.graph import build_agent
 from config.settings import set_current_owner
 from evals.cancel import EvalCancelled, check_stop
 from evals.config import eval_chat_model_kwargs, eval_embedding_kwargs, eval_invoke_config

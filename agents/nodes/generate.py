@@ -7,8 +7,8 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
+from agents.state import KnowSphereState
 from models import create_chat_model
-from states import KnowSphereState
 from tools.retrieval.doc_retrieval import _emit_thinking
 from utils.agent_runtime import resolve_system_prompt
 from utils.citation import citation_payload_from_source_dicts
