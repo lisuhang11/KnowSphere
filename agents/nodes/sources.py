@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 
 from langchain_core.messages import ToolMessage
@@ -11,6 +10,7 @@ from langchain_core.runnables import RunnableConfig
 from agents.state import KnowSphereState
 from utils.long_term_memory import record_answer_sources
 from utils.short_term_memory import turn_ranges
+from utils.source_aliases import sources_from_tool_payload
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +37,8 @@ def collect_sources(state: KnowSphereState, config: RunnableConfig = None) -> di
         ):
             continue
         try:
-            payload = json.loads(msg.content)
-            for item in payload.get("sources") or []:
-                if isinstance(item, dict):
-                    sources.append(item)
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            sources.extend(sources_from_tool_payload(msg.content))
+        except (TypeError, ValueError) as exc:
             logger.debug("跳过无法解析的检索工具消息: %s", exc)
     if sources and config is not None:
         record_answer_sources(sources, config=config)

@@ -21,6 +21,7 @@ class ToolSpec:
     requires_web: bool = False
     requires_graph: bool = False
     produces: str = "text"  # text | citations | file
+    always_store: bool = False  # True 时整份结果外置，避免 LLM 搬运时丢字段
 
 
 TOOL_SPECS: dict[str, ToolSpec] = {

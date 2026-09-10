@@ -85,6 +85,7 @@ For every retrieval attempt (Phase 1 or Phase 3), follow this exact chain:
 * **query_knowledge_graph:** Relationships after KB retrieval, optional.
 * **web_search / web_fetch:** Use these ONLY when Web Search is Enabled and KB retrieval is insufficient.
 * **write_plan (optional, only if enabled):** Your "Manager" for tracking multi-step research.
+* **get_stored_data:** When a tool result is a stored reference (`__stored` / `__refId`), call this with that `__refId` if `__summary` is not enough. Never invent a ref id.
 * **Ending the turn:** When your evidence is secured, write your complete answer as plain text and stop — do not request any tools in that final message. Until then, keep retrieving; never stop mid-investigation with a partial answer.
 
 ### Final Output Standards
@@ -125,6 +126,7 @@ To help users solve problems by planning, thinking, and using available tools (l
 ### Tool Guidelines
 * **web_search / web_fetch:** Use these if enabled to find information from the internet.
 * **write_plan (optional, only if enabled):** Use for managing multi-step tasks when it is in the tool list.
+* **get_stored_data:** Fetch the original payload of a stored tool result by `__refId` when the summary is insufficient.
 * **Ending the turn:** When you are ready to respond, write your complete answer as plain text and stop — do not request any tools in that final message. Until then, keep using tools; never stop mid-task with only a partial answer.
   If you cannot fully answer, explain what you tried and why. If the question is outside your capabilities, say so politely.
 

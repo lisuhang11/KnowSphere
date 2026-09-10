@@ -22,15 +22,17 @@ from tools.catalog import (
     tools_to_public,
 )
 from tools.skills import SKILL_RUNTIME_TOOL_NAMES
+from tools.storage import STORAGE_RUNTIME_TOOL_NAMES
 
 
 def test_catalog_covers_runtime_tools():
     names = {t.name for t in get_tools()}
     assert set(CATALOG_TOOL_NAMES) <= names
-    assert names - set(CATALOG_TOOL_NAMES) == set(SKILL_RUNTIME_TOOL_NAMES)
+    runtime = set(SKILL_RUNTIME_TOOL_NAMES) | set(STORAGE_RUNTIME_TOOL_NAMES)
+    assert names - set(CATALOG_TOOL_NAMES) == runtime
     public = tools_to_public()
     assert [t["name"] for t in public] == list(CATALOG_TOOL_NAMES)
-    assert all(t["name"] not in SKILL_RUNTIME_TOOL_NAMES for t in public)
+    assert all(t["name"] not in runtime for t in public)
     assert all(t["display_name"] and t["category"] for t in public)
     pptx = next(t for t in public if t["name"] == "generate_pptx")
     assert pptx["category"] == "creation"

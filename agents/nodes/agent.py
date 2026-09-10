@@ -14,6 +14,7 @@ from skills.catalog import any_skill_has_scripts
 from tools.catalog import get_tool_spec
 from tools.events import emit_thinking
 from tools.skills import SKILL_RUNTIME_TOOL_NAMES
+from tools.storage import STORAGE_RUNTIME_TOOL_NAMES
 from utils.agent_runtime import (
     resolve_agent_skill_names,
     resolve_agent_tool_names,
@@ -64,6 +65,10 @@ def tools_for_state(
             if skill_enabled:
                 seen.add(name)
                 selected.append(tool)
+            continue
+        if name in STORAGE_RUNTIME_TOOL_NAMES:
+            seen.add(name)
+            selected.append(tool)
             continue
         if allowed is not None and name not in allowed:
             continue
@@ -128,6 +133,15 @@ def _prepare_messages(
     memory_block = (memory_suffix or "").strip()
     if memory_block:
         parts.append("\n\n" + memory_block)
+    if "get_stored_data" in bound:
+        parts.append(
+            "\n\n### Stored tool results\n"
+            "A tool message may be a reference: "
+            '{"__stored":true,"__refId":"...","__summary":"..."}. '
+            "Use __summary when it is enough. "
+            "If you need the original payload, call get_stored_data with that __refId. "
+            "Do not invent ref ids or copy truncated arrays from memory."
+        )
     return [SystemMessage(content="".join(parts))] + list(messages)
 
 

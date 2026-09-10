@@ -246,4 +246,24 @@ def init_schema(dsn: str) -> None:
             "CREATE INDEX IF NOT EXISTS memory_doc_affinity_owner_hits "
             "ON memory_doc_affinity (owner, hits DESC)"
         )
+        # L1 工具结果外置：大结果只在消息里留 ref，原文供审计/按需取回
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tool_result_refs (
+                ref_id           TEXT PRIMARY KEY,
+                thread_id        TEXT NOT NULL DEFAULT '',
+                owner            TEXT NOT NULL DEFAULT '',
+                tool_name        TEXT NOT NULL,
+                original_length  INT  NOT NULL,
+                summary          TEXT NOT NULL DEFAULT '',
+                preview          TEXT NOT NULL DEFAULT '',
+                payload          TEXT NOT NULL,
+                created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS tool_result_refs_thread_created "
+            "ON tool_result_refs (thread_id, created_at DESC)"
+        )
         conn.commit()

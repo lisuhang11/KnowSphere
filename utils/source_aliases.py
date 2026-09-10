@@ -7,7 +7,6 @@ KnowSphere 的 [[cN]] 已是 1-based 检索序号；list_chunks 必须能解析 
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Iterable, Sequence
 from typing import Any
@@ -50,11 +49,9 @@ def parse_source_handle(raw: Any) -> tuple[str | None, int | None]:
 
 
 def sources_from_tool_payload(payload: Any) -> list[dict[str, Any]]:
-    if isinstance(payload, str):
-        try:
-            payload = json.loads(payload)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return []
+    from utils.tool_result_store import resolve_tool_payload
+
+    payload = resolve_tool_payload(payload)
     if not isinstance(payload, dict):
         return []
     out: list[dict[str, Any]] = []

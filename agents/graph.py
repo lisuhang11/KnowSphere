@@ -12,7 +12,7 @@ from typing import Any
 from langgraph._internal._runnable import RunnableCallable
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import tools_condition
 from langgraph.types import RetryPolicy
 
 from agents.context import Context
@@ -22,10 +22,11 @@ from agents.nodes.manage_memory import manage_memory
 from agents.nodes.prepare_context import prepare_context
 from agents.nodes.query_understand import query_understand, route_after_understand
 from agents.nodes.sources import collect_sources
+from agents.nodes.tools import make_tools_node
 from agents.state import InputState, KnowSphereState, OutputState
 from config.settings import settings
 from prompts import build_system_prompt
-from tools import get_tools
+from tools import ensure_storage_tools, get_tools
 
 _TOOLS_RETRY = RetryPolicy(max_attempts=3, initial_interval=0.5, backoff_factor=2.0)
 
@@ -85,7 +86,7 @@ def build_agent(
     tools: 覆盖默认工具列表（评测可只挂 doc_retrieval）。
     """
     prompt = system_prompt or build_system_prompt(settings.citation_enabled)
-    tool_list = tools if tools is not None else get_tools()
+    tool_list = ensure_storage_tools(tools if tools is not None else get_tools())
     workflow = StateGraph(
         KnowSphereState,
         Context,
@@ -96,7 +97,7 @@ def build_agent(
     workflow.add_node("manage_memory", manage_memory)
     workflow.add_node("query_understand", query_understand)
     workflow.add_node("agent", _make_agent_runnable(prompt, tool_list, chat_model_kwargs))
-    workflow.add_node("tools", ToolNode(tool_list), retry_policy=_TOOLS_RETRY)
+    workflow.add_node("tools", make_tools_node(tool_list), retry_policy=_TOOLS_RETRY)
     workflow.add_node("collect_sources", collect_sources)
     workflow.add_node("generate", _make_generate_runnable(prompt, chat_model_kwargs))
 

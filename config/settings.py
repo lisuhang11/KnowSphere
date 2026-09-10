@@ -106,6 +106,13 @@ class Settings(BaseSettings):
     stm_redact_old_retrieval: bool = True
     stm_working_memory_max_chars: int = 1200
 
+    # L1 工具结果外置（大结果存 Postgres，消息里只留引用）
+    tool_result_store_enabled: bool = True
+    tool_result_char_limit: int = 8000
+    tool_result_array_limit: int = 10
+    tool_result_preview_chars: int = 12000
+    tool_result_summary_chars: int = 2000
+
     # 长期记忆（跨会话；对齐 WeKnora RetrievalContextFor → asker_background）
     memory_enabled: bool = True
     memory_retrieval_conditioning: bool = True
