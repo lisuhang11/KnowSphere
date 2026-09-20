@@ -86,7 +86,12 @@ def run_intent_item(item: QAPair, *, chat_model_id: str | None = None) -> Sample
             retrieval_gt=[],
             metrics=SampleMetrics(intent=intent_metrics),
             latency_ms=int((time.perf_counter() - t0) * 1000),
-            details={"rewrite_pred": rewrite, "kb_selected": kb_selected},
+            details={
+                "rewrite_pred": rewrite,
+                "kb_selected": kb_selected,
+                "intent_confidence": out.get("intent_confidence"),
+                "intent_probs": out.get("intent_probs"),
+            },
         )
     except Exception as exc:
         return SampleResult(

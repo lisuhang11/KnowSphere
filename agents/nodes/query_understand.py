@@ -1,8 +1,13 @@
-"""query_understand：LLM 改写 query + 意图分类。"""
+"""query_understand：LLM 改写 query + 意图分类。
+
+意图默认走 OpenJev Choice（读 logprobs，输出选项概率）；改写仍生成文本。
+厂商不支持 logprobs 时回退为原来的 JSON 结构化输出。
+"""
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
@@ -10,10 +15,15 @@ from langchain_core.runnables import RunnableConfig
 from agents.state import KnowSphereState
 from config.settings import settings
 from models import create_chat_model, create_vlm_model
+from models.decision import classify_choice
+from prompts.intent_choice import build_intent_choice_prompts
 from prompts.intent_prompts import intent_system_prompt
 from prompts.query_understand import build_query_understand_prompts
 from schemas.query import (
+    INTENT_CHOICE_OPTIONS,
+    QueryRewriteOutput,
     QueryUnderstandOutput,
+    SKIP_REWRITE_INTENTS,
     fallback_intent,
     needs_agent_tools,
     normalize_intent,
@@ -39,6 +49,31 @@ _LLM_KWARGS: dict = {
     "temperature": 0.3,
     "extra_body": {"enable_thinking": False},
 }
+
+
+@dataclass
+class _TextUnderstandResult:
+    rewrite_query: str
+    intent: str
+    image_description: str = ""
+    intent_confidence: float | None = None
+    intent_probs: dict[str, float] | None = None
+
+
+def _intent_classifier_mode() -> str:
+    raw = getattr(settings, "intent_classifier", "choice")
+    if not isinstance(raw, str):
+        return "choice"
+    mode = raw.strip().lower()
+    if mode in {"structured", "json"}:
+        return "structured"
+    return "choice"
+
+
+def _format_intent_thinking(intent: str, confidence: float | None) -> str:
+    if isinstance(confidence, (int, float)) and 0 < float(confidence) <= 1:
+        return f"{intent} ({float(confidence):.2f})"
+    return intent
 
 
 def _resolve_vlm_model_id(config: RunnableConfig | None = None) -> str | None:
@@ -99,21 +134,64 @@ def _apply_intent_side_effects(
     return {"system_prompt_override": ""}
 
 
-def _invoke_text_query_understand(
-    system_prompt: str,
-    user_prompt: str,
-    config: RunnableConfig,
-) -> QueryUnderstandOutput | None:
+def _query_understand_llm(config: RunnableConfig):
     model_name = (settings.query_understand_model or "").strip() or None
     llm_kwargs = chat_model_kwargs_from_config(config, _LLM_KWARGS)
     if model_name:
         llm_kwargs["model"] = model_name
-    llm = create_chat_model(**llm_kwargs).with_structured_output(QueryUnderstandOutput)
-    return llm.invoke(
-        [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
+    return create_chat_model(**llm_kwargs)
+
+
+def _invoke_text_query_understand(
+    system_prompt: str,
+    user_prompt: str,
+    config: RunnableConfig,
+    *,
+    choice_system: str | None = None,
+    choice_user: str | None = None,
+    original_query: str = "",
+) -> QueryUnderstandOutput | _TextUnderstandResult | None:
+    llm = _query_understand_llm(config)
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    choice = None
+    if _intent_classifier_mode() == "choice" and choice_system and choice_user:
+        try:
+            choice = classify_choice(
+                llm,
+                [
+                    {"role": "system", "content": choice_system},
+                    {"role": "user", "content": choice_user},
+                ],
+                INTENT_CHOICE_OPTIONS,
+                config=config,
+            )
+        except Exception as exc:
+            logger.warning("Choice 意图分类失败，回退 JSON: %s", exc)
+            choice = None
+
+    if choice is not None:
+        rewrite = original_query
+        image_description = ""
+        if choice.label not in SKIP_REWRITE_INTENTS:
+            out = llm.with_structured_output(QueryRewriteOutput).invoke(
+                messages,
+                config=config,
+            )
+            rewrite = getattr(out, "rewrite_query", None) or original_query
+            image_description = (getattr(out, "image_description", None) or "").strip()
+        return _TextUnderstandResult(
+            rewrite_query=rewrite,
+            intent=choice.label,
+            image_description=image_description,
+            intent_confidence=choice.confidence,
+            intent_probs=dict(choice.probs),
+        )
+
+    return llm.with_structured_output(QueryUnderstandOutput).invoke(
+        messages,
         config=config,
     )
 
@@ -169,6 +247,8 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
             has_images=has_images,
             has_attachments=has_attachments,
         ),
+        "intent_confidence": None,
+        "intent_probs": None,
     }
 
     if not settings.enable_rewrite and not has_images and not has_attachments:
@@ -176,7 +256,7 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
             "【1/5 查询理解】改写已关闭\n"
             f"原问题：{current_query}\n"
             f"检索词：{current_query}\n"
-            f"意图：{result['intent']}"
+            f"意图：{_format_intent_thinking(result['intent'], result.get('intent_confidence'))}"
             + (
                 " → 进入工具推理"
                 if needs_agent_tools(
@@ -201,6 +281,8 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
         return result
 
     asker_background = str(state.get("asker_background") or "")
+    working_memory = state.get("working_memory") if isinstance(state.get("working_memory"), dict) else None
+    session_summary = str(state.get("session_summary") or "")
     system_prompt, user_prompt = build_query_understand_prompts(
         query=current_query,
         history_pairs=history_pairs,
@@ -208,15 +290,28 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
         has_images=has_images,
         has_attachments=has_attachments,
         web_search_enabled=web_on,
-        session_summary=str(state.get("session_summary") or ""),
-        working_memory=state.get("working_memory") if isinstance(state.get("working_memory"), dict) else None,
+        session_summary=session_summary,
+        working_memory=working_memory,
         language=language,
+        asker_background=asker_background,
+    )
+    choice_system, choice_user = build_intent_choice_prompts(
+        query=current_query,
+        history_pairs=history_pairs,
+        kb_selected=kb_selected,
+        has_images=has_images,
+        has_attachments=has_attachments,
+        web_search_enabled=web_on,
+        session_summary=session_summary,
+        working_memory=working_memory,
         asker_background=asker_background,
     )
 
     rewrite = current_query
     intent = result["intent"]
     image_description = ""
+    intent_confidence: float | None = None
+    intent_probs: dict[str, float] | None = None
 
     try:
         parsed_mm: dict[str, str] | None = None
@@ -238,13 +333,26 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
             intent = parsed_mm.get("intent") or intent
             image_description = (parsed_mm.get("image_description") or "").strip()
         else:
-            out = _invoke_text_query_understand(system_prompt, user_prompt, config)
+            out = _invoke_text_query_understand(
+                system_prompt,
+                user_prompt,
+                config,
+                choice_system=choice_system,
+                choice_user=choice_user,
+                original_query=current_query,
+            )
             rewrite = sanitize_rewrite_query(
                 (getattr(out, "rewrite_query", None) or "").strip(),
                 current_query,
             )
             intent = getattr(out, "intent", None) or intent
             image_description = (getattr(out, "image_description", None) or "").strip()
+            raw_conf = getattr(out, "intent_confidence", None)
+            if isinstance(raw_conf, (int, float)):
+                intent_confidence = float(raw_conf)
+            raw_probs = getattr(out, "intent_probs", None)
+            if isinstance(raw_probs, dict):
+                intent_probs = {str(k): float(v) for k, v in raw_probs.items() if isinstance(v, (int, float))}
 
         if rewrite:
             result["rewrite_query"] = rewrite
@@ -254,6 +362,8 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
             has_images=has_images,
             has_attachments=has_attachments,
         )
+        result["intent_confidence"] = intent_confidence
+        result["intent_probs"] = intent_probs
         # 始终写入（含空串），覆盖 checkpoint 中上一轮残留
         result["image_description"] = image_description
     except Exception as exc:
@@ -280,7 +390,7 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
         "【1/5 查询理解】\n"
         f"原问题：{current_query}\n"
         f"改写检索词：{result['rewrite_query']}\n"
-        f"意图：{result['intent']}"
+        f"意图：{_format_intent_thinking(result['intent'], result.get('intent_confidence'))}"
         + (
             " → 进入工具推理"
             if needs_agent_tools(

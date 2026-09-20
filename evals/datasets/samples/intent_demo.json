@@ -1,0 +1,768 @@
+{
+  "id": "intent_demo",
+  "description": "意图识别评测集（覆盖 greeting / summarize / web_search / kb_search / clarification / follow_up / image_only / doc_only / chitchat / no_kb）",
+  "source": "generated",
+  "created_at": "2026-09-20T09:30:00Z",
+  "passages": [],
+  "items": [
+    {
+      "qid": 0,
+      "question": "你好",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "greeting",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 1,
+      "question": "谢谢",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "greeting",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 2,
+      "question": "再见",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "greeting",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 3,
+      "question": "早上好",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "greeting",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 4,
+      "question": "辛苦了，感谢你的帮助",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "greeting",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 5,
+      "question": "总结一下我们刚才的对话",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "summarize",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [
+          {"query": "年假有几天？", "answer": "满一年员工年假 5 天。"},
+          {"query": "可以拆分休吗？", "answer": "可以按天拆分申请。"}
+        ],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 6,
+      "question": "回顾一下我们聊了什么",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "summarize",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [
+          {"query": "报销要注意什么？", "answer": "1. 保留发票 2. 三天内提交 3. 主管先批"}
+        ],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 7,
+      "question": "把上面的讨论整理成要点",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "summarize",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [
+          {"query": "年假怎么休？", "answer": "提前三天在系统申请，直属主管审批后即可。"}
+        ],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 8,
+      "question": "总结一下这次会话",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "summarize",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [
+          {"query": "访客怎么登记？", "answer": "前台填写访客单，被访人确认后发放临时卡。"}
+        ],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 9,
+      "question": "我们刚才说的内容你帮我概括一下",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "summarize",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [
+          {"query": "食堂在哪？", "answer": "B 栋 1 楼，工作日 11:30-13:00 开放。"}
+        ],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 10,
+      "question": "今天天气怎么样",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "web_search",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 11,
+      "question": "最新的新闻有哪些",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "web_search",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 12,
+      "question": "今天热搜是什么",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "web_search",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 13,
+      "question": "你知道最近比较火的景甜代孕相关事件吗",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "web_search",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 14,
+      "question": "昨晚刚发生的足球比赛比分是多少",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "web_search",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 15,
+      "question": "美元兑人民币现在的实时汇率",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "web_search",
+        "needs_retrieval_gt": false,
+        "kb_selected": false,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 16,
+      "question": "报销流程是什么",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 17,
+      "question": "访客怎么登记",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 18,
+      "question": "食堂在哪",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 19,
+      "question": "帮我查一下考勤制度",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 20,
+      "question": "什么是RAG架构",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 21,
+      "question": "李稣航是谁",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 22,
+      "question": "整理知识库中的数据",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 23,
+      "question": "列出知识库里所有文档",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 24,
+      "question": "年假申请需要走哪些步骤",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 25,
+      "question": "这个话题还有什么相关的内容",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [
+          {"query": "报销流程是什么", "answer": "先贴发票，再走费控系统，主管审批后财务打款。"}
+        ],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 26,
+      "question": "知识库里有类似的文档吗",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "kb_search",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": true
+      }
+    },
+    {
+      "qid": 27,
+      "question": "那个怎么弄",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "clarification",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 28,
+      "question": "这个呢",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "clarification",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 29,
+      "question": "帮我查一下",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "clarification",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 30,
+      "question": "还有吗",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "clarification",
+        "needs_retrieval_gt": true,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 31,
+      "question": "上面第三点展开讲讲",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "follow_up",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [
+          {"query": "报销要注意什么？", "answer": "1. 保留发票 2. 三天内提交 3. 主管先批才能送财务。"}
+        ],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 32,
+      "question": "你刚才说的那个方案再详细说说",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "follow_up",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [
+          {"query": "检索怎么优化？", "answer": "可以采用混合检索加 rerank，先召回再精排。"}
+        ],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 33,
+      "question": "第二点是什么意思",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "follow_up",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [
+          {"query": "入职要带哪些材料？", "answer": "1. 身份证复印件 2. 学历证明 3. 一寸照片。"}
+        ],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 34,
+      "question": "刚才那个例子再用大白话解释一下",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "follow_up",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [
+          {"query": "向量检索是什么？", "answer": "把问题和文档都变成向量，按相似度找最接近的段落。"}
+        ],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 35,
+      "question": "图里那个红色框是什么意思",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "follow_up",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [
+          {
+            "query": "这张架构图是什么",
+            "answer": "图中红色框标出的是检索服务，负责向量召回和 rerank。"
+          }
+        ],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 36,
+      "question": "这份文件里你提到的第三节再讲细一点",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "follow_up",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [
+          {
+            "query": "总结一下这个文档",
+            "answer": "文档第三节讲权限模型和审批流，包括角色、菜单和数据范围。"
+          }
+        ],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 37,
+      "question": "这张图片是什么",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "image_only",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": true,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 38,
+      "question": "描述一下图片内容",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "image_only",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": true,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 39,
+      "question": "翻译图中文字",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "image_only",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": true,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 40,
+      "question": "这张图是什么意思",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "image_only",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": true,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 41,
+      "question": "总结一下这个文档",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "doc_only",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": true
+      }
+    },
+    {
+      "qid": 42,
+      "question": "这份文件讲了什么",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "doc_only",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": true
+      }
+    },
+    {
+      "qid": 43,
+      "question": "把附件内容提炼成要点",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "doc_only",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": true
+      }
+    },
+    {
+      "qid": 44,
+      "question": "这文档里是啥",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "doc_only",
+        "needs_retrieval_gt": false,
+        "kb_selected": false,
+        "history": [],
+        "has_images": false,
+        "has_attachments": true
+      }
+    },
+    {
+      "qid": 45,
+      "question": "你是谁",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "chitchat",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 46,
+      "question": "讲个笑话",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "chitchat",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 47,
+      "question": "你喜欢什么颜色",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "chitchat",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 48,
+      "question": "你会唱歌吗",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "chitchat",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 49,
+      "question": "陪我闲聊几句",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "chitchat",
+        "needs_retrieval_gt": false,
+        "kb_selected": true,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 50,
+      "question": "李稣航是谁",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "no_kb",
+        "needs_retrieval_gt": false,
+        "kb_selected": false,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    },
+    {
+      "qid": 51,
+      "question": "年假政策是什么",
+      "pids": [],
+      "answer": "",
+      "meta": {
+        "intent_gt": "no_kb",
+        "needs_retrieval_gt": false,
+        "kb_selected": false,
+        "history": [],
+        "has_images": false,
+        "has_attachments": false
+      }
+    }
+  ]
+}

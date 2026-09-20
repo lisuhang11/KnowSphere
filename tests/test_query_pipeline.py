@@ -213,6 +213,8 @@ def test_prepare_context_resets_stale_turn_keys():
     assert out["context_block"] == ""
     assert out["has_images"] is False
     assert out["intent"] == "kb_search"
+    assert out.get("intent_confidence") is None
+    assert out.get("intent_probs") is None
 
 def test_query_understand_skips_llm_when_disabled():
     state = {
@@ -603,3 +605,108 @@ def test_query_understand_prompt_injects_web_runtime():
     )
     assert "Web search available this turn: no" in user_off
     assert "intent MUST be `web_search`" not in user_off
+
+
+def _choice_ai_message(letter: str, top: list[dict] | None = None) -> AIMessage:
+    rows = top or [{"token": letter, "logprob": -0.05}]
+    return AIMessage(
+        content=letter,
+        response_metadata={
+            "logprobs": {
+                "content": [
+                    {
+                        "token": letter,
+                        "logprob": rows[0]["logprob"],
+                        "top_logprobs": rows,
+                    }
+                ]
+            }
+        },
+    )
+
+
+def test_query_understand_choice_skips_rewrite_for_greeting():
+    """Choice 命中 greeting 时不生成 JSON，原问即改写。"""
+    state = {
+        "current_query": "你好",
+        "history_pairs": [],
+        "kb_selected": True,
+    }
+    mock_llm = MagicMock()
+    mock_llm.bind.return_value.invoke.return_value = _choice_ai_message(
+        "A",
+        [
+            {"token": "A", "logprob": -0.02},
+            {"token": "I", "logprob": -4.0},
+        ],
+    )
+
+    with (
+        patch("agents.nodes.query_understand.settings") as mock_settings,
+        patch("agents.nodes.query_understand.create_chat_model", return_value=mock_llm),
+    ):
+        mock_settings.enable_rewrite = True
+        mock_settings.query_understand_model = ""
+        mock_settings.intent_classifier = "choice"
+        out = query_understand(state, {})
+
+    assert out["intent"] == "greeting"
+    assert out["rewrite_query"] == "你好"
+    assert out["intent_confidence"] > 0.8
+    assert out["intent_probs"]["greeting"] > out["intent_probs"]["chitchat"]
+    mock_llm.with_structured_output.assert_not_called()
+    assert "greeting" in out.get("system_prompt_override", "").lower()
+    assert route_after_understand({**state, **out}) == "generate"
+
+
+def test_query_understand_choice_uses_rewrite_for_kb_search():
+    state = {
+        "current_query": "它的维度呢",
+        "history_pairs": [{"query": "embedding 是什么", "answer": "bge-m3"}],
+        "kb_selected": True,
+    }
+    mock_llm = MagicMock()
+    mock_llm.bind.return_value.invoke.return_value = _choice_ai_message(
+        "D",
+        [
+            {"token": "D", "logprob": -0.08},
+            {"token": "F", "logprob": -2.2},
+        ],
+    )
+    rewrite_out = MagicMock()
+    rewrite_out.rewrite_query = "embedding 模型输出维度是多少"
+    rewrite_out.image_description = ""
+    mock_llm.with_structured_output.return_value.invoke.return_value = rewrite_out
+
+    with (
+        patch("agents.nodes.query_understand.settings") as mock_settings,
+        patch("agents.nodes.query_understand.create_chat_model", return_value=mock_llm),
+    ):
+        mock_settings.enable_rewrite = True
+        mock_settings.query_understand_model = ""
+        mock_settings.intent_classifier = "choice"
+        out = query_understand(state, {})
+
+    assert out["intent"] == "kb_search"
+    assert out["rewrite_query"] == "embedding 模型输出维度是多少"
+    mock_llm.with_structured_output.assert_called()
+    schema = mock_llm.with_structured_output.call_args.args[0]
+    assert schema.__name__ == "QueryRewriteOutput"
+
+
+def test_intent_choice_prompt_lists_letters_and_tags():
+    from prompts.intent_choice import INTENT_CHOICE_SYSTEM, build_intent_choice_prompts
+
+    assert "Reply with exactly ONE capital letter" in INTENT_CHOICE_SYSTEM
+    assert "A greeting" in INTENT_CHOICE_SYSTEM
+    assert "D kb_search" in INTENT_CHOICE_SYSTEM
+    _, user = build_intent_choice_prompts(
+        query="这是啥",
+        history_pairs=[],
+        kb_selected=True,
+        has_images=True,
+        web_search_enabled=True,
+    )
+    assert "<images_uploaded" in user
+    assert "Reply with ONE letter" in user
+    assert "the letter MUST be C" in user

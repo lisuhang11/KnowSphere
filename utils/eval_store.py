@@ -45,9 +45,6 @@ def ensure_eval_tables() -> None:
             "ALTER TABLE ks_evaluation_tasks ADD COLUMN IF NOT EXISTS celery_task_id TEXT"
         )
         conn.execute(
-            "ALTER TABLE ks_evaluation_samples ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::jsonb"
-        )
-        conn.execute(
             """
             CREATE TABLE IF NOT EXISTS ks_evaluation_samples (
                 id              BIGSERIAL PRIMARY KEY,
@@ -65,6 +62,9 @@ def ensure_eval_tables() -> None:
                 UNIQUE (task_id, qid)
             )
             """
+        )
+        conn.execute(
+            "ALTER TABLE ks_evaluation_samples ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::jsonb"
         )
         conn.commit()
 

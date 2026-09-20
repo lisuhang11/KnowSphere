@@ -251,6 +251,31 @@ LlmQueryIntent = Literal[
     "doc_only",
 ]
 
+# OpenJev Choice 字母 → 意图；顺序与决策优先级一致（A 最先匹配）
+INTENT_CHOICE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("A", "greeting"),
+    ("B", "summarize"),
+    ("C", "web_search"),
+    ("D", "kb_search"),
+    ("E", "clarification"),
+    ("F", "follow_up"),
+    ("G", "image_only"),
+    ("H", "doc_only"),
+    ("I", "chitchat"),
+)
+
+# 问候/闲聊没有指代消解需求，Choice 命中后可跳过改写生成
+SKIP_REWRITE_INTENTS: frozenset[str] = frozenset({"greeting", "chitchat"})
+
+
+class QueryRewriteOutput(BaseModel):
+    """Choice 已给出意图时，只生成改写问句。"""
+
+    rewrite_query: str = Field(
+        description="指代消解后的独立检索问句；须保留最近/比较火/最新等时效词"
+    )
+    image_description: str = Field(default="", description="图片分析/OCR 描述（有图时必填）")
+
 
 class QueryUnderstandOutput(BaseModel):
     """query_understand 节点 LLM 输出。"""

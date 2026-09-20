@@ -31,6 +31,7 @@ ALLOWED_OVERRIDE_KEYS = frozenset(
         "mmr_enabled",
         "mmr_lambda",
         "enable_rewrite",
+        "intent_classifier",
         "multi_query_enabled",
         "multi_query_count",
         "query_expansion_enabled",

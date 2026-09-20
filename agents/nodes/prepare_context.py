@@ -47,6 +47,8 @@ def _empty_turn(
         "rewrite_query": "",
         "answer_language": ANSWER_LANGUAGE_EN,
         "intent": "",
+        "intent_confidence": None,
+        "intent_probs": None,
         "history_pairs": [],
         "kb_selected": kb_selected,
         "web_search_enabled": web_search_enabled,

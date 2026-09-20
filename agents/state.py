@@ -36,6 +36,8 @@ class TurnState(TypedDict, total=False):
     rewrite_query: str
     answer_language: str
     intent: str
+    intent_confidence: float | None
+    intent_probs: dict[str, float] | None
     history_pairs: list[dict[str, str]]
     kb_selected: bool
     web_search_enabled: bool

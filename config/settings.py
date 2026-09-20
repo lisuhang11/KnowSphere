@@ -97,6 +97,8 @@ class Settings(BaseSettings):
     enable_rewrite: bool = True
     max_rewrite_rounds: int = 8  # 与 stm_keep_turns 对齐：改写看到的近期问答轮数
     query_understand_model: str = ""  # 空 = 复用 chat_model
+    # 意图分类：choice = OpenJev 式读 logprobs；structured = 生成 JSON
+    intent_classifier: str = "choice"
 
     # 短期记忆（LLM 视图；不改写 checkpoint 原文）
     stm_max_context_tokens: int = 32000
