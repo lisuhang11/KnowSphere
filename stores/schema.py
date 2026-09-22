@@ -258,12 +258,20 @@ def init_schema(dsn: str) -> None:
                 summary          TEXT NOT NULL DEFAULT '',
                 preview          TEXT NOT NULL DEFAULT '',
                 payload          TEXT NOT NULL,
-                created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+                created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+                expires_at       TIMESTAMPTZ
             )
             """
         )
         conn.execute(
+            "ALTER TABLE tool_result_refs ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ"
+        )
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS tool_result_refs_thread_created "
             "ON tool_result_refs (thread_id, created_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS tool_result_refs_expires "
+            "ON tool_result_refs (expires_at)"
         )
         conn.commit()

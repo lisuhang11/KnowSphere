@@ -58,6 +58,7 @@ class OverallState(InputState, OutputState, TurnState):
     remaining_steps: NotRequired[RemainingSteps]
     session_summary: NotRequired[str]
     summary_upto_message_id: NotRequired[str]
+    last_prompt_tokens: NotRequired[int]
     working_memory: NotRequired[dict]
 
 

@@ -1,152 +1,146 @@
 # KnowSphere
 
-基于 **LangGraph + Langfuse** 的 BYOD（Bring Your Own Document）知识问答助手。
+Progressive Agentic RAG：先改写分流，再 ReAct 深读；checkpoint 保真，送给模型的是压缩后的视图。
 
-用户上传 PDF / Markdown / TXT 文档 → 自动切块向量化入库 → 单智能体 ReAct 检索回答（带来源引用）。全链路 Langfuse tracing / 监控。
+实现入口：`agents/graph.py`、`agents/nodes/`、`services/retrieval_service.py`、`utils/tool_result_store.py` / `semantic_compressor.py` / `conversation_compaction.py` / `short_term_memory.py`。
 
-## 架构
+<details>
+<summary><strong>1. 对话图：先分流，再 ReAct</strong></summary>
 
-```
-用户上传 ──► FastAPI (POST /upload) ──► 摄取: 切块(600字/15%) → bge-m3 向量化 → pgvector
-                                                      │ 全程 Langfuse @observe / CallbackHandler
-用户提问 ──► FastAPI /sessions/* (api/sessions.py) ──► LangGraph graph（进程内运行）──► doc_retrieval(混合检索+来源)
-评测    ──► python -m evals.run_eval ──► HotpotQA 抽样 + RAGAS 四指标（SiliconFlow judge）
-```
-
-> LangGraph 以"库"方式嵌入 FastAPI 进程运行（`api/chat.py` 编译 graph，`api/sessions.py` 暴露 `/sessions`）。对话检查点通过 AsyncPostgresSaver 持久化到 Postgres。
-
-```
-KnowSphere/
-├── langgraph.json        # Studio 调试入口（指向 agents.graph:build_agent）
-├── pyproject.toml        # uv 依赖
-├── docker-compose.yml    # pgvector + api（graph 内嵌）
-├── agents/               # 图核心：state / context / graph / nodes
-├── models/               # 大模型工厂
-├── prompts/              # 提示词（git 管理，不上 Hub）
-├── schemas/              # Pydantic schema（来源引用等）
-├── tools/                # 检索 / 联网 / 技能工具
-├── services/             # 领域服务（摄取、会话、检索）
-├── stores/               # 持久化
-├── ingestion/            # 摄取管道（CLI + API 共用）
-├── api/                  # FastAPI（api/chat.py 内嵌编译 graph）
-├── evals/                # RAGAS + HotpotQA 评测
-├── frontend/             # Vue 控制台
-├── config/               # 环境配置
-└── utils/                # 跨切面工具
+```mermaid
+flowchart LR
+  START --> prepare_context --> manage_memory --> query_understand
+  query_understand -->|greeting / chitchat / 纯图纯附件| generate --> END
+  query_understand -->|需要工具| agent
+  agent -->|tool_calls| tools --> collect_sources --> agent
+  agent -->|直接作答| END
 ```
 
-## 快速开始
+| 节点 | 做什么 |
+|---|---|
+| `prepare_context` | 抽出本轮 Human、近期问答对；清零上一轮 `intent` / 图片描述 / `last_sources`，避免 checkpoint 脏读 |
+| `manage_memory` | 滚动短期窗口、写交接文档、召回跨会话画像（不写进最终回答） |
+| `query_understand` | 指代补全 + 意图分类；问候/闲聊走一次 `generate`，其余进 ReAct |
+| `agent` | 绑定本轮工具后 think；usage 过高时先做 L3 压缩 |
+| `tools` | 执行工具；大结果走 L1 外置 / L2 蒸馏 |
+| `collect_sources` | 只扫**当前轮**检索类 ToolMessage，汇总 `last_sources` 供 `[[cN]]` |
+| `generate` | 无工具路径的一次生成（问候、纯图说明等） |
 
-### 1. 依赖与配置
+系统提示在 `prompts/agent_system.py`：**Evidence-First**，禁止用参数记忆填事实；检索命中后必须 `list_chunks` 深读，不能只靠 snippet。每道新事实题都要重新检索，不能复用历史工具结果当证据。
 
-```bash
-uv sync                      # 或 pip install -e ".[dev]"
-cp .env.example .env         # 填入 SILICONFLOW_API_KEY；可选 LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY
-```
+</details>
 
-模型默认走 SiliconFlow：chat `Qwen/Qwen3.5-35B-A3B`、embedding `BAAI/bge-m3`（模型 ID 可在 `.env` 覆盖，以 SiliconFlow 控制台为准）。
+<details>
+<summary><strong>2. 查询理解：改写与路由分开</strong></summary>
 
-### 2. 启动基础服务
+`query_understand` 产出 JSON：`rewrite_query` / `intent` / `image_description`。改写只做指代消解和省略补全，禁止把「最近 / 比较火」这类线索改没，也禁止把问题改写成「请再检索…」这种元指令。
 
-```bash
-docker compose up -d postgres redis minio   # 上传文档依赖 MinIO
-```
+意图决定走哪条边，而不是让模型自己猜要不要调工具：
 
-### 3. 初始化表结构并摄入样例文档
+- `greeting` / `chitchat` / `image_only` / `doc_only` → 跳过 ReAct
+- `kb_search` / `clarification` / `summarize` → 知识库工具（需已选库）
+- `web_search` → 仅当输入框开启联网
+- 智能体绑了专业工具（如 PPT）时，非跳过类意图一律进 ReAct
 
-```bash
-python -c "from utils.vector_store import ChunkStore; ChunkStore.init_schema"
-python -m ingestion.ingest data/sample/园区导览.md
-```
+未选知识库时运行时意图会归一成 `no_kb`，检索工具不会出现在绑定列表里。
 
-### 4. 启动后端（含嵌入式 LangGraph 对话）
+</details>
 
-```bash
-uvicorn api.main:app --host 0.0.0.0 --port 8000
-```
+<details>
+<summary><strong>3. 检索：混合召回后再深读</strong></summary>
 
-graph 在 FastAPI 进程内运行（`api/chat.py`），启动时自动创建会话表与 checkpoint 表；Postgres 不可用时自动降级内存模式（重启丢对话历史）。
+`RetrievalService.search` 的固定顺序：
 
-### 5. 启动前端
+1. **多库分组召回**：每个知识库用自己的 embedding 模型；向量余弦 + `pg_trgm` 词法分加权（`HYBRID_LEX_WEIGHT`）。中文场景不必装分词扩展。
+2. **查询扩展**：本地同义词 / 子查询拆分；复杂多跳可再走 LLM multi-query，RRF 融合。
+3. **父块回捞**：命中子块时取回父段，避免答案落在切块边界上。
+4. **精排 + MMR**：rerank 后再做多样性（`MMR_LAMBDA`；可选叠加 2-gram Jaccard 去词面重复）。
+5. **工具层**：`doc_retrieval` 给语义，`grep_chunks` 给正则锚定，`list_chunks` 按 `cN` / `chunk_id` 取全文。图谱与联网都是补充，不能替代深读。
 
-```bash
-cd frontend && npm install && npm run dev   # http://localhost:5173
-```
+`chunks.owner` 已预留租户过滤，当前固定 `default`。
 
-### 6. 上传文档（API 方式）
+</details>
 
-```bash
-curl -X POST http://localhost:8000/upload -F "file=@data/sample/园区导览.md"
-# → {"document_id":"...","file_name":"...","chunk_count":N}
-```
+<details>
+<summary><strong>4. 上下文工程：L1 / L2 / L3</strong></summary>
 
-对话走 FastAPI 的 `/sessions/*` 路由；需要 LangGraph Studio 时可选 `langgraph dev`（仅调试）。
+对话一长，工具 JSON 会把 context window 吃光。三层管的是「当前轮信噪比」：**checkpoint 里的原文不改**，只压缩送给 LLM 的视图。
 
-## 评测（RAGAS + HotpotQA）
+<details>
+<summary>L1 工具结果外置（单条体积）</summary>
 
-```bash
-python -m evals.run_eval                      # 默认 validation 抽 50 题，seed=42
-python -m evals.run_eval --n 100 --seed 7     # 自定义抽样
-```
+`utils/tool_result_store.py`
 
-- 数据：HuggingFace `hotpot_qa`（distractor，多跳推理），每题 10 段（2 金标 + 8 干扰）按 `chunks.owner` 隔离摄取，跑完自动清理
-- 指标：`faithfulness` / `answer_relevancy` / `context_precision` / `context_recall`
-- judge / embedding 走 SiliconFlow（Qwen3.5-35B-A3B / bge-m3），非 RAGAS 默认 OpenAI；已关闭 thinking 保证结构化输出
-- 评测 agent 只挂 `doc_retrieval`、英文作答（产品中文提示词不动；`answer_relevancy` 反向生成依赖同语种 embedding）
-- 输出：控制台指标均值 + `data/ragas_report.csv` 逐题明细
-- 网络：国内默认兜底 `HF_ENDPOINT=https://hf-mirror.com`（已设官方源则不覆盖）
-- 注意：HotpotQA 为英文段落直接入库，不覆盖 PDF 解析 / 中文切块链路——该盲区已知并接受
+- 触发：正文 `>8000` 字，或顶层数组 `>10` 条，或 `ToolSpec.always_store`。
+- 消息里只留引用：`{__stored, __refId, __toolType, __originalLength, __summary, __hint}`。
+- 全文进 Postgres `tool_result_refs` + 进程缓存。`preview`（原文前 12000 字）只写库，**从不进入 prompt**，也不经 `get_stored_data` 回灌给模型。
+- `get_stored_data` 是运行时工具（不在智能体勾选列表），其返回值不再二次外置。
+- `collect_sources` 遇到引用会按 `__refId` hydrate，引用角标不丢。
 
-## 评测（SQuAD 2.0）
+</details>
 
-单文档阅读理解 + 不可答题，补 HotpotQA 测不到的拒答/幻觉。默认指标为 retrieval + 官方 EM/F1（不用 BLEU）。
+<details>
+<summary>L2 单条语义压缩</summary>
 
-```bash
-# 从官方 dev-v2.0.json 抽出 Normans 一篇（只需做一次）
-python -m evals.datasets.squad --title Normans --id squad_normans --overwrite
+`utils/semantic_compressor.py`
 
-# 冒烟：段落共享灌库 + 产品 LangGraph（rag_agent）
-python -m evals.run_bench --dataset squad_normans --workers 4
+- 外置前若原文 `>10000` 字，用 LLM 蒸馏到 ≤2000 字，只保留后续推理需要的 ID、名称、数值、结论。
+- 禁止改写 JSON 键、禁止生成 preview（preview 只能是原文 `substring`）。
+- 失败则包成 `{__fallbackTruncated, __toolType, __originalLength, content: 原文[:3000]}`，不把半截 JSON 假装成全文。
+- L2 外置行带 1h TTL；纯 L1 行不过期。
 
-# 也可用本地 parquet（HuggingFace squad_v2 validation）
-python -m evals.datasets.squad --source /path/to/validation.parquet --title Normans --overwrite
+</details>
 
-# 全量 validation 抽样（在线加载 HuggingFace squad_v2）
-python -m evals.run_bench --dataset squad_v2 --limit 200
-```
+<details>
+<summary>L3 对话压缩（累积膨胀）</summary>
 
-- 数据：每个 Wikipedia 段落作为 passage，`corpus_mode=shared`；`meta.is_impossible` 标记不可答题
-- 指标：Overall EM/F1、HasAns EM/F1、NoAns Acc、Span Hit（gold span 是否出现在自由回答中）、检索 recall
-- 评测使用与产品相同的 WeKnora 风格系统提示词；证据不足时要求拒答（如「未找到相关信息」），不强制英文 token `unanswerable`
-- 也可在前端「评测」页选择 `squad_normans` / `squad_v2` 走 rag_bench
+`utils/conversation_compaction.py`。L1/L2 管单条体积，L3 管消息堆起来之后的总量。
 
-## Langfuse 观测
+- **usage 触发**：`prompt_tokens / contextWindow ≥ 85%`。不用 95%，是因为顶满后模型可能没有输出空间，直接空响应。
+- **目标约 30%**：压缩有 LLM + 写回延迟，这段时间新消息还在进窗口；目标太保守会刚结束又触发。
+- **产物是交接文档，不是摘要**。固定 schema：
+  1. 用户原始请求 — 压缩后不丢目标
+  2. 按阶段分组的执行历史：`[阶段] → 做了什么 → 得到什么`；prompt 要求保留具体 ID / 名称 / 数值，禁止「数据已检索」这种空话
+  3. 已放弃的路径：`~~方案~~：原因`，避免长对话里重走失败分支
+  4. 数据引用索引：从归档消息里**用代码**抽出所有 `__stored.__refId`，不经 LLM；超长时先砍执行历史，请求、放弃路径和 ref 表优先保留
+- **切分安全**：不能从 `tool` 消息起刀，向前回溯到发出 `tool_calls` 的 `assistant`。最少保留 6 条、最少删除 2 条。当前轮 Human 不进归档。
 
-对话（LangGraph）和文档摄取会写入 [Langfuse](https://langfuse.com) traces。未配置密钥时自动关闭，不影响业务。
+agent 在调用主模型前看上一轮 `last_prompt_tokens` 决定是否压缩；调用后再把本轮 usage 写回 state。
 
-1. 在 [Langfuse Cloud](https://cloud.langfuse.com) 建项目，或[自托管](https://langfuse.com/self-hosting)（官方 `docker compose up` 后 UI 在 `http://localhost:3000`）。
-2. 把 `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` 写入 `.env`。
-3. 重启 API 与 Celery worker。聊天按会话聚合（`session_id` = 会话 UUID），摄取函数名为 `ingest_file` / `reparse_document`。
+</details>
 
-## 关键设计说明
+</details>
 
-- **混合检索**：向量余弦 + pg_trgm 词法相似度加权（`HYBRID_LEX_WEIGHT`）。中文场景 pg_trgm 免装分词扩展；数据量大后可换 pg_jieba 或 Qdrant 稀疏向量。
-- **单租户共享**：`chunks.owner` 字段已预留，二期加权限只需检索时过滤 owner。
-- **引用来源**：doc_retrieval 返回带 `file_name#chunk_index` 的来源，系统提示强制回答时标注。
-- **模型工厂**：`models/` 按 WeKnora 语义区分 `source=local|remote` 与 `parameters.provider`（硅基流动 / OpenAI / 阿里云 / 智谱 / DeepSeek / Kimi / 火山 / 混元 / 千帆 / OpenRouter / Jina / 自定义兼容口）；本地走 Ollama。新增远程厂商在 `models/providers.py` 登记即可。
+<details>
+<summary><strong>5. 记忆分层：视图压缩，检查点保真</strong></summary>
 
-## 模型管理
+| 层 | 存活范围 | 作用 |
+|---|---|---|
+| Checkpoint `messages` | 整段会话 | 完整 Human / AI / Tool，可回放、可引用 hydrate |
+| 短期窗口 | 送进 LLM 的最近轮 | 默认保留约 8 轮；历史检索 ToolMessage 在视图里压成一行，避免过期 snippet 冒充新证据 |
+| `session_summary` | 被窗口挤出的更早轮 | L3 交接文档，带 `【交接文档】` 标签注入 system |
+| 工作记忆 | 本会话 | 最近 `write_plan` + 近期问答要点 |
+| 长期记忆 | 跨会话 | 用户说「记住：…」立刻落库；常查资料要同一文档命中 ≥2 次才进入。只注入 `<asker_background>` 辅助改写，不当作问题本身，也不塞进最终回答 |
 
-- **入口**：前端侧边栏「模型管理」；后端 `GET/POST /models`、`GET/PUT/DELETE /models/{id}`、`POST /models/{id}/debug`（测试连接）、`PUT /models/{id}/credentials`（凭证子资源，读接口永不回显密钥）、`GET /models/providers`。
-- **类型**：`Embedding` / `Rerank` / `KnowledgeQA` / `VLLM` / `ASR`。
-- **来源**：`source=remote` 配远程厂商；`source=local` 固定 Ollama（OpenAI 兼容 `/v1`，Rerank 不可用）。启动时会把旧行 `source=siliconflow|openai_compatible` 迁成 `remote` + `parameters.provider`。
-- **存储**：`models` 表（`parameters` JSONB），api_key 用 AES-256-GCM 加密（`MASTER_KEY` 环境变量，未设置时降级为可逆 base64 仅限开发）。
-- **内置种子**：启动时自动把 `.env` 的 chat/embedding/rerank 模型注册为 `is_builtin` 记录（幂等），并把存量知识库 `embedding_model_id` 的裸模型名迁移为模型 ID。
-- **运行时解析顺序**：显式模型 ID → models 表 `is_default`（每类型一个）→ `.env` 兜底；裸模型名直接使用（兼容旧数据）。
-- **删除保护**：内置模型、默认模型、被知识库引用的模型不可删除。
-- **密钥轮换**：`MASTER_KEY_NEW=<新密钥> python -m scripts.reencrypt_models` 后更新 `.env` 并重启。
+`summary_upto_message_id` 标记已经交接过的位置，避免同一段归档被反复摘要。
 
-## 已知事项
+</details>
 
-- SiliconFlow 模型 ID 以控制台为准，`CHAT_MODEL` / `EMBEDDING_MODEL` 随时可换。
-- 全局 embedding 默认 `bge-m3`（1024 维）；创建知识库时可给每个库单独指定 embedding 模型，非 1024 维度会自动加 `embedding_{dim}` 向量列与 HNSW 索引（pgvector 上限 2000 维，超限会拒绝创建）。
+<details>
+<summary><strong>6. 引用协议</strong></summary>
+
+检索工具返回带 `file_name` / `chunk_id` / `document_id` / URL 的来源。系统提示要求事实后面紧跟 `[[cN]]`（本轮 1-based），禁止 `[1]`、文末堆引用、引用不存在的下标。`collect_sources` 只收集当前轮，历史 `[[cN]]` 作废。前端用 `ks_citations` 把角标还原成文档名。
+
+</details>
+
+<details>
+<summary><strong>7. 模型工厂</strong></summary>
+
+`models/` 区分 `source=local|remote` 与 `parameters.provider`（硅基流动 / OpenAI / 阿里云 / 智谱 / DeepSeek / Kimi / 火山 / 混元 / 千帆 / OpenRouter / Jina / 自定义兼容口）。本地走 Ollama。新远程厂商在 `models/providers.py` 登记即可。
+
+- 类型：`Embedding` / `Rerank` / `KnowledgeQA` / `VLLM` / `ASR`。
+- 运行时解析：显式模型 ID → 表内每类型一个 `is_default` → `.env` 兜底；裸模型名直接使用（兼容旧数据）。
+- api_key 用 AES-256-GCM 加密（`MASTER_KEY`）；未设置时降级为可逆 base64，仅限开发。
+- 删除保护：内置模型、默认模型、被知识库引用的模型不可删除。
+
+</details>

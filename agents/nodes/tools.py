@@ -1,4 +1,4 @@
-"""tools 节点：执行后按 L1 规则外置大结果。"""
+"""tools 节点：执行后按 L1 外置、L2 语义压缩处理大结果。"""
 
 from __future__ import annotations
 

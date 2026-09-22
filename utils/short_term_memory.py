@@ -1,8 +1,8 @@
 """会话短期记忆：LLM 视图压缩，不改写 checkpoint 原文。
 
 三层：
-- 最近完整轮原文（本轮永不丢、AI+Tool 不拆开）
-- 更早轮次的滚动摘要（session_summary）
+- 最近完整轮原文（本轮 Human 不丢、AI+Tool 不拆开）
+- 更早轮次的结构化交接（session_summary / L3）
 - 本会话工作记忆（计划 / 近期要点）
 
 历史检索 ToolMessage 在视图里压成一行，避免过期 snippet 冒充新证据。
@@ -226,8 +226,19 @@ def build_memory_view(
     consolidate_ratio: float = DEFAULT_CONSOLIDATE_RATIO,
     hard_trim_ratio: float = DEFAULT_HARD_TRIM_RATIO,
     redact_old_retrieval: bool = True,
+    compact_human: bool = True,
+    prompt_tokens: int = 0,
+    compact_trigger_ratio: float | None = None,
+    compact_target_ratio: float | None = None,
 ) -> MemoryView:
     """选出送进 LLM 的对话窗口，以及待摘要的归档轮次。"""
+    from utils.conversation_compaction import (
+        DEFAULT_TARGET_RATIO,
+        DEFAULT_TRIGGER_RATIO,
+        needs_compaction,
+        trim_current_after_compaction,
+    )
+
     msgs = list(messages or [])
     ranges = turn_ranges(msgs)
     if not ranges:
@@ -242,14 +253,23 @@ def build_memory_view(
 
     current_start, current_end = ranges[-1]
     current = msgs[current_start:current_end]
+    current = trim_current_after_compaction(current, summary_upto_id)
     prior_ranges = ranges[:-1]
     keep_n = max(1, int(keep_turns))
     max_tokens = max(2000, int(max_context_tokens))
     summary_tokens = estimate_tokens(session_summary) if session_summary else 0
     current_tokens = estimate_messages_tokens(current)
+    est_all = estimate_messages_tokens(msgs) + summary_tokens
+    trigger = DEFAULT_TRIGGER_RATIO if compact_trigger_ratio is None else compact_trigger_ratio
+    over_usage = needs_compaction(prompt_tokens or est_all, max_tokens, trigger_ratio=trigger)
 
     target = max(800, int(max_tokens * consolidate_ratio * 0.6) - _SUMMARY_RESERVE_TOKENS)
-    hard_cap = max(target, int(max_tokens * hard_trim_ratio) - summary_tokens)
+    if over_usage:
+        ratio = DEFAULT_TARGET_RATIO if compact_target_ratio is None else compact_target_ratio
+        target = max(800, int(max_tokens * ratio) - _SUMMARY_RESERVE_TOKENS)
+        hard_cap = target
+    else:
+        hard_cap = max(target, int(max_tokens * hard_trim_ratio) - summary_tokens)
 
     kept_ranges: list[tuple[int, int]] = []
     running = current_tokens + summary_tokens
@@ -275,7 +295,7 @@ def build_memory_view(
             compact_turn_messages(
                 msgs[s:e],
                 redact_retrieval=redact_old_retrieval,
-                compact_human=True,
+                compact_human=compact_human,
             )
         )
     window = kept_flat + current
@@ -346,6 +366,9 @@ def memory_view_from_state(state: dict) -> MemoryView:
         consolidate_ratio=settings.stm_consolidate_ratio,
         hard_trim_ratio=settings.stm_hard_trim_ratio,
         redact_old_retrieval=settings.stm_redact_old_retrieval,
+        prompt_tokens=int(state.get("last_prompt_tokens") or 0),
+        compact_trigger_ratio=settings.stm_compact_trigger_ratio,
+        compact_target_ratio=settings.stm_compact_target_ratio,
     )
 
 
@@ -371,7 +394,9 @@ def format_memory_system_block(
         parts.append("【会话工作记忆】\n" + wm)
     summary = (session_summary or "").strip()
     if summary:
-        parts.append("【更早对话摘要】\n" + summary)
+        label = "【交接文档】" if "【交接文档】" in summary or "## 用户原始请求" in summary else "【更早对话摘要】"
+        body = summary[len("【交接文档】") :].lstrip() if summary.startswith("【交接文档】") else summary
+        parts.append(f"{label}\n" + body)
     return "\n\n".join(parts)
 
 

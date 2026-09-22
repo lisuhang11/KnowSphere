@@ -8,56 +8,33 @@ from langchain_core.runnables import RunnableConfig
 
 from agents.state import KnowSphereState
 from config.settings import settings
-from models import create_chat_model
 from tools.events import emit_thinking
+from utils.conversation_compaction import compact_archive_to_handover, first_user_request
 from utils.long_term_memory import (
     format_asker_background,
     remember_explicit,
     retrieval_context_for,
 )
-from utils.message_content import message_text
-from utils.run_config import chat_model_kwargs_from_config, thread_id_from_config
+from utils.run_config import thread_id_from_config
 from utils.short_term_memory import (
-    SUMMARY_SYSTEM_PROMPT,
     build_memory_view,
-    build_summary_user_prompt,
     extract_working_memory,
-    fallback_archive_summary,
-    format_archive_for_summary,
 )
 
 logger = logging.getLogger(__name__)
 
-_LLM_KWARGS: dict = {
-    "temperature": 0.3,
-    "max_tokens": 800,
-    "extra_body": {"enable_thinking": False},
-}
 
-
-def _view_kwargs() -> dict:
+def _view_kwargs(state: KnowSphereState) -> dict:
     return {
         "max_context_tokens": settings.stm_max_context_tokens,
         "keep_turns": settings.stm_keep_turns,
         "consolidate_ratio": settings.stm_consolidate_ratio,
         "hard_trim_ratio": settings.stm_hard_trim_ratio,
         "redact_old_retrieval": settings.stm_redact_old_retrieval,
+        "prompt_tokens": int(state.get("last_prompt_tokens") or 0),
+        "compact_trigger_ratio": settings.stm_compact_trigger_ratio,
+        "compact_target_ratio": settings.stm_compact_target_ratio,
     }
-
-
-def _summarize_archive(archive_text: str, previous_summary: str, config: RunnableConfig) -> str:
-    llm = create_chat_model(**chat_model_kwargs_from_config(config, _LLM_KWARGS))
-    resp = llm.invoke(
-        [
-            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-            {"role": "user", "content": build_summary_user_prompt(archive_text, previous_summary)},
-        ],
-        config=config,
-    )
-    text = message_text(getattr(resp, "content", ""))
-    if not text:
-        raise ValueError("empty summary")
-    return text
 
 
 def manage_memory(state: KnowSphereState, config: RunnableConfig) -> dict:
@@ -68,7 +45,7 @@ def manage_memory(state: KnowSphereState, config: RunnableConfig) -> dict:
         messages,
         session_summary=previous_summary,
         summary_upto_id=summary_upto,
-        **_view_kwargs(),
+        **_view_kwargs(state),
     )
     updates: dict = {
         "working_memory": extract_working_memory(messages),
@@ -88,16 +65,19 @@ def manage_memory(state: KnowSphereState, config: RunnableConfig) -> dict:
     if not view.needs_consolidation or not view.archive_messages:
         return updates
 
-    archive_text = format_archive_for_summary(view.archive_messages)
-    if not archive_text:
-        return updates
-
-    emit_thinking("正在整理更早的对话记忆…")
+    emit_thinking("正在整理交接文档…")
     try:
-        summary = _summarize_archive(archive_text, previous_summary, config)
+        summary = compact_archive_to_handover(
+            view.archive_messages,
+            previous_summary,
+            config=config,
+            original_hint=first_user_request(messages),
+        )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("会话摘要失败，改用截断归档: %s", exc)
-        summary = fallback_archive_summary(archive_text, previous_summary)
+        logger.warning("会话交接失败: %s", exc)
+        summary = previous_summary
+    if not summary:
+        return updates
 
     updates["session_summary"] = summary
     if view.archive_end_id:

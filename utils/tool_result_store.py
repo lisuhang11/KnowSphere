@@ -10,6 +10,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from langchain_core.messages import ToolMessage
@@ -17,7 +18,6 @@ from langchain_core.runnables import RunnableConfig
 
 from config.settings import get_current_owner, settings
 from utils.message_content import message_text
-from utils.run_config import thread_id_from_config
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ class StoredToolResult:
     payload: str
     thread_id: str = ""
     owner: str = ""
+    expires_at: datetime | None = None
 
 
 _CACHE: dict[str, StoredToolResult] = {}
@@ -193,6 +194,21 @@ def _owner() -> str:
     return (get_current_owner() or settings.default_owner or "default").strip() or "default"
 
 
+def _is_expired(record: StoredToolResult) -> bool:
+    if record.expires_at is None:
+        return False
+    expiry = record.expires_at
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=UTC)
+    return datetime.now(UTC) >= expiry
+
+
+def _expires_at(ttl_sec: int | None) -> datetime | None:
+    if ttl_sec is None or ttl_sec <= 0:
+        return None
+    return datetime.now(UTC) + timedelta(seconds=int(ttl_sec))
+
+
 def put_tool_result(
     *,
     tool_name: str,
@@ -201,21 +217,29 @@ def put_tool_result(
     thread_id: str = "",
     owner: str = "",
     always_store: bool = False,
+    force: bool = False,
+    summary: str | None = None,
+    ttl_sec: int | None = None,
 ) -> StoredToolResult | None:
     text = payload_text or ""
-    if not should_store(payload, content_len=len(text), always_store=always_store):
+    if not force and not should_store(
+        payload, content_len=len(text), always_store=always_store
+    ):
         return None
     ref_id = str(uuid.uuid4())
-    summary = build_summary(payload, tool_name, original_length=len(text))
+    digest = summary if summary is not None else build_summary(
+        payload, tool_name, original_length=len(text)
+    )
     record = StoredToolResult(
         ref_id=ref_id,
         tool_name=tool_name,
         original_length=len(text),
-        summary=summary,
+        summary=digest,
         preview=build_preview(text),
         payload=text,
         thread_id=thread_id or "",
         owner=owner or _owner(),
+        expires_at=_expires_at(ttl_sec),
     )
     _CACHE[ref_id] = record
     try:
@@ -230,6 +254,7 @@ def put_tool_result(
             summary=record.summary,
             preview=record.preview,
             payload=record.payload,
+            expires_at=record.expires_at,
         )
     except Exception:
         logger.warning("工具结果落库失败，仅保留进程缓存 ref_id=%s", ref_id, exc_info=True)
@@ -265,8 +290,12 @@ def get_stored_result(
             payload=str(row.get("payload") or ""),
             thread_id=str(row.get("thread_id") or ""),
             owner=str(row.get("owner") or ""),
+            expires_at=row.get("expires_at"),
         )
         _CACHE[key] = record
+    if _is_expired(record):
+        _CACHE.pop(key, None)
+        return None
     if thread_id and record.thread_id and record.thread_id != thread_id:
         return None
     current_owner = owner or _owner()
@@ -299,9 +328,7 @@ def offload_tool_message(
     *,
     config: RunnableConfig | None = None,
 ) -> ToolMessage:
-    """超限则把 ToolMessage.content 换成引用对象；失败时保持原文。"""
-    if not settings.tool_result_store_enabled:
-        return msg
+    """L1 外置 + L2 语义压缩；preview 永不进入消息。"""
     name = str(getattr(msg, "name", "") or "")
     if name in SKIP_OFFLOAD_TOOLS:
         return msg
@@ -310,12 +337,34 @@ def offload_tool_message(
     if is_stored_ref(payload):
         return msg
     text = raw if isinstance(raw, str) else serialize_tool_payload(payload)
+    from utils.run_config import thread_id_from_config
+    from utils.semantic_compressor import (
+        is_fallback_truncated,
+        semantic_compress,
+        should_semantic_compress,
+    )
+
+    need_l2 = should_semantic_compress(len(text))
+    need_l1 = settings.tool_result_store_enabled and should_store(
+        payload, content_len=len(text), always_store=_always_store_tool(name)
+    )
+    if not need_l1 and not need_l2:
+        return msg
+    digest = build_summary(payload, name, original_length=len(text))
+    ttl: int | None = None
+    if need_l2:
+        digest = semantic_compress(
+            text, tool_name=name, original_length=len(text), config=config
+        )
+        ttl = int(settings.tool_result_ttl_sec)
     record = put_tool_result(
         tool_name=name,
         payload_text=text,
         payload=payload,
         thread_id=thread_id_from_config(config) or "",
-        always_store=_always_store_tool(name),
+        force=True,
+        summary=digest,
+        ttl_sec=ttl,
     )
     if record is None:
         return msg
@@ -325,6 +374,11 @@ def offload_tool_message(
         original_length=record.original_length,
         summary=record.summary,
     )
+    if need_l2:
+        if is_fallback_truncated(record.summary):
+            ref["__fallbackTruncated"] = True
+        else:
+            ref["__compressed"] = True
     kwargs = dict(getattr(msg, "additional_kwargs", None) or {})
     kwargs["ks_ref_id"] = record.ref_id
     copied = ToolMessage(

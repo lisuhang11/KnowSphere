@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Any
 
 import psycopg
@@ -37,14 +38,15 @@ class ToolResultRepository:
         summary: str,
         preview: str,
         payload: str,
+        expires_at: datetime | None = None,
     ) -> None:
         with self._conn() as conn:
             conn.execute(
                 """
                 INSERT INTO tool_result_refs
                     (ref_id, thread_id, owner, tool_name, original_length,
-                     summary, preview, payload)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                     summary, preview, payload, expires_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (ref_id) DO NOTHING
                 """,
                 (
@@ -56,6 +58,7 @@ class ToolResultRepository:
                     summary,
                     preview,
                     payload,
+                    expires_at,
                 ),
             )
 
@@ -66,9 +69,10 @@ class ToolResultRepository:
             row = conn.execute(
                 """
                 SELECT ref_id, thread_id, owner, tool_name, original_length,
-                       summary, preview, payload
+                       summary, preview, payload, expires_at
                 FROM tool_result_refs
                 WHERE ref_id = %s
+                  AND (expires_at IS NULL OR expires_at > now())
                 """,
                 (ref_id,),
             ).fetchone()

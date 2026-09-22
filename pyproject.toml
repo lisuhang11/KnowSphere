@@ -101,6 +101,10 @@ target-version = "py311"
 "tools/skills/execute_skill_script.py" = ["BLE001", "S110"]
 # Postgres 不可用时降级进程缓存，不阻断本轮工具结果
 "utils/tool_result_store.py" = ["BLE001"]
+# 语义压缩失败时降级结构化截断，不阻断工具回写
+"utils/semantic_compressor.py" = ["BLE001"]
+# 交接文档 LLM 失败时降级结构化截断
+"utils/conversation_compaction.py" = ["BLE001"]
 # 评测逐题兜底：单题失败跳过不中断整轮
 "evals/run_eval.py" = ["BLE001"]
 # Langfuse SDK 缺失/未配置时降级，不阻断业务

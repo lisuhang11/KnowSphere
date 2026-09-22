@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.runnables import RunnableConfig
 
-from agents.nodes.generate import _inject_image_description
 from agents.state import KnowSphereState
 from models import create_chat_model
 from skills.catalog import any_skill_has_scripts
@@ -21,14 +20,15 @@ from utils.agent_runtime import (
     resolve_system_prompt,
 )
 from utils.citation import citation_payload_from_source_dicts
-from utils.language import ANSWER_LANGUAGE_EN, answer_language_from_state, apply_answer_language
+from utils.context_layout import assemble_model_messages, llm_history_messages
+from utils.conversation_compaction import maybe_compact_state, prompt_tokens_from_response
+from utils.language import ANSWER_LANGUAGE_EN, answer_language_from_state
 from utils.run_config import (
     chat_model_kwargs_from_config,
     graph_enabled_from_config,
     kb_ids_from_config,
     web_search_enabled_from_config,
 )
-from utils.short_term_memory import memory_system_suffix_from_state, memory_view_from_state
 
 
 def _are_more_steps_needed(state: KnowSphereState, response: AIMessage) -> bool:
@@ -94,55 +94,25 @@ def _prepare_messages(
     bound_tool_names: list[str] | None = None,
     memory_suffix: str | None = None,
     answer_language: str | None = None,
+    session_summary: str | None = None,
+    image_description: str | None = None,
+    asker_background: str | None = None,
+    pinned_skills: list[str] | None = None,
 ) -> list[BaseMessage]:
-    kb_ids = kb_ids_from_config(config)
-    web_on = web_search_enabled_from_config(config)
-    graph_on = graph_enabled_from_config(config)
-    bound = set(bound_tool_names or [])
-    has_web_tool = "web_search" in bound or "web_fetch" in bound
-    has_graph_tool = "query_knowledge_graph" in bound
-    web_label = "Enabled" if web_on and has_web_tool else "Disabled"
-    graph_label = "Enabled" if graph_on and has_graph_tool else "Disabled"
-    language = answer_language or ANSWER_LANGUAGE_EN
-    filled = apply_answer_language(
-        system_prompt.replace("{{web_search_status}}", web_label),
-        language,
+    """memory_suffix 已不再写入系统提示，保留参数以免旧调用方报错。"""
+    del memory_suffix
+    return assemble_model_messages(
+        system_prompt,
+        messages,
+        config,
+        bound_tool_names=bound_tool_names,
+        answer_language=answer_language,
+        session_summary=session_summary,
+        rewrite_query=rewrite_query,
+        image_description=image_description,
+        pinned_skills=pinned_skills,
+        asker_background=asker_background,
     )
-    parts = [filled]
-    parts.append(
-        f"\n\n### System Status\nWeb Search: {web_label}\nKnowledge Graph: {graph_label}\n"
-        f"User Language: {language}\nALWAYS respond in {language}"
-    )
-    if kb_ids:
-        parts.append("\n\nBound knowledge bases are selected for this turn. Search them with the tools in your list.")
-    else:
-        parts.append(
-            "\n\nNo knowledge base is selected this turn. If the question depends on uploaded documents, tell the user to select a knowledge base. "
-            + (
-                "Web search / web_fetch may be used if enabled."
-                if has_web_tool
-                else "Web search is not enabled this turn."
-            )
-        )
-    rewrite = (rewrite_query or "").strip()
-    if rewrite:
-        parts.append(
-            f"\n\nRewritten query for this turn: {rewrite}\n"
-            "Prefer this query for doc_retrieval / grep_chunks / web_search; rewrite again from intermediate results on multi-hop tasks."
-        )
-    memory_block = (memory_suffix or "").strip()
-    if memory_block:
-        parts.append("\n\n" + memory_block)
-    if "get_stored_data" in bound:
-        parts.append(
-            "\n\n### Stored tool results\n"
-            "A tool message may be a reference: "
-            '{"__stored":true,"__refId":"...","__summary":"..."}. '
-            "Use __summary when it is enough. "
-            "If you need the original payload, call get_stored_data with that __refId. "
-            "Do not invent ref ids or copy truncated arrays from memory."
-        )
-    return [SystemMessage(content="".join(parts))] + list(messages)
 
 
 def _llm_messages(
@@ -151,19 +121,16 @@ def _llm_messages(
     system_prompt: str,
     bound_tool_names: list[str] | None = None,
 ) -> list[BaseMessage]:
-    window = memory_view_from_state(state).window_messages
-    messages = _inject_image_description(
-        window,
-        str(state.get("image_description") or ""),
-    )
     return _prepare_messages(
         system_prompt,
-        messages,
+        llm_history_messages(state),
         config,
         rewrite_query=state.get("rewrite_query"),
         bound_tool_names=bound_tool_names,
-        memory_suffix=memory_system_suffix_from_state(state),
         answer_language=answer_language_from_state(state),
+        session_summary=str(state.get("session_summary") or ""),
+        image_description=str(state.get("image_description") or ""),
+        asker_background=str(state.get("asker_background") or ""),
     )
 
 
@@ -208,10 +175,17 @@ def call_agent(
     model = create_chat_model(**chat_model_kwargs_from_config(config, chat_model_kwargs))
     if tools:
         model = model.bind_tools(tools)
+    compact = maybe_compact_state(state, config)
+    if compact:
+        state = {**state, **compact}
     messages = _llm_messages(state, config, prompt, bound_names)
     emit_thinking("正在思考如何作答…")
     response = model.invoke(messages, config)
-    return {"messages": [_finalize_response(state, response)]}
+    updates: dict[str, Any] = {**compact, "messages": [_finalize_response(state, response)]}
+    used = prompt_tokens_from_response(response)
+    if used:
+        updates["last_prompt_tokens"] = used
+    return updates
 
 
 async def acall_agent(
@@ -228,6 +202,9 @@ async def acall_agent(
     model = create_chat_model(**chat_model_kwargs_from_config(config, chat_model_kwargs))
     if tools:
         model = model.bind_tools(tools)
+    compact = maybe_compact_state(state, config)
+    if compact:
+        state = {**state, **compact}
     messages = _llm_messages(state, config, prompt, bound_names)
     emit_thinking("正在思考如何作答…")
     acc: Any = None
@@ -235,4 +212,8 @@ async def acall_agent(
         acc = chunk if acc is None else acc + chunk
     if acc is None:
         acc = await model.ainvoke(messages, config)
-    return {"messages": [_finalize_response(state, acc)]}
+    updates: dict[str, Any] = {**compact, "messages": [_finalize_response(state, acc)]}
+    used = prompt_tokens_from_response(acc)
+    if used:
+        updates["last_prompt_tokens"] = used
+    return updates

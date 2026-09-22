@@ -107,6 +107,11 @@ class Settings(BaseSettings):
     stm_hard_trim_ratio: float = 0.8
     stm_redact_old_retrieval: bool = True
     stm_working_memory_max_chars: int = 1200
+    # L3 对话压缩：usage 达 85% 触发，目标压到 30%
+    stm_compact_trigger_ratio: float = 0.85
+    stm_compact_target_ratio: float = 0.30
+    stm_compact_min_keep: int = 6
+    stm_compact_min_delete: int = 2
 
     # L1 工具结果外置（大结果存 Postgres，消息里只留引用）
     tool_result_store_enabled: bool = True
@@ -114,6 +119,16 @@ class Settings(BaseSettings):
     tool_result_array_limit: int = 10
     tool_result_preview_chars: int = 12000
     tool_result_summary_chars: int = 2000
+    # L2 语义压缩：单条工具结果超限后用 LLM 蒸馏；失败则结构化截断
+    tool_result_compress_enabled: bool = True
+    tool_result_compress_char_limit: int = 10000
+    tool_result_compress_output_chars: int = 2000
+    tool_result_compress_fallback_chars: int = 3000
+    tool_result_compress_input_chars: int = 80000
+    tool_result_compress_temperature: float = 0.3
+    tool_result_compress_timeout_sec: float = 60
+    tool_result_compress_model: str = ""  # 空 = 复用本轮 chat 模型
+    tool_result_ttl_sec: int = 3600  # L2 外置原文 TTL；L1 未压缩的记录不设过期
 
     # 长期记忆（跨会话；对齐 WeKnora RetrievalContextFor → asker_background）
     memory_enabled: bool = True

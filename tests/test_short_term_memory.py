@@ -132,6 +132,9 @@ def test_working_memory_keeps_write_plan():
     assert "【会话工作记忆】" in block
     assert "【更早对话摘要】" in block
     assert "预算" in block
+    handover = format_memory_system_block(session_summary="【交接文档】\n## 用户原始请求\n查预算")
+    assert "【交接文档】" in handover
+    assert "查预算" in handover
 
 
 def test_memory_view_from_state_uses_summary_upto_to_skip_reconsolidate():
@@ -153,7 +156,7 @@ def test_memory_view_from_state_uses_summary_upto_to_skip_reconsolidate():
 
 
 def test_manage_memory_writes_summary_when_archive_exists():
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
 
     from langchain_core.messages import AIMessage as AI
     from langchain_core.messages import HumanMessage as H
@@ -167,10 +170,15 @@ def test_manage_memory_writes_summary_when_archive_exists():
     messages.append(H(content="现在", id="h-now"))
     state = {"messages": messages}
 
-    mock_llm = MagicMock()
-    mock_llm.invoke.return_value = AI(content="用户先后问了问0到问3。")
+    handover = (
+        '{"original_request":"问0","stages":[{"stage":"问答","did":"作答",'
+        '"got":"用户先后问了问0到问3。"}],"abandoned_paths":[]}'
+    )
     with (
-        patch("agents.nodes.manage_memory.create_chat_model", return_value=mock_llm),
+        patch(
+            "utils.conversation_compaction._invoke_handover_llm",
+            return_value=handover,
+        ) as mock_llm,
         patch("agents.nodes.manage_memory.settings") as st,
         patch("agents.nodes.manage_memory.remember_explicit", return_value=None),
         patch(
@@ -183,11 +191,18 @@ def test_manage_memory_writes_summary_when_archive_exists():
         st.stm_consolidate_ratio = 0.5
         st.stm_hard_trim_ratio = 0.8
         st.stm_redact_old_retrieval = True
+        st.stm_compact_trigger_ratio = 0.85
+        st.stm_compact_target_ratio = 0.30
+        st.stm_compact_min_keep = 6
+        st.stm_compact_min_delete = 2
         out = manage_memory(state, {"configurable": {}})
     assert "用户先后问了" in out["session_summary"]
+    assert "## 用户原始请求" in out["session_summary"]
+    assert "## 已放弃的路径" in out["session_summary"]
+    assert "## 数据引用索引" in out["session_summary"]
     assert out["summary_upto_message_id"]
     assert out["working_memory"]["recent_facts"]
-    mock_llm.invoke.assert_called_once()
+    mock_llm.assert_called_once()
 
 
 def test_historical_attachment_compacted_current_kept():
@@ -247,7 +262,7 @@ def test_manage_memory_skips_llm_on_short_history():
     from agents.nodes.manage_memory import manage_memory
 
     with (
-        patch("agents.nodes.manage_memory.create_chat_model") as mock_llm,
+        patch("utils.conversation_compaction._invoke_handover_llm") as mock_llm,
         patch("agents.nodes.manage_memory.remember_explicit", return_value=None),
         patch(
             "agents.nodes.manage_memory.retrieval_context_for",

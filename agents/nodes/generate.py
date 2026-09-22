@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.runnables import RunnableConfig
 
 from agents.state import KnowSphereState
@@ -12,9 +12,9 @@ from models import create_chat_model
 from tools.retrieval.doc_retrieval import _emit_thinking
 from utils.agent_runtime import resolve_system_prompt
 from utils.citation import citation_payload_from_source_dicts
-from utils.language import answer_language_from_state, ensure_answer_language
+from utils.context_layout import assemble_model_messages, llm_history_messages
+from utils.language import answer_language_from_state
 from utils.run_config import chat_model_kwargs_from_config, kb_ids_from_config
-from utils.short_term_memory import memory_system_suffix_from_state, memory_view_from_state
 
 
 def _prepare_messages(
@@ -25,12 +25,17 @@ def _prepare_messages(
     system_prompt_override: str | None = None,
     memory_suffix: str | None = None,
     answer_language: str | None = None,
+    session_summary: str | None = None,
+    rewrite_query: str | None = None,
+    image_description: str | None = None,
+    asker_background: str | None = None,
+    context_block: str | None = None,
 ) -> list[BaseMessage]:
-    """组装系统消息。非检索意图优先使用 query_understand 写入的 override。"""
+    """非检索意图优先使用 query_understand 写入的 override。摘要不进系统提示。"""
     from config.settings import settings
     from prompts import PURE_CHAT_SYSTEM_PROMPT, build_rag_system_prompt
 
-    extra = (memory_suffix or "").strip()
+    del memory_suffix
     if system_prompt_override:
         base = system_prompt_override.strip()
     else:
@@ -39,10 +44,17 @@ def _prepare_messages(
             base = build_rag_system_prompt(enable_citation=settings.citation_enabled)
         else:
             base = (system_prompt or "").strip() or PURE_CHAT_SYSTEM_PROMPT.strip()
-    base = ensure_answer_language(base, answer_language)
-    if extra:
-        base = f"{base.rstrip()}\n\n{extra}"
-    return [SystemMessage(content=base)] + list(messages)
+    return assemble_model_messages(
+        base,
+        messages,
+        config,
+        answer_language=answer_language,
+        session_summary=session_summary,
+        rewrite_query=rewrite_query,
+        image_description=image_description,
+        asker_background=asker_background,
+        context_block=context_block,
+    )
 
 
 def _delta_text(chunk: Any) -> str:
@@ -60,67 +72,18 @@ def _delta_text(chunk: Any) -> str:
     return ""
 
 
-def _inject_image_description(messages: list[BaseMessage], image_description: str) -> list[BaseMessage]:
-    """将 query_understand VLM 输出的图片描述注入最后一条用户消息（仅本轮 LLM 入参）。"""
-    desc = (image_description or "").strip()
-    if not desc:
-        return messages
-    out = list(messages)
-    for idx in range(len(out) - 1, -1, -1):
-        msg = out[idx]
-        if not isinstance(msg, HumanMessage):
-            continue
-        text = msg.content if isinstance(msg.content, str) else str(msg.content)
-        if "[用户上传图片内容]" in text:
-            return out
-        prefix = text.strip() or "请分析上传的图片"
-        new_content = f"{prefix}\n\n[用户上传图片内容]\n{desc}".strip()
-        new_msg = HumanMessage(content=new_content)
-        kwargs = dict(getattr(msg, "additional_kwargs", None) or {})
-        if kwargs:
-            new_msg.additional_kwargs = kwargs
-        out[idx] = new_msg
-        break
-    return out
-
-
-def _append_context_block(messages: list[BaseMessage], context_block: str) -> list[BaseMessage]:
-    block = (context_block or "").strip()
-    if not block:
-        return messages
-    out = list(messages)
-    for idx in range(len(out) - 1, -1, -1):
-        msg = out[idx]
-        if not isinstance(msg, HumanMessage):
-            continue
-        text = msg.content if isinstance(msg.content, str) else str(msg.content)
-        if "【知识库检索结果】" in text:
-            return out
-        new_msg = HumanMessage(content=f"{text.rstrip()}\n\n{block}".strip())
-        kwargs = dict(getattr(msg, "additional_kwargs", None) or {})
-        if kwargs:
-            new_msg.additional_kwargs = kwargs
-        out[idx] = new_msg
-        break
-    else:
-        out.append(HumanMessage(content=block))
-    return out
-
-
 def _llm_messages(state: KnowSphereState, config: RunnableConfig, system_prompt: str) -> list[BaseMessage]:
-    window = memory_view_from_state(state).window_messages
-    messages = _inject_image_description(
-        window,
-        str(state.get("image_description") or ""),
-    )
-    messages = _append_context_block(messages, str(state.get("context_block") or ""))
     return _prepare_messages(
         system_prompt,
-        messages,
+        llm_history_messages(state),
         config,
         system_prompt_override=state.get("system_prompt_override"),
-        memory_suffix=memory_system_suffix_from_state(state),
         answer_language=answer_language_from_state(state),
+        session_summary=str(state.get("session_summary") or ""),
+        rewrite_query=str(state.get("rewrite_query") or ""),
+        image_description=str(state.get("image_description") or ""),
+        asker_background=str(state.get("asker_background") or ""),
+        context_block=str(state.get("context_block") or ""),
     )
 
 

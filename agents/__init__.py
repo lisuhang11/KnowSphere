@@ -1,6 +1,7 @@
 """对话图包：状态、运行时配置与组图入口。
 
-build_agent 延迟导入，避免 `from agents.context import ...` 时拉起整张图造成环。
+``build_agent`` 惰性导出，避免 ``utils.long_term_memory → agents.context →
+agents.graph → nodes → long_term_memory`` 循环导入。
 """
 
 from __future__ import annotations

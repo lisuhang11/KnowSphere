@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from agents.nodes.sources import collect_sources
 from agents.state import KnowSphereState
+from config.settings import settings
 from tools.storage import get_stored_data
 from utils.source_aliases import resolve_chunk_id
 from utils.tool_result_store import (
@@ -22,8 +24,20 @@ from utils.tool_result_store import (
     should_store,
 )
 
+_COMPRESS_PATCHERS: list = []
+
 
 def setup_function() -> None:
+    reset_tool_result_cache()
+    # L1 单测不走 LLM 蒸馏，避免大结果误触发 L2
+    patcher = patch.object(settings, "tool_result_compress_enabled", False)
+    patcher.start()
+    _COMPRESS_PATCHERS.append(patcher)
+
+
+def teardown_function() -> None:
+    while _COMPRESS_PATCHERS:
+        _COMPRESS_PATCHERS.pop().stop()
     reset_tool_result_cache()
 
 
