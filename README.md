@@ -1,16 +1,16 @@
 # KnowSphere
 
-Progressive Agentic RAG：先改写分流，再 ReAct 深读；checkpoint 保真，送给模型的是压缩后的视图。
-
-实现入口：`agents/graph.py`、`agents/nodes/`、`services/retrieval_service.py`、`utils/tool_result_store.py` / `semantic_compressor.py` / `conversation_compaction.py` / `short_term_memory.py`。
+面向知识库的 Progressive Agentic RAG。先改写并分流，需要证据时再进入 ReAct 深读。会话原文留在 checkpoint，发给模型的是按稳定性排好的视图，方便前缀缓存命中。
 
 <details>
-<summary><strong>1. 对话图：先分流，再 ReAct</strong></summary>
+<summary><strong>对话图</strong></summary>
+
+入口是 `agents/graph.py`。一次问答按下面的顺序走：
 
 ```mermaid
 flowchart LR
   START --> prepare_context --> manage_memory --> query_understand
-  query_understand -->|greeting / chitchat / 纯图纯附件| generate --> END
+  query_understand -->|问候 / 闲聊 / 纯图纯附件| generate --> END
   query_understand -->|需要工具| agent
   agent -->|tool_calls| tools --> collect_sources --> agent
   agent -->|直接作答| END
@@ -18,129 +18,163 @@ flowchart LR
 
 | 节点 | 做什么 |
 |---|---|
-| `prepare_context` | 抽出本轮 Human、近期问答对；清零上一轮 `intent` / 图片描述 / `last_sources`，避免 checkpoint 脏读 |
-| `manage_memory` | 滚动短期窗口、写交接文档、召回跨会话画像（不写进最终回答） |
-| `query_understand` | 指代补全 + 意图分类；问候/闲聊走一次 `generate`，其余进 ReAct |
-| `agent` | 绑定本轮工具后 think；usage 过高时先做 L3 压缩 |
-| `tools` | 执行工具；大结果走 L1 外置 / L2 蒸馏 |
-| `collect_sources` | 只扫**当前轮**检索类 ToolMessage，汇总 `last_sources` 供 `[[cN]]` |
-| `generate` | 无工具路径的一次生成（问候、纯图说明等） |
+| `prepare_context` | 抽出本轮问题和近期问答；清掉上一轮意图、图片描述、引用来源 |
+| `manage_memory` | 判断要不要写交接摘要，写入「记住：…」，召回跨会话背景 |
+| `query_understand` | 改写检索词并做意图分类，决定进 ReAct 还是直接生成 |
+| `agent` | 绑定本轮真正能用的工具，按上下文布局调用主模型 |
+| `tools` | 执行工具。大结果先外置或蒸馏，失败最多重试 3 次 |
+| `collect_sources` | 只扫当前轮的检索类工具消息，汇总 `[[cN]]` 用的来源 |
+| `generate` | 不走工具时的一次生成，例如问候、纯图片说明 |
 
-系统提示在 `prompts/agent_system.py`：**Evidence-First**，禁止用参数记忆填事实；检索命中后必须 `list_chunks` 深读，不能只靠 snippet。每道新事实题都要重新检索，不能复用历史工具结果当证据。
-
-</details>
-
-<details>
-<summary><strong>2. 查询理解：改写与路由分开</strong></summary>
-
-`query_understand` 产出 JSON：`rewrite_query` / `intent` / `image_description`。改写只做指代消解和省略补全，禁止把「最近 / 比较火」这类线索改没，也禁止把问题改写成「请再检索…」这种元指令。
-
-意图决定走哪条边，而不是让模型自己猜要不要调工具：
-
-- `greeting` / `chitchat` / `image_only` / `doc_only` → 跳过 ReAct
-- `kb_search` / `clarification` / `summarize` → 知识库工具（需已选库）
-- `web_search` → 仅当输入框开启联网
-- 智能体绑了专业工具（如 PPT）时，非跳过类意图一律进 ReAct
-
-未选知识库时运行时意图会归一成 `no_kb`，检索工具不会出现在绑定列表里。
+系统提示在 `prompts/agent_system.py`：事实必须来自检索或联网，命中后要用 `list_chunks` 读全文，不能把上一轮的工具结果当成这轮的证据。
 
 </details>
 
 <details>
-<summary><strong>3. 检索：混合召回后再深读</strong></summary>
+<summary><strong>查询理解</strong></summary>
 
-`RetrievalService.search` 的固定顺序：
+`agents/nodes/query_understand.py` 产出 `rewrite_query`、`intent`、`image_description`。改写只补指代和省略，不把「最近 / 比较火」这类线索改掉，也不把问题改成「请再检索…」。
 
-1. **多库分组召回**：每个知识库用自己的 embedding 模型；向量余弦 + `pg_trgm` 词法分加权（`HYBRID_LEX_WEIGHT`）。中文场景不必装分词扩展。
-2. **查询扩展**：本地同义词 / 子查询拆分；复杂多跳可再走 LLM multi-query，RRF 融合。
-3. **父块回捞**：命中子块时取回父段，避免答案落在切块边界上。
-4. **精排 + MMR**：rerank 后再做多样性（`MMR_LAMBDA`；可选叠加 2-gram Jaccard 去词面重复）。
-5. **工具层**：`doc_retrieval` 给语义，`grep_chunks` 给正则锚定，`list_chunks` 按 `cN` / `chunk_id` 取全文。图谱与联网都是补充，不能替代深读。
+意图默认读下一个 token 的 logprobs（`models/decision.py`）。厂商不支持时退回 JSON 结构化输出。有图片时再调一次 VLM 写图片描述。
 
-`chunks.owner` 已预留租户过滤，当前固定 `default`。
+路由不交给主模型猜：
 
-</details>
+- `greeting` / `chitchat` / `image_only` / `doc_only` 走 `generate`
+- `kb_search` / `clarification` / `summarize` 在已选知识库时进 ReAct
+- `web_search` 仅在本轮开了联网时进 ReAct
+- 智能体绑了专业工具（如生成 PPT）时，非跳过类意图进 ReAct
 
-<details>
-<summary><strong>4. 上下文工程：L1 / L2 / L3</strong></summary>
-
-对话一长，工具 JSON 会把 context window 吃光。三层管的是「当前轮信噪比」：**checkpoint 里的原文不改**，只压缩送给 LLM 的视图。
-
-<details>
-<summary>L1 工具结果外置（单条体积）</summary>
-
-`utils/tool_result_store.py`
-
-- 触发：正文 `>8000` 字，或顶层数组 `>10` 条，或 `ToolSpec.always_store`。
-- 消息里只留引用：`{__stored, __refId, __toolType, __originalLength, __summary, __hint}`。
-- 全文进 Postgres `tool_result_refs` + 进程缓存。`preview`（原文前 12000 字）只写库，**从不进入 prompt**，也不经 `get_stored_data` 回灌给模型。
-- `get_stored_data` 是运行时工具（不在智能体勾选列表），其返回值不再二次外置。
-- `collect_sources` 遇到引用会按 `__refId` hydrate，引用角标不丢。
+这次调用是独立的短请求，不跟主对话共用同一条前缀。
 
 </details>
 
 <details>
-<summary>L2 单条语义压缩</summary>
+<summary><strong>检索</strong></summary>
 
-`utils/semantic_compressor.py`
+`services/retrieval_service.py` 把一次 `doc_retrieval` 做完，图上不拆成向量节点和关键词节点。顺序是：
 
-- 外置前若原文 `>10000` 字，用 LLM 蒸馏到 ≤2000 字，只保留后续推理需要的 ID、名称、数值、结论。
-- 禁止改写 JSON 键、禁止生成 preview（preview 只能是原文 `substring`）。
-- 失败则包成 `{__fallbackTruncated, __toolType, __originalLength, content: 原文[:3000]}`，不把半截 JSON 假装成全文。
-- L2 外置行带 1h TTL；纯 L1 行不过期。
+1. **多库分组。** 每个知识库用自己的 embedding 模型。
+2. **混合召回。** 同一条查询打两条 SQL：向量余弦和 `pg_trgm` 词法，再用 RRF 合并。
+3. **不够再扩展。** 命中太少时才做 LLM multi-query 或本地同义词扩展，结果继续 RRF。
+4. **父块回捞。** 命中子块时取回父段，避免答案落在切块边界上。
+5. **精排和多样性。** rerank 之后可选 MMR。
 
-</details>
-
-<details>
-<summary>L3 对话压缩（累积膨胀）</summary>
-
-`utils/conversation_compaction.py`。L1/L2 管单条体积，L3 管消息堆起来之后的总量。
-
-- **usage 触发**：`prompt_tokens / contextWindow ≥ 85%`。不用 95%，是因为顶满后模型可能没有输出空间，直接空响应。
-- **目标约 30%**：压缩有 LLM + 写回延迟，这段时间新消息还在进窗口；目标太保守会刚结束又触发。
-- **产物是交接文档，不是摘要**。固定 schema：
-  1. 用户原始请求 — 压缩后不丢目标
-  2. 按阶段分组的执行历史：`[阶段] → 做了什么 → 得到什么`；prompt 要求保留具体 ID / 名称 / 数值，禁止「数据已检索」这种空话
-  3. 已放弃的路径：`~~方案~~：原因`，避免长对话里重走失败分支
-  4. 数据引用索引：从归档消息里**用代码**抽出所有 `__stored.__refId`，不经 LLM；超长时先砍执行历史，请求、放弃路径和 ref 表优先保留
-- **切分安全**：不能从 `tool` 消息起刀，向前回溯到发出 `tool_calls` 的 `assistant`。最少保留 6 条、最少删除 2 条。当前轮 Human 不进归档。
-
-agent 在调用主模型前看上一轮 `last_prompt_tokens` 决定是否压缩；调用后再把本轮 usage 写回 state。
-
-</details>
+工具层分工：`doc_retrieval` 做语义加词法，`grep_chunks` 做正则锚定，`list_chunks` 按 `cN` 或 `chunk_id` 读全文，`get_document_info` 只看元数据。`query_knowledge_graph` 和 `web_search` / `web_fetch` 是补充，不能代替深读。
 
 </details>
 
 <details>
-<summary><strong>5. 记忆分层：视图压缩，检查点保真</strong></summary>
+<summary><strong>上下文管理</strong></summary>
 
-| 层 | 存活范围 | 作用 |
+主对话（`agent` / `generate`）的请求在 `utils/context_layout.py` 里组装。越稳定的内容越靠前，这样身份和技能的前缀可以持续命中缓存。支持显式缓存的厂商在系统级末尾能打断点；其他 OpenAI 兼容接口靠这段字节保持不变。
+
+一次请求从前往后是六段：
+
+1. **系统级。** 身份、能力边界、这个智能体绑定的技能目录。语言和联网开关不写进这段。
+2. **任务级。** 接在同一条系统消息后面：是否选了知识库、联网、图谱、回答语言。工具 schema 按这些开关裁剪，调了会失败的工具不放进来。`write_plan`、`generate_pptx`、`get_stored_data` 不依赖这些开关，仍然保留。用户改了开关，只从这里失效。
+3. **交接摘要。** 更早对话的压缩，来自 `session_summary`。放在历史上面，不进系统提示，也不写成聊天记录。还没压缩过就空着。
+4. **历史。** 只保留最近 `stm_keep_turns` 轮（默认 8）已经结束的对话，按原文送出。checkpoint 里更早的消息还在，只是这次不发给模型。
+5. **本轮上下文。** 紧挨最新一条用户消息，不进 checkpoint。只有改写词、图片描述、本轮点名的技能、长期记忆 `asker_background`。同一轮工具循环里这段不再改。
+6. **本轮。** 正在进行的问题，以及这一轮新的检索和工具结果，接在最后。
+
+`query_understand`、意图分类、写交接摘要、语义压缩各自请求，不跟这条前缀共用。
+
+</details>
+
+<details>
+<summary><strong>工具结果与对话压缩</strong></summary>
+
+checkpoint 里的原文不改。体积控制发生在写入工具消息时，以及上下文快满时的交接。
+
+**外置。** `utils/tool_result_store.py`。正文超过 8000 字、顶层数组超过 10 条，或工具标记了整份外置时，消息里只留 `{__stored, __refId, __summary, __hint}`。全文进 Postgres `tool_result_refs`。模型需要原文时调用 `get_stored_data`，这个工具不在智能体勾选列表里，返回值不再二次外置。
+
+**语义压缩。** `utils/semantic_compressor.py`。外置前若原文超过 10000 字，先蒸馏到 2000 字以内，只留后续推理要用的 ID、名称、数值和结论。失败则截断并标明是降级结果，不把半截 JSON 当成全文。
+
+**交接。** `utils/conversation_compaction.py`。上一轮 `prompt_tokens` 达到上下文窗口的 85% 时触发，目标压到大约 30%。产物是交接文档，不是一段自由摘要：用户原始请求、分阶段做了什么、放弃的路径、外置结果的引用索引。引用索引由代码从 `__refId` 抽出，不经模型。切分不会从一条工具消息中间下刀。当前这一问不进归档。
+
+</details>
+
+<details>
+<summary><strong>记忆</strong></summary>
+
+会话内和跨会话是两套东西。
+
+**会话内**在 LangGraph checkpoint 里，由 `manage_memory` 在理解问题之前更新。
+
+| 内容 | 放哪 | 作用 |
 |---|---|---|
-| Checkpoint `messages` | 整段会话 | 完整 Human / AI / Tool，可回放、可引用 hydrate |
-| 短期窗口 | 送进 LLM 的最近轮 | 默认保留约 8 轮；历史检索 ToolMessage 在视图里压成一行，避免过期 snippet 冒充新证据 |
-| `session_summary` | 被窗口挤出的更早轮 | L3 交接文档，带 `【交接文档】` 标签注入 system |
-| 工作记忆 | 本会话 | 最近 `write_plan` + 近期问答要点 |
-| 长期记忆 | 跨会话 | 用户说「记住：…」立刻落库；常查资料要同一文档命中 ≥2 次才进入。只注入 `<asker_background>` 辅助改写，不当作问题本身，也不塞进最终回答 |
+| 全部消息 | checkpoint | 可回放。发给模型时只带最近 N 轮 |
+| 交接摘要 | 请求视图里、历史上面 | 覆盖被挤出窗口的更早轮次 |
+| 工作记忆 | 只给 `query_understand` | 最近计划和近期问答要点，不进主模型请求 |
+| `summary_upto_message_id` | state | 标记已经交接过的位置，避免同一段反复摘要 |
 
-`summary_upto_message_id` 标记已经交接过的位置，避免同一段归档被反复摘要。
+**跨会话**在 Postgres `memory_items` 和文档亲和表，按用户隔离（`utils/long_term_memory.py`）。
 
-</details>
-
-<details>
-<summary><strong>6. 引用协议</strong></summary>
-
-检索工具返回带 `file_name` / `chunk_id` / `document_id` / URL 的来源。系统提示要求事实后面紧跟 `[[cN]]`（本轮 1-based），禁止 `[1]`、文末堆引用、引用不存在的下标。`collect_sources` 只收集当前轮，历史 `[[cN]]` 作废。前端用 `ks_citations` 把角标还原成文档名。
+- 只有「记住：…」这类明示才会写入，类型是画像、兴趣或事实。
+- 回答引用过的文档累计次数，同一文档至少命中 2 次才进入「常查资料」。
+- 每轮读出画像、兴趣和常查资料，拼成 `asker_background`，放进本轮上下文，也给查询改写用。它用来消解指代，不当成问题本身。
+- 没有后台自动抽取，也没有按需搜索记忆的工具。
 
 </details>
 
 <details>
-<summary><strong>7. 模型工厂</strong></summary>
+<summary><strong>工具与技能</strong></summary>
 
-`models/` 区分 `source=local|remote` 与 `parameters.provider`（硅基流动 / OpenAI / 阿里云 / 智谱 / DeepSeek / Kimi / 火山 / 混元 / 千帆 / OpenRouter / Jina / 自定义兼容口）。本地走 Ollama。新远程厂商在 `models/providers.py` 登记即可。
+工具目录在 `tools/catalog.py`。智能体只保存工具名，可执行体不进数据库。本轮没选知识库、没开联网或没开图谱时，对应工具不会出现在 schema 里。
 
-- 类型：`Embedding` / `Rerank` / `KnowledgeQA` / `VLLM` / `ASR`。
-- 运行时解析：显式模型 ID → 表内每类型一个 `is_default` → `.env` 兜底；裸模型名直接使用（兼容旧数据）。
-- api_key 用 AES-256-GCM 加密（`MASTER_KEY`）；未设置时降级为可逆 base64，仅限开发。
-- 删除保护：内置模型、默认模型、被知识库引用的模型不可删除。
+| 类别 | 工具 |
+|---|---|
+| 规划 | `write_plan` |
+| 知识库 | `doc_retrieval`、`grep_chunks`、`list_chunks`、`get_document_info`、`query_knowledge_graph` |
+| 联网 | `web_search`、`web_fetch` |
+| 生成 | `generate_pptx` |
+| 运行时注入 | `read_skill`、`execute_skill_script`、`get_stored_data` |
+
+技能在 `skills/`。系统提示里只放绑定技能的名称、说明和路径。正文要模型先 `read_skill` 再按说明书做。带脚本的技能在 Docker 里执行，输入在 `/workspace/input`，产出在 `/workspace/output`。用户这一轮点名的技能写在本轮上下文里，不改技能目录那段前缀。
+
+</details>
+
+<details>
+<summary><strong>文档摄取</strong></summary>
+
+上传接口把文件放进对象存储并入队。Celery 任务（`api/tasks.py`）再解析、切块、向量化、入库。上传接口和后台任务是两次独立调用，中间不共享一条 trace。
+
+解析器在 `ingestion/parser/`，覆盖常见办公文档、图片和音频。切块在 `chunkers/`，可按标题或父子块。向量按批写入 `stores/` 的 `chunks` 表，维度跟着知识库所选的 embedding 模型走。开启图谱的知识库会再把块送去抽实体关系，写入 Neo4j。
+
+</details>
+
+<details>
+<summary><strong>引用</strong></summary>
+
+检索工具返回带文件名、`chunk_id`、`document_id` 或 URL 的来源。回答里用 `[[cN]]` 紧跟在对应事实上，N 是本轮结果的序号。不要用 `[1]`，也不要在文末堆引用。`collect_sources` 只收集当前轮，上一轮的 `[[cN]]` 不算数。前端用 `ks_citations` 把角标显示成文档名。
+
+</details>
+
+<details>
+<summary><strong>模型</strong></summary>
+
+`models/` 区分本地 Ollama 和远程 OpenAI 兼容接口。远程厂商在 `models/providers.py` 登记，包括硅基流动、OpenAI、阿里云、智谱、DeepSeek、Kimi、火山、混元、千帆、OpenRouter、Jina，以及自定义兼容口。
+
+类型有 `Embedding`、`Rerank`、`KnowledgeQA`、`VLLM`、`ASR`。运行时先用显式模型 ID，否则用该类型的默认模型，再否则用环境变量。API key 用 AES-256-GCM 加密，密钥是 `MASTER_KEY`。内置模型、默认模型、仍被知识库引用的模型不能删除。
+
+</details>
+
+<details>
+<summary><strong>服务与界面</strong></summary>
+
+FastAPI 在 `api/main.py`。会话流式问答、知识库、文档、模型、智能体、技能和评测各自一条路由。对话图跑在 API 进程里，检查点优先用 Postgres，连不上时退回内存。文档处理和评测跑在 Celery。
+
+前端是 `frontend/` 里的 Vue 应用：对话、知识库、智能体、技能、模型和评测。
+
+评测在 `evals/`，覆盖检索、生成和意图分类。意图评测只跑 `query_understand`，不跑整张 ReAct 图。
+
+</details>
+
+<details>
+<summary><strong>可观测性</strong></summary>
+
+配置了 Langfuse 公钥和私钥后才上报，否则全部空操作（`utils/observability.py`）。
+
+一次会话问答是一条 `session_chat` trace。图节点、每次模型调用、每次工具调用会变成子 span，并带上耗时。检索内部的 embedding、两条 SQL、rerank，以及联网时的各次 HTTP，目前还包在对应工具 span 里。工具重试和 Celery 任务重试没有单独的 span。摄取的上传接口和后台解析也是两条互不关联的 trace。
 
 </details>
