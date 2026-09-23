@@ -48,6 +48,29 @@ Web search available this turn: {{web_search_available}}
 Reply with ONE letter (A-I) only.
 """
 
+# 官方 /v1/systemone 的 choice.criteria。顺序即决策优先级（先匹配先生效）。
+INTENT_OPENJEV_CRITERIA: dict[str, str] = {
+    "greeting": "Pure greetings, thanks, or farewell with NO substantive question.",
+    "summarize": "Summarize or review the conversation itself. If the user mentions the knowledge base, documents, files, or reports, this is NOT summarize.",
+    "web_search": "Needs real-time, latest, trending, or public-web information. Colloquial hotness words count as real-time.",
+    "kb_search": "Search, read, browse, organize, list, or extract from the knowledge base, including when an image or file is attached. Default when unsure, unless the question is public real-time news.",
+    "clarification": "Ambiguous or incomplete question that likely needs knowledge-base retrieval.",
+    "follow_up": "Refers to previous conversation content, including an image or document from an earlier turn that is not re-attached, and can be answered from history with no new knowledge-base search.",
+    "image_only": "ONLY understand, describe, translate, or extract the attached image itself. Requires an image on this turn.",
+    "doc_only": "ONLY understand, summarize, translate, or extract the attached document itself. Requires a document on this turn.",
+    "chitchat": "Casual talk that needs no retrieval.",
+}
+
+INTENT_OPENJEV_INSTRUCTIONS = """Classify the user's latest question into exactly one intent.
+Check the criteria from first to last and pick the FIRST match.
+Distinctions:
+- An upload plus "这是什么" or "总结一下" is image_only or doc_only. An upload plus "知识库里有这个吗" is kb_search.
+- Public news, celebrities, trending topics, or "比较火" is web_search. "你知道…吗" alone is not chitchat.
+- A person lookup with no news or hotness cue is kb_search, not web_search.
+- Asking to expand a previous point when history is enough is follow_up. Asking what else is related is kb_search.
+- A previous-turn image or document already described in history, not re-attached, is follow_up, not kb_search.
+"""
+
 
 def build_intent_choice_prompts(
     *,
@@ -96,3 +119,46 @@ def build_intent_choice_prompts(
             "hot topics, or other real-time facts, the letter MUST be C.\n"
         )
     return system, user
+
+
+def build_intent_openjev_instructions(*, web_search_enabled: bool) -> str:
+    """官方 Choice 的 instructions。联网开启时，时效问题必须是 web_search。"""
+    text = INTENT_OPENJEV_INSTRUCTIONS
+    if web_search_enabled:
+        text += (
+            "If this question is about public news, celebrities, trending/"
+            "hot topics, or other real-time facts, the choice MUST be web_search.\n"
+        )
+    return text
+
+
+def build_intent_openjev_state(
+    *,
+    query: str,
+    history_pairs: list[dict[str, str]],
+    kb_selected: bool,
+    has_images: bool = False,
+    has_attachments: bool = False,
+    web_search_enabled: bool = True,
+    session_summary: str = "",
+    working_memory: dict | None = None,
+    asker_background: str = "",
+) -> dict[str, str]:
+    """官方 Jev 的 state：对话、本轮开关和问句，不含「只输出字母」的指令。"""
+    now = datetime.now()
+    return {
+        "conversation": format_rewrite_conversation(
+            history_pairs,
+            session_summary=session_summary,
+            working_memory=working_memory,
+        ),
+        "current_time": f"{now.strftime('%Y-%m-%d %H:%M:%S')} {now.strftime('%A')}",
+        "kb_selected": "yes" if kb_selected else "no",
+        "web_search_available": "yes" if web_search_enabled else "no",
+        "query": _query_with_attachment_tags(
+            query,
+            has_images=has_images,
+            has_attachments=has_attachments,
+            asker_background=asker_background,
+        ),
+    }

@@ -1,0 +1,82 @@
+{
+  "model": "openjev",
+  "dataset": "intent_demo",
+  "summary": {
+    "accuracy": 0.9807692307692307,
+    "routing_accuracy": 0.9807692307692307,
+    "macro_f1": 0.9780219780219781,
+    "sample_count": 52,
+    "per_class": {
+      "chitchat": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 5
+      },
+      "clarification": {
+        "precision": 1.0,
+        "recall": 0.75,
+        "f1": 0.8571428571428571,
+        "support": 4
+      },
+      "doc_only": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 4
+      },
+      "follow_up": {
+        "precision": 0.8571428571428571,
+        "recall": 1.0,
+        "f1": 0.923076923076923,
+        "support": 6
+      },
+      "greeting": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 5
+      },
+      "image_only": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 4
+      },
+      "kb_search": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 11
+      },
+      "no_kb": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 2
+      },
+      "summarize": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 5
+      },
+      "web_search": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 6
+      }
+    }
+  },
+  "misses": [
+    {
+      "qid": 30,
+      "question": "还有吗",
+      "gt": "clarification",
+      "pred": "follow_up",
+      "raw": "follow_up",
+      "confidence": 0.32
+    }
+  ]
+}

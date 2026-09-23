@@ -1,13 +1,14 @@
 """query_understand：LLM 改写 query + 意图分类。
 
-意图默认走 OpenJev Choice（读 logprobs，输出选项概率）；改写仍生成文本。
-厂商不支持 logprobs 时回退为原来的 JSON 结构化输出。
+配了 OPENJEV_API_KEY 时，意图走官方 /v1/systemone；否则读聊天模型 logprobs。
+厂商不支持 logprobs、或官方接口失败时，回退为 JSON 结构化输出。改写仍生成文本。
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
@@ -15,8 +16,14 @@ from langchain_core.runnables import RunnableConfig
 from agents.state import KnowSphereState
 from config.settings import settings
 from models import create_chat_model, create_vlm_model
-from models.decision import classify_choice
-from prompts.intent_choice import build_intent_choice_prompts
+from models.decision import ChoiceResult, classify_choice
+from models.openjev import classify_openjev
+from prompts.intent_choice import (
+    INTENT_OPENJEV_CRITERIA,
+    build_intent_choice_prompts,
+    build_intent_openjev_instructions,
+    build_intent_openjev_state,
+)
 from prompts.intent_prompts import intent_system_prompt
 from prompts.query_understand import build_query_understand_prompts
 from schemas.query import (
@@ -68,6 +75,52 @@ def _intent_classifier_mode() -> str:
     if mode in {"structured", "json"}:
         return "structured"
     return "choice"
+
+
+def _openjev_api_key() -> str:
+    raw = getattr(settings, "openjev_api_key", "")
+    return raw.strip() if isinstance(raw, str) else ""
+
+
+def _classify_intent(
+    llm: Any,
+    *,
+    choice_system: str,
+    choice_user: str,
+    openjev_state: dict[str, str],
+    web_search_enabled: bool,
+    config: RunnableConfig,
+) -> ChoiceResult | None:
+    """官方 Jev 优先。失败或未配 Key 时读 logprobs。"""
+    key = _openjev_api_key()
+    if key:
+        try:
+            hosted = classify_openjev(
+                state=openjev_state,
+                criteria=INTENT_OPENJEV_CRITERIA,
+                instructions=build_intent_openjev_instructions(
+                    web_search_enabled=web_search_enabled,
+                ),
+                api_key=key,
+                base_url=str(getattr(settings, "openjev_base_url", "") or ""),
+                model=str(getattr(settings, "openjev_model", "") or ""),
+                timeout_sec=float(getattr(settings, "openjev_timeout_sec", 20) or 20),
+            )
+        except Exception as exc:
+            logger.warning("OpenJEV 意图分类失败，回退 logprobs: %s", exc)
+            hosted = None
+        if hosted is not None:
+            return hosted
+        logger.info("OpenJEV 未返回意图，回退 logprobs")
+    return classify_choice(
+        llm,
+        [
+            {"role": "system", "content": choice_system},
+            {"role": "user", "content": choice_user},
+        ],
+        INTENT_CHOICE_OPTIONS,
+        config=config,
+    )
 
 
 def _format_intent_thinking(intent: str, confidence: float | None) -> str:
@@ -149,6 +202,8 @@ def _invoke_text_query_understand(
     *,
     choice_system: str | None = None,
     choice_user: str | None = None,
+    openjev_state: dict[str, str] | None = None,
+    web_search_enabled: bool = True,
     original_query: str = "",
 ) -> QueryUnderstandOutput | _TextUnderstandResult | None:
     llm = _query_understand_llm(config)
@@ -159,13 +214,12 @@ def _invoke_text_query_understand(
     choice = None
     if _intent_classifier_mode() == "choice" and choice_system and choice_user:
         try:
-            choice = classify_choice(
+            choice = _classify_intent(
                 llm,
-                [
-                    {"role": "system", "content": choice_system},
-                    {"role": "user", "content": choice_user},
-                ],
-                INTENT_CHOICE_OPTIONS,
+                choice_system=choice_system,
+                choice_user=choice_user,
+                openjev_state=openjev_state or {},
+                web_search_enabled=web_search_enabled,
                 config=config,
             )
         except Exception as exc:
@@ -295,6 +349,17 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
         language=language,
         asker_background=asker_background,
     )
+    openjev_state = build_intent_openjev_state(
+        query=current_query,
+        history_pairs=history_pairs,
+        kb_selected=kb_selected,
+        has_images=has_images,
+        has_attachments=has_attachments,
+        web_search_enabled=web_on,
+        session_summary=session_summary,
+        working_memory=working_memory,
+        asker_background=asker_background,
+    )
     choice_system, choice_user = build_intent_choice_prompts(
         query=current_query,
         history_pairs=history_pairs,
@@ -339,6 +404,8 @@ def query_understand(state: KnowSphereState, config: RunnableConfig) -> dict:
                 config,
                 choice_system=choice_system,
                 choice_user=choice_user,
+                openjev_state=openjev_state,
+                web_search_enabled=web_on,
                 original_query=current_query,
             )
             rewrite = sanitize_rewrite_query(
