@@ -1,17 +1,22 @@
-"""扫描 skills/<name>/SKILL.md，读取 YAML frontmatter。"""
+"""扫描 skills/<name>/SKILL.md，按 Agent Skills 规范读取 YAML 前言。"""
 
 from __future__ import annotations
 
 import base64
+import logging
 import mimetypes
+import re
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from skills.paths import (
     CODE_FILENAMES,
     IMAGE_EXTS,
+    MAX_COMPATIBILITY_LEN,
     MAX_DESCRIPTION_LEN,
     MAX_FILE_BYTES,
     MAX_READ_CHARS,
@@ -22,6 +27,10 @@ from skills.paths import (
     skills_root,
 )
 
+logger = logging.getLogger(__name__)
+
+_FRONTMATTER_RE = re.compile(r"^---\s*\r?\n(.*?)\r?\n---\s*(?:\r?\n|$)(.*)\Z", re.DOTALL)
+
 
 @dataclass(frozen=True)
 class SkillInfo:
@@ -29,64 +38,47 @@ class SkillInfo:
     description: str
     root: Path
     instructions: str
+    license: str | None = None
+    compatibility: str | None = None
+    metadata: dict[str, str] = field(default_factory=dict)
+    allowed_tools: tuple[str, ...] = ()
 
 
-def _unquote(value: str) -> str:
-    text = value.strip()
-    if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
-        return text[1:-1].strip()
-    return text
-
-
-def parse_skill_frontmatter(text: str) -> tuple[dict[str, str], str]:
-    """解析 SKILL.md 顶部 `---` YAML。只取标量 name / description。"""
+def parse_skill_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """解析 SKILL.md 顶部 YAML。失败时返回空映射，调用方据此丢弃该技能。"""
     raw = text.lstrip("\ufeff")
-    if not raw.startswith("---"):
+    match = _FRONTMATTER_RE.match(raw)
+    if match is None:
         return {}, raw.strip()
-    rest = raw[3:]
-    if rest.startswith("\r\n"):
-        rest = rest[2:]
-    elif rest.startswith("\n"):
-        rest = rest[1:]
-    end = rest.find("\n---")
-    if end < 0:
+    try:
+        data = yaml.safe_load(match.group(1))
+    except yaml.YAMLError as exc:
+        logger.warning("SKILL.md 前言不是合法 YAML: %s", exc)
         return {}, raw.strip()
-    fm = rest[:end]
-    body = rest[end + 4 :].lstrip("\r\n")
-    meta: dict[str, str] = {}
-    pending_key: str | None = None
-    pending_lines: list[str] = []
+    if not isinstance(data, dict):
+        return {}, match.group(2).strip()
+    return data, match.group(2).strip()
 
-    def flush_pending() -> None:
-        nonlocal pending_key, pending_lines
-        if pending_key is None:
-            return
-        meta[pending_key] = " ".join(pending_lines).strip()
-        pending_key = None
-        pending_lines = []
 
-    for line in fm.splitlines():
-        if pending_key is not None:
-            if line.startswith((" ", "\t")) and line.strip():
-                pending_lines.append(line.strip())
-                continue
-            flush_pending()
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        key = key.strip()
-        value = value.strip()
-        if not key:
-            continue
-        if value in (">", "|", ">-", "|-"):
-            pending_key = key
-            pending_lines = []
-            continue
-        meta[key] = _unquote(value)
-    flush_pending()
-    return meta, body.strip()
+def _scalar(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+
+def _parse_allowed_tools(raw: object) -> list[str]:
+    """`allowed-tools`：空格或逗号分隔的字符串，或字符串列表。"""
+    if isinstance(raw, str):
+        return [tool for tool in re.split(r"[\s,]+", raw) if tool]
+    if isinstance(raw, list):
+        return [item.strip() for item in raw if isinstance(item, str) and item.strip()]
+    return []
+
+
+def _parse_metadata(raw: object) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        return {}
+    return {str(key): str(value) for key, value in raw.items()}
 
 
 def _load_skill_dir(path: Path) -> SkillInfo | None:
@@ -101,15 +93,26 @@ def _load_skill_dir(path: Path) -> SkillInfo | None:
     except OSError:
         return None
     meta, body = parse_skill_frontmatter(text)
-    name = (meta.get("name") or "").strip()
-    description = (meta.get("description") or "").strip()
-    if name != dirname:
-        return None
-    if not is_valid_skill_name(name) or not description:
+    name = _scalar(meta.get("name"))
+    description = _scalar(meta.get("description"))
+    if name != dirname or not is_valid_skill_name(name) or not description:
         return None
     if len(description) > MAX_DESCRIPTION_LEN:
         description = description[:MAX_DESCRIPTION_LEN].rstrip()
-    return SkillInfo(name=name, description=description, root=path, instructions=body)
+    compatibility = _scalar(meta.get("compatibility")) or None
+    if compatibility and len(compatibility) > MAX_COMPATIBILITY_LEN:
+        compatibility = compatibility[:MAX_COMPATIBILITY_LEN].rstrip()
+    license_name = _scalar(meta.get("license")) or None
+    return SkillInfo(
+        name=name,
+        description=description,
+        root=path,
+        instructions=body,
+        license=license_name,
+        compatibility=compatibility,
+        metadata=_parse_metadata(meta.get("metadata")),
+        allowed_tools=tuple(_parse_allowed_tools(meta.get("allowed-tools"))),
+    )
 
 
 def list_skills(*, root: Path | None = None) -> list[SkillInfo]:

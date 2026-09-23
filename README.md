@@ -128,9 +128,9 @@ checkpoint 里的原文不改。体积控制发生在写入工具消息时，以
 | 知识库 | `doc_retrieval`、`grep_chunks`、`list_chunks`、`get_document_info`、`query_knowledge_graph` |
 | 联网 | `web_search`、`web_fetch` |
 | 生成 | `generate_pptx` |
-| 运行时注入 | `read_skill`、`execute_skill_script`、`get_stored_data` |
+| 运行时注入 | `read_file`、`execute_skill_script`、`get_stored_data` |
 
-技能在 `skills/`。系统提示里只放绑定技能的名称、说明和路径。正文要模型先 `read_skill` 再按说明书做。带脚本的技能在 Docker 里执行，输入在 `/workspace/input`，产出在 `/workspace/output`。用户这一轮点名的技能写在本轮上下文里，不改技能目录那段前缀。
+技能在 `skills/`。系统提示里只放绑定技能的名称、说明和 `/skills/<name>/SKILL.md`。正文要模型先 `read_file` 再按说明书做。`read_file` 在 API 进程内只读已绑定技能。带脚本的技能仍由 `execute_skill_script` 在 Docker 里执行，输入在 `/workspace/input`，产出在 `/workspace/output`。用户这一轮点名的技能写在本轮上下文里，不改技能目录那段前缀。
 
 </details>
 

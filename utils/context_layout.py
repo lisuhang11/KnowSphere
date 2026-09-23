@@ -130,8 +130,8 @@ def turn_context_message(
         parts.append(f"[用户上传图片内容]\n{image}")
     pinned = [name.strip() for name in (pinned_skills or []) if name and name.strip()]
     if pinned:
-        listed = "\n".join(f"- {name}" for name in pinned)
-        parts.append(f"本轮点名技能，回答前先 read_skill：\n{listed}")
+        listed = "\n".join(f"- /skills/{name}/SKILL.md" for name in pinned)
+        parts.append(f"本轮点名技能，回答前先 read_file：\n{listed}")
     asker = (asker_background or "").strip()
     if asker:
         parts.append(asker)

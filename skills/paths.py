@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 
 SKILL_MD = "SKILL.md"
-SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 MAX_SKILL_NAME_LEN = 64
 MAX_DESCRIPTION_LEN = 1024
+MAX_COMPATIBILITY_LEN = 500
 MAX_READ_CHARS = 80_000
 MAX_FILE_BYTES = 2 * 1024 * 1024
 IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".bmp"})
@@ -30,10 +29,19 @@ def skills_root() -> Path:
 
 
 def is_valid_skill_name(name: str) -> bool:
+    """Agent Skills：1–64 字符，Unicode 小写字母、数字、单个连字符，且与目录名同形。"""
     raw = (name or "").strip()
     if not raw or len(raw) > MAX_SKILL_NAME_LEN:
         return False
-    return bool(SKILL_NAME_RE.fullmatch(raw))
+    if raw.startswith("-") or raw.endswith("-") or "--" in raw:
+        return False
+    for char in raw:
+        if char == "-":
+            continue
+        if (char.isalpha() and char.islower()) or char.isdigit():
+            continue
+        return False
+    return True
 
 
 def _is_skipped_part(part: str) -> bool:
@@ -42,6 +50,31 @@ def _is_skipped_part(part: str) -> bool:
 
 def is_hidden_relative(rel: Path) -> bool:
     return any(_is_skipped_part(p) for p in rel.parts)
+
+
+def skill_virtual_path(name: str, rel: str = SKILL_MD) -> str:
+    """模型可见的技能路径，根是 `/skills/<name>/`。"""
+    suffix = (rel or SKILL_MD).replace("\\", "/").lstrip("/")
+    return f"/skills/{name}/{suffix}"
+
+
+def parse_skill_virtual_path(file_path: str) -> tuple[str, str] | None:
+    """解析 `/skills/<name>/<rel>`。目录本身视为 `SKILL.md`。非法路径返回 None。"""
+    raw = (file_path or "").strip().replace("\\", "/")
+    if not raw or raw.startswith("~"):
+        return None
+    if raw.startswith("/"):
+        raw = raw[1:]
+    parts = [part for part in raw.split("/") if part]
+    if len(parts) < 2 or parts[0] != "skills":
+        return None
+    if any(part in {".", ".."} for part in parts):
+        return None
+    name = parts[1]
+    if not is_valid_skill_name(name):
+        return None
+    rel = "/".join(parts[2:]) or SKILL_MD
+    return name, rel
 
 
 def resolve_skill_dir(name: str, *, root: Path | None = None) -> Path | None:

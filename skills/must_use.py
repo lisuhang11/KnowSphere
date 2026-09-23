@@ -31,7 +31,7 @@ def build_must_use_block(skill_names: Sequence[str] | None) -> str:
             continue
         seen.add(name)
         lines.append(
-            f'Must call read_skill(skill_name="{name}") for @Skill "{name}" before answering.'
+            f'Must call read_file(file_path="/skills/{name}/SKILL.md") for @Skill "{name}" before answering.'
         )
     if not lines:
         return ""

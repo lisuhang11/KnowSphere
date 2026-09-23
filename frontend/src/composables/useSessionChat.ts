@@ -493,7 +493,7 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
                       ? '正在规划步骤…'
                       : name === 'generate_pptx'
                         ? '正在生成幻灯片…'
-                        : name === 'read_skill'
+                        : name === 'read_file' || name === 'read_skill'
                           ? '正在读取技能…'
                           : name === 'execute_skill_script'
                             ? '正在沙箱执行…'
@@ -501,7 +501,7 @@ export function useSessionChat(scrollContainer?: Ref<HTMLElement | null | undefi
                               ? `正在调用 ${name}…`
                               : ''
         const extra = extractText(data.content)
-        if (name === 'read_skill' || name === 'execute_skill_script') {
+        if (name === 'read_file' || name === 'read_skill' || name === 'execute_skill_script') {
           if (extra || hint) appendThinking(ai, extra || hint)
         } else if (hint) {
           appendThinking(ai, extra && extra !== hint ? `${hint}\n${extra}` : hint)

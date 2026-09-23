@@ -18,6 +18,7 @@ dependencies = [
     "pgvector>=0.3",
     "cryptography>=42",  # 模型凭证 AES-256-GCM 加密
     "pydantic-settings>=2.4",
+    "pyyaml>=6",  # SKILL.md YAML 前言（Agent Skills）
     "pypdf>=5",
     "httpx>=0.27",  # SiliconFlow /v1/rerank 直调（无 langchain 封装）
     "ddgs>=9.0",  # web_search 联网（DuckDuckGo，无需 API Key）

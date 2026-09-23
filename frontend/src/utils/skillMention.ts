@@ -5,7 +5,10 @@ export const SKILL_ICON = 'system-code'
 const MENTION_RE = /(^|[\s])@([A-Za-z0-9_-]+)/g
 const MUST_USE_OPEN = '<must_use>'
 const MUST_USE_CLOSE = '</must_use>'
-const MUST_USE_NAME_RE = /read_skill\(skill_name="([^"]+)"\)/g
+const MUST_USE_NAME_RES = [
+  /read_file\(file_path="\/skills\/([^"/]+)\/SKILL\.md"\)/g,
+  /read_skill\(skill_name="([^"]+)"\)/g,
+]
 
 export function extractPinnedSkillNames(text: string, boundNames?: string[]): string[] {
   const bound = boundNames?.length ? new Set(boundNames) : null
@@ -49,13 +52,15 @@ export function parseMustUseSkillNames(text: string): string[] {
   const block = end < 0 ? text.slice(start) : text.slice(start, end)
   const found: string[] = []
   const seen = new Set<string>()
-  MUST_USE_NAME_RE.lastIndex = 0
-  let match: RegExpExecArray | null
-  while ((match = MUST_USE_NAME_RE.exec(block))) {
-    const name = (match[1] || '').trim()
-    if (!name || seen.has(name)) continue
-    seen.add(name)
-    found.push(name)
+  for (const pattern of MUST_USE_NAME_RES) {
+    pattern.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = pattern.exec(block))) {
+      const name = (match[1] || '').trim()
+      if (!name || seen.has(name)) continue
+      seen.add(name)
+      found.push(name)
+    }
   }
   return found
 }

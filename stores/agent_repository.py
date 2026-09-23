@@ -25,6 +25,7 @@ from tools.catalog import (
     BUILTIN_PPT_AGENT_NAME,
     BUILTIN_PPT_AGENT_PROMPT,
     LEGACY_PPT_AGENT_PROMPT,
+    LEGACY_READ_SKILL_PPT_AGENT_PROMPT,
     PPT_AGENT_SKILL_NAMES,
     PPT_AGENT_TOOL_NAMES,
     REASONING_TOOL_NAMES,
@@ -213,7 +214,11 @@ class AgentStore:
                         (Jsonb(desired_skills), BUILTIN_PPT_AGENT_ID),
                     )
                 current_prompt = (existing_ppt.get("system_prompt") or "").strip()
-                if current_prompt in ("", LEGACY_PPT_AGENT_PROMPT.strip()):
+                if current_prompt in (
+                    "",
+                    LEGACY_PPT_AGENT_PROMPT.strip(),
+                    LEGACY_READ_SKILL_PPT_AGENT_PROMPT.strip(),
+                ):
                     conn.execute(
                         "UPDATE agents SET system_prompt = %s, updated_at = now() WHERE id = %s",
                         (BUILTIN_PPT_AGENT_PROMPT, BUILTIN_PPT_AGENT_ID),
